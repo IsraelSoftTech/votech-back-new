@@ -27,6 +27,12 @@ const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const PORT = 5000;
 
+// Log every incoming request
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -103,13 +109,9 @@ const findAvailablePort = (startPort) => {
 // CORS configuration with dynamic origin
 const corsOptions = {
   origin: [
-    'https://voltech.onrender.com'
-    // 'http://localhost:3000',
-    // 'http://localhost:3001',
-    // 'http://localhost:3002',
-    // 'http://localhost:3003',
-    // 'http://localhost:3004',
-    // 'http://localhost:3005'
+    'https://votech-jz0j.onrender.com', // production frontend
+    'http://localhost:3000',             // local development
+    'http://localhost:3004'              // local development (alternate port)
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
