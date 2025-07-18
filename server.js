@@ -901,115 +901,58 @@ app.get('/api/students/analytics/monthly', async (req, res) => {
   }
 });
 
-// Classes endpoints
-app.post('/api/classes', authenticateToken, async (req, res) => {
-  const { 
-    name, 
-    registration_fee, 
-    tuition_fee, 
-    vocational_fee, 
-    sport_wear_fee, 
-    health_sanitation_fee, 
-    number_of_installments,
-    year
-  } = req.body;
-  const userId = req.user.id;
-
+// CLASSES ENDPOINTS
+app.get('/api/classes', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query(
-      `INSERT INTO classes (user_id, name, registration_fee, tuition_fee, vocational_fee, sport_wear_fee, health_sanitation_fee, number_of_installments, year)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [userId, name, registration_fee, tuition_fee, vocational_fee, sport_wear_fee, health_sanitation_fee, number_of_installments, year]
-    );
-    
-    res.status(201).json({ id: result.rows[0].id });
-  } catch (error) {
-    console.error('Error creating class:', error);
-    res.status(500).json({ error: 'Error creating class' });
-  }
-});
-
-app.get('/api/classes', async (req, res) => {
-  const year = req.query.year || null; // Use year as string
-  try {
-    let query = 'SELECT * FROM classes';
-    let params = [];
-    if (year) {
-      query += ' WHERE year = $1';
-      params.push(year);
-    }
-    query += ' ORDER BY created_at DESC';
-    const result = await pool.query(query, params);
+    const result = await pool.query('SELECT * FROM classes ORDER BY id DESC');
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching classes:', error);
-    res.status(500).json({ error: 'Error fetching classes' });
+    res.status(500).json({ error: 'Error fetching classes', details: error.message });
+  }
+});
+
+// Remove authentication for class creation
+app.post('/api/classes', async (req, res) => {
+  console.log('POST /api/classes called', req.body);
+  const { name, registration_fee, bus_fee, internship_fee, remedial_fee, tuition_fee, pta_fee, total_fee, suspended } = req.body;
+  try {
+    const result = await pool.query(
+      `INSERT INTO classes (name, registration_fee, bus_fee, internship_fee, remedial_fee, tuition_fee, pta_fee, total_fee, suspended)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [name, registration_fee, bus_fee, internship_fee, remedial_fee, tuition_fee, pta_fee, total_fee, suspended || false]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating class:', error);
+    res.status(500).json({ error: 'Error creating class', details: error.message });
   }
 });
 
 app.put('/api/classes/:id', authenticateToken, async (req, res) => {
-  const { 
-    name, 
-    registration_fee, 
-    tuition_fee, 
-    vocational_fee, 
-    sport_wear_fee, 
-    health_sanitation_fee, 
-    number_of_installments,
-    year
-  } = req.body;
-  const userId = req.user.id;
-  const classId = req.params.id;
-
+  const { id } = req.params;
+  const { name, registration_fee, bus_fee, internship_fee, remedial_fee, tuition_fee, pta_fee, total_fee, suspended } = req.body;
   try {
-    // First verify the class belongs to the user
-    const resultClass = await pool.query(
-      'SELECT * FROM classes WHERE id = $1 AND user_id = $2',
-      [classId, userId]
-    );
-    if (resultClass.rows.length === 0) {
-      return res.status(404).json({ error: 'Class not found' });
-    }
-
-    // Update the class
     const result = await pool.query(
-      `UPDATE classes 
-       SET name = $1, registration_fee = $2, tuition_fee = $3, vocational_fee = $4, sport_wear_fee = $5, health_sanitation_fee = $6, number_of_installments = $7, year = $8
-       WHERE id = $9 AND user_id = $10 RETURNING *`,
-      [name, registration_fee, tuition_fee, vocational_fee, sport_wear_fee, health_sanitation_fee, number_of_installments, year, classId, userId]
+      `UPDATE classes SET name=$1, registration_fee=$2, bus_fee=$3, internship_fee=$4, remedial_fee=$5, tuition_fee=$6, pta_fee=$7, total_fee=$8, suspended=$9 WHERE id=$10 RETURNING *`,
+      [name, registration_fee, bus_fee, internship_fee, remedial_fee, tuition_fee, pta_fee, total_fee, suspended || false, id]
     );
-    
-    res.json({ message: 'Class updated successfully' });
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Class not found' });
+    res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating class:', error);
-    res.status(500).json({ error: 'Error updating class' });
+    res.status(500).json({ error: 'Error updating class', details: error.message });
   }
 });
 
 app.delete('/api/classes/:id', authenticateToken, async (req, res) => {
-  const userId = req.user.id;
-  const classId = req.params.id;
-
+  const { id } = req.params;
   try {
-    // First verify the class belongs to the user
-    const resultClassDel = await pool.query(
-      'SELECT * FROM classes WHERE id = $1 AND user_id = $2',
-      [classId, userId]
-    );
-    if (resultClassDel.rows.length === 0) {
-      return res.status(404).json({ error: 'Class not found' });
-    }
-
-    // Delete the class
-    await pool.query(
-      'DELETE FROM classes WHERE id = $1 AND user_id = $2',
-      [classId, userId]
-    );
-    
-    res.json({ message: 'Class deleted successfully' });
+    await pool.query('DELETE FROM classes WHERE id=$1', [id]);
+    res.json({ success: true });
   } catch (error) {
     console.error('Error deleting class:', error);
-    res.status(500).json({ error: 'Error deleting class' });
+    res.status(500).json({ error: 'Error deleting class', details: error.message });
   }
 });
 
@@ -1409,82 +1352,6 @@ app.get('/api/teachers/analytics/daily', authenticateToken, async (req, res) => 
   }
 });
 
-// Fee analytics endpoint: total fee amount paid per day for the last 30 days
-app.get('/api/fees/analytics/daily', authenticateToken, async (req, res) => {
-  const userId = req.user.id;
-  const userRole = req.user.role;
-  const year = req.query.year ? parseInt(req.query.year) : null;
-  try {
-    // Get raw results from DB
-    let rows;
-    if (userRole === 'admin') {
-      // Admin can view analytics for all students
-      if (year) {
-        [rows] = await pool.query(
-          `SELECT DATE(f.paid_at) as date, SUM(f.amount) as total
-           FROM fees f
-           WHERE EXTRACT(YEAR FROM f.paid_at) = $1 AND f.paid_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-           GROUP BY DATE(f.paid_at)
-           ORDER BY date ASC`,
-          [year]
-        );
-      } else {
-        [rows] = await pool.query(
-          `SELECT DATE(f.paid_at) as date, SUM(f.amount) as total
-           FROM fees f
-           WHERE f.paid_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-           GROUP BY DATE(f.paid_at)
-           ORDER BY date ASC`
-        );
-      }
-    } else {
-      // Regular users can only view their own students' analytics
-      if (year) {
-        [rows] = await pool.query(
-          `SELECT DATE(f.paid_at) as date, SUM(f.amount) as total
-           FROM fees f
-           JOIN students s ON f.student_id = s.id
-           WHERE s.user_id = $1 AND EXTRACT(YEAR FROM f.paid_at) = $2 AND f.paid_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-           GROUP BY DATE(f.paid_at)
-           ORDER BY date ASC`,
-          [userId, year]
-        );
-      } else {
-        [rows] = await pool.query(
-          `SELECT DATE(f.paid_at) as date, SUM(f.amount) as total
-           FROM fees f
-           JOIN students s ON f.student_id = s.id
-           WHERE s.user_id = $1 AND f.paid_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-           GROUP BY DATE(f.paid_at)
-           ORDER BY date ASC`,
-          [userId]
-        );
-      }
-    }
-    // Build a map for quick lookup
-    const totalsByDate = {};
-    rows.rows.forEach(row => {
-      totalsByDate[row.date] = parseFloat(row.total);
-    });
-    // Generate last 30 days
-    const result = [];
-    const today = new Date();
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(today.getDate() - i);
-      const dateStr = d.toISOString().slice(0, 10);
-      result.push({
-        date: dateStr,
-        total: totalsByDate[dateStr] || 0
-      });
-    }
-    res.json(result);
-  } catch (error) {
-    console.error('Error fetching fee analytics:', error);
-    res.status(500).json({ error: 'Error fetching fee analytics', details: error.message });
-  }
-});
-
 // FEES & ID CARDS ENDPOINTS
 
 // 1. Search students for auto-suggest
@@ -1864,10 +1731,12 @@ const initializeDatabase = async () => {
         user_id INTEGER,
         name VARCHAR(100) NOT NULL,
         registration_fee VARCHAR(50),
+        bus_fee VARCHAR(50),
+        internship_fee VARCHAR(50),
+        remedial_fee VARCHAR(50),
         tuition_fee VARCHAR(50),
-        vocational_fee VARCHAR(50),
-        sport_wear_fee VARCHAR(50),
-        health_sanitation_fee VARCHAR(50),
+        pta_fee VARCHAR(50),
+        total_fee VARCHAR(50),
         number_of_installments INTEGER,
         year VARCHAR(20),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
