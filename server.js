@@ -44,20 +44,8 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
-  storage: storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
-  },
-  fileFilter: function (req, file, cb) {
-    // Accept only image files
-    if (file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed!'), false);
-    }
-  }
-});
+// Use memory storage for student uploads
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Configure multer for Excel file uploads
 const excelUpload = multer({ 
@@ -414,7 +402,7 @@ app.post('/api/students', upload.single('student_picture'), async (req, res) => 
   const userId = req.user ? req.user.id : null;
   const userRole = req.user ? req.user.role : 'admin';
   // Get file path from uploaded file
-  const student_picture = req.file ? `/uploads/${req.file.filename}` : null;
+  const student_picture = req.file ? req.file.buffer : null;
 
   try {
     // Validate class_id
@@ -595,7 +583,7 @@ app.put('/api/students/:id', upload.single('student_picture'), async (req, res) 
   const userRole = req.user ? req.user.role : 'admin';
   const studentId = req.params.id;
   // Get file path from uploaded file
-  const student_picture = req.file ? `/uploads/${req.file.filename}` : null;
+  const student_picture = req.file ? req.file.buffer : null;
 
   try {
     let resultStudent;
@@ -1766,7 +1754,7 @@ const initializeDatabase = async () => {
         class_id INTEGER,
         vocational_training VARCHAR(100),
         guardian_contact VARCHAR(50),
-        student_picture VARCHAR(255),
+        student_picture BYTEA,
         year VARCHAR(20),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -2053,5 +2041,22 @@ app.get('/api/specialties/:id/classes', async (req, res) => {
   } catch (error) {
     console.error('Error fetching assigned classes for specialty:', error);
     res.status(500).json({ error: 'Error fetching assigned classes for specialty', details: error.message });
+  }
+});
+
+// Serve student image from DB
+app.get('/api/students/:id/picture', async (req, res) => {
+  const studentId = req.params.id;
+  try {
+    const result = await pool.query('SELECT student_picture FROM students WHERE id = $1', [studentId]);
+    if (result.rows.length === 0 || !result.rows[0].student_picture) {
+      console.warn(`[IMAGE] No image found for student ID: ${studentId}`);
+      return res.status(404).send('No image');
+    }
+    res.set('Content-Type', 'image/jpeg');
+    res.send(result.rows[0].student_picture);
+  } catch (error) {
+    console.error(`[IMAGE] Error retrieving image for student ID: ${studentId}:`, error);
+    res.status(500).send('Error retrieving image');
   }
 });

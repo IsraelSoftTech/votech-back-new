@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS students (
     specialty_id INTEGER REFERENCES specialties(id),
     vocational_training VARCHAR(100),
     guardian_contact VARCHAR(50),
-    student_picture VARCHAR(255),
+    student_picture BYTEA,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
