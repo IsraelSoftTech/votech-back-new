@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS students (
     father_name VARCHAR(100),
     mother_name VARCHAR(100),
     class_id INTEGER,
+    specialty_id INTEGER REFERENCES specialties(id),
     vocational_training VARCHAR(100),
     guardian_contact VARCHAR(50),
     student_picture VARCHAR(255),
@@ -48,4 +49,11 @@ CREATE TABLE IF NOT EXISTS specialties (
     name VARCHAR(100) NOT NULL,
     abbreviation VARCHAR(20),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Specialty Classes (many-to-many)
+CREATE TABLE IF NOT EXISTS specialty_classes (
+    id SERIAL PRIMARY KEY,
+    specialty_id INTEGER REFERENCES specialties(id) ON DELETE CASCADE,
+    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE
 );

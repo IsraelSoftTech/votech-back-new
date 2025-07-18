@@ -406,6 +406,7 @@ app.post('/api/students', upload.single('student_picture'), async (req, res) => 
     guardian_contact, 
     vocational_training, 
     class_id, // <-- Accept class_id
+    specialty_id, // <-- Accept specialty_id
     year, // <-- Accept year from frontend
     registration_date // <-- Accept registration_date from frontend
   } = req.body;
@@ -420,10 +421,19 @@ app.post('/api/students', upload.single('student_picture'), async (req, res) => 
     if (!class_id) {
       return res.status(400).json({ error: 'Class is required for student registration.' });
     }
+    // Validate specialty_id
+    if (!specialty_id) {
+      return res.status(400).json({ error: 'Specialty is required for student registration.' });
+    }
     // Check if class exists
     const classCheck = await pool.query('SELECT id FROM classes WHERE id = $1', [class_id]);
     if (classCheck.rows.length === 0) {
       return res.status(400).json({ error: 'Selected class does not exist.' });
+    }
+    // Check if specialty exists
+    const specialtyCheck = await pool.query('SELECT id FROM specialties WHERE id = $1', [specialty_id]);
+    if (specialtyCheck.rows.length === 0) {
+      return res.status(400).json({ error: 'Selected specialty does not exist.' });
     }
     // Only run role-based restrictions if authenticated
     if (req.user) {
@@ -493,13 +503,13 @@ app.post('/api/students', upload.single('student_picture'), async (req, res) => 
     // --- End Student ID Generation ---
     let insertQuery, insertValues;
     if (registration_date) {
-      insertQuery = `INSERT INTO students (student_id, user_id, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training, student_picture, class_id, year, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`;
-      insertValues = [student_id, userId, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training, student_picture, class_id, year, registration_date];
+      insertQuery = `INSERT INTO students (student_id, user_id, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training, student_picture, class_id, specialty_id, year, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`;
+      insertValues = [student_id, userId, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training, student_picture, class_id, specialty_id, year, registration_date];
     } else {
-      insertQuery = `INSERT INTO students (student_id, user_id, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training, student_picture, class_id, year)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`;
-      insertValues = [student_id, userId, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training, student_picture, class_id, year];
+      insertQuery = `INSERT INTO students (student_id, user_id, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training, student_picture, class_id, specialty_id, year)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`;
+      insertValues = [student_id, userId, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training, student_picture, class_id, specialty_id, year];
     }
     const result = await pool.query(insertQuery, insertValues);
     const newStudent = result.rows[0];
@@ -524,18 +534,20 @@ app.get('/api/students', async (req, res) => {
       // Admin: see all students for the year with user info
       if (year) {
         query = `
-          SELECT s.*, u.username as registered_by 
+          SELECT s.*, u.username as registered_by, sp.name as specialty_name
           FROM students s 
           LEFT JOIN users u ON s.user_id = u.id 
+          LEFT JOIN specialties sp ON s.specialty_id = sp.id
           WHERE s.year = $1 
           ORDER BY s.created_at DESC
         `;
         params = [year];
       } else {
         query = `
-          SELECT s.*, u.username as registered_by 
+          SELECT s.*, u.username as registered_by, sp.name as specialty_name
           FROM students s 
           LEFT JOIN users u ON s.user_id = u.id 
+          LEFT JOIN specialties sp ON s.specialty_id = sp.id
           ORDER BY s.created_at DESC
         `;
         params = [];
@@ -2007,5 +2019,39 @@ app.delete('/api/specialties/:specialty_id/classes/:class_id', async (req, res) 
   } catch (error) {
     console.error('Error removing class from specialty:', error);
     res.status(500).json({ error: 'Error removing class from specialty' });
+  }
+});
+
+// Assign classes to a specialty
+app.put('/api/specialties/:id/classes', async (req, res) => {
+  const specialtyId = req.params.id;
+  const { classIds } = req.body; // expects array of class IDs
+  if (!Array.isArray(classIds)) {
+    return res.status(400).json({ error: 'classIds must be an array' });
+  }
+  try {
+    // Remove existing assignments
+    await pool.query('DELETE FROM specialty_classes WHERE specialty_id = $1', [specialtyId]);
+    // Insert new assignments
+    for (const classId of classIds) {
+      await pool.query('INSERT INTO specialty_classes (specialty_id, class_id) VALUES ($1, $2)', [specialtyId, classId]);
+    }
+    res.json({ message: 'Classes assigned to specialty successfully' });
+  } catch (error) {
+    console.error('Error assigning classes to specialty:', error);
+    res.status(500).json({ error: 'Error assigning classes to specialty', details: error.message });
+  }
+});
+
+// Get assigned classes for a specialty
+app.get('/api/specialties/:id/classes', async (req, res) => {
+  const specialtyId = req.params.id;
+  try {
+    const result = await pool.query('SELECT class_id FROM specialty_classes WHERE specialty_id = $1', [specialtyId]);
+    const classIds = result.rows.map(r => r.class_id);
+    res.json(classIds);
+  } catch (error) {
+    console.error('Error fetching assigned classes for specialty:', error);
+    res.status(500).json({ error: 'Error fetching assigned classes for specialty', details: error.message });
   }
 });
