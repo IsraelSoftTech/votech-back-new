@@ -57,3 +57,15 @@ CREATE TABLE IF NOT EXISTS specialty_classes (
     specialty_id INTEGER REFERENCES specialties(id) ON DELETE CASCADE,
     class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE
 );
+
+-- Messages
+CREATE TABLE IF NOT EXISTS messages (
+    id SERIAL PRIMARY KEY,
+    sender_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    recipient_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    group_id INTEGER,
+    content TEXT,
+    type VARCHAR(20) DEFAULT 'text', -- text, image, video, audio, etc.
+    file_url VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
