@@ -309,8 +309,8 @@ app.post('/api/reset-password', async (req, res) => {
 
   try {
     // Check if user exists
-    const [users] = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
-    
+    const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+    const users = result.rows;
     if (users.length === 0) {
       console.log('User not found for password reset:', username);
       return res.status(404).json({ error: 'User not found' });
@@ -508,59 +508,21 @@ app.post('/api/students', upload.single('student_picture'), async (req, res) => 
   }
 });
 
-// Students GET endpoint with admin logic
-app.get('/api/students', async (req, res) => {
-  const userId = req.user ? req.user.id : null;
-  const userRole = req.user ? req.user.role : 'admin';
-  const year = req.query.year || null; // Use year as string
-  
-  console.log('GET /api/students - User ID:', userId, 'Role:', userRole, 'Year:', year);
-  
+// Students GET endpoint: always filter by user_id, include specialty_name
+app.get('/api/students', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const year = req.query.year || null;
   try {
-    let students, query, params;
-    if (userRole === 'admin') {
-      // Admin: see all students for the year with user info
-      if (year) {
-        query = `
-          SELECT s.*, u.username as registered_by, sp.name as specialty_name
-          FROM students s 
-          LEFT JOIN users u ON s.user_id = u.id 
-          LEFT JOIN specialties sp ON s.specialty_id = sp.id
-          WHERE s.year = $1 
-          ORDER BY s.created_at DESC
-        `;
-        params = [year];
-      } else {
-        query = `
-          SELECT s.*, u.username as registered_by, sp.name as specialty_name
-          FROM students s 
-          LEFT JOIN users u ON s.user_id = u.id 
-          LEFT JOIN specialties sp ON s.specialty_id = sp.id
-          ORDER BY s.created_at DESC
-        `;
-        params = [];
-      }
+    let query, params;
+    if (year) {
+      query = `SELECT s.*, sp.name as specialty_name FROM students s LEFT JOIN specialties sp ON s.specialty_id = sp.id WHERE s.user_id = $1 AND s.year = $2 ORDER BY s.created_at DESC`;
+      params = [userId, year];
     } else {
-      // Regular user: only see their own students
-      if (year) {
-        query = 'SELECT * FROM students WHERE user_id = $1 AND year = $2 ORDER BY created_at DESC';
-        params = [userId, year];
-      } else {
-        query = 'SELECT * FROM students WHERE user_id = $1 ORDER BY created_at DESC';
-        params = [userId];
-      }
+      query = `SELECT s.*, sp.name as specialty_name FROM students s LEFT JOIN specialties sp ON s.specialty_id = sp.id WHERE s.user_id = $1 ORDER BY s.created_at DESC`;
+      params = [userId];
     }
-    
-    console.log('Query:', query);
-    console.log('Params:', params);
-    
     const result = await pool.query(query, params);
-    students = result.rows;
-    
-    console.log('Found students:', students.length);
-    console.log('Students:', students.map(s => ({ id: s.id, name: s.full_name, user_id: s.user_id })));
-    
-    res.json(students);
+    res.json(result.rows);
   } catch (error) {
     console.error('Error fetching students:', error);
     res.status(500).json({ error: 'Error fetching students' });
@@ -1124,34 +1086,21 @@ app.post('/api/teachers', authenticateToken, async (req, res) => {
   }
 });
 
+// Teachers GET endpoint: always filter by user_id
 app.get('/api/teachers', authenticateToken, async (req, res) => {
   const userId = req.user.id;
-  const userRole = req.user.role;
   const year = req.query.year ? parseInt(req.query.year) : null;
   try {
-    let teachers, query, params;
-    if (userRole === 'admin') {
-      // Admin: see all teachers for the year
-      if (year) {
-        query = 'SELECT * FROM teachers WHERE EXTRACT(YEAR FROM created_at) = $1 ORDER BY created_at DESC';
-        params = [year];
-      } else {
-        query = 'SELECT * FROM teachers ORDER BY created_at DESC';
-        params = [];
-      }
+    let query, params;
+    if (year) {
+      query = 'SELECT * FROM teachers WHERE user_id = $1 AND EXTRACT(YEAR FROM created_at) = $2 ORDER BY created_at DESC';
+      params = [userId, year];
     } else {
-      // Regular user: only see their own teachers
-      if (year) {
-        query = 'SELECT * FROM teachers WHERE user_id = $1 AND EXTRACT(YEAR FROM created_at) = $2 ORDER BY created_at DESC';
-        params = [userId, year];
-      } else {
-        query = 'SELECT * FROM teachers WHERE user_id = $1 ORDER BY created_at DESC';
-        params = [userId];
-      }
+      query = 'SELECT * FROM teachers WHERE user_id = $1 ORDER BY created_at DESC';
+      params = [userId];
     }
     const result = await pool.query(query, params);
-    teachers = result.rows;
-    res.json(teachers);
+    res.json(result.rows);
   } catch (error) {
     console.error('Error fetching teachers:', error);
     res.status(500).json({ error: 'Error fetching teachers' });
@@ -2058,5 +2007,82 @@ app.get('/api/students/:id/picture', async (req, res) => {
   } catch (error) {
     console.error(`[IMAGE] Error retrieving image for student ID: ${studentId}:`, error);
     res.status(500).send('Error retrieving image');
+  }
+});
+
+// Check user by username and phone number
+app.post('/api/check-user-details', async (req, res) => {
+  const { username, contact } = req.body;
+  if (!username || !contact) {
+    return res.status(400).json({ error: 'Username and phone number are required' });
+  }
+  try {
+    const result = await pool.query('SELECT * FROM users WHERE username = $1 AND contact = $2', [username, contact]);
+    if (result.rows.length > 0) {
+      return res.json({ exists: true });
+    } else {
+      return res.json({ exists: false });
+    }
+  } catch (error) {
+    console.error('Error checking user details:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// User management endpoints for Admin3
+app.get('/api/users/all', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const result = await pool.query('SELECT id, name, username, contact, role, suspended FROM users ORDER BY created_at DESC');
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+app.put('/api/users/:id', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+  const { id } = req.params;
+  const { name, username, contact, password, role } = req.body;
+  try {
+    let updateFields = ['name = $1', 'username = $2', 'contact = $3', 'role = $4'];
+    let updateValues = [name, username, contact, role];
+    let paramIndex = 5;
+    if (password) {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      updateFields.push(`password = $${paramIndex}`);
+      updateValues.push(hashedPassword);
+      paramIndex++;
+    }
+    updateValues.push(id);
+    const updateQuery = `UPDATE users SET ${updateFields.join(', ')} WHERE id = $${paramIndex}`;
+    await pool.query(updateQuery, updateValues);
+    res.json({ message: 'User updated' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update user' });
+  }
+});
+
+app.delete('/api/users/:id', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+  const { id } = req.params;
+  try {
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+    res.json({ message: 'User deleted' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
+app.post('/api/users/:id/suspend', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+  const { id } = req.params;
+  try {
+    // Toggle suspended status
+    const result = await pool.query('UPDATE users SET suspended = NOT COALESCE(suspended, false) WHERE id = $1 RETURNING suspended', [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    res.json({ suspended: result.rows[0].suspended });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to suspend user' });
   }
 });
