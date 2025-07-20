@@ -382,329 +382,6 @@ app.get('/api/users', authenticateToken, async (req, res) => {
   }
 });
 
-// Students endpoints
-app.post('/api/students', upload.single('student_picture'), async (req, res) => {
-  const { 
-    full_name, 
-    sex, 
-    date_of_birth, 
-    place_of_birth, 
-    father_name, 
-    mother_name, 
-    guardian_contact, 
-    vocational_training, 
-    class_id, // <-- Accept class_id
-    specialty_id, // <-- Accept specialty_id
-    year, // <-- Accept year from frontend
-    registration_date // <-- Accept registration_date from frontend
-  } = req.body;
-  // Allow registration without login
-  const userId = req.user ? req.user.id : null;
-  const userRole = req.user ? req.user.role : 'admin';
-  // Get file path from uploaded file
-  const student_picture = req.file ? req.file.buffer : null;
-
-  try {
-    // Validate class_id
-    if (!class_id) {
-      return res.status(400).json({ error: 'Class is required for student registration.' });
-    }
-    // Validate specialty_id
-    if (!specialty_id) {
-      return res.status(400).json({ error: 'Specialty is required for student registration.' });
-    }
-    // Check if class exists
-    const classCheck = await pool.query('SELECT id FROM classes WHERE id = $1', [class_id]);
-    if (classCheck.rows.length === 0) {
-      return res.status(400).json({ error: 'Selected class does not exist.' });
-    }
-    // Check if specialty exists
-    const specialtyCheck = await pool.query('SELECT id FROM specialties WHERE id = $1', [specialty_id]);
-    if (specialtyCheck.rows.length === 0) {
-      return res.status(400).json({ error: 'Selected specialty does not exist.' });
-    }
-    // Only run role-based restrictions if authenticated
-    if (req.user) {
-      if (userRole === 'student') {
-        // Students can only register themselves (1 student max)
-        const existingStudent = await pool.query(
-          'SELECT id FROM students WHERE user_id = $1',
-          [userId]
-        );
-        if (existingStudent.rows.length > 0) {
-          return res.status(400).json({ 
-            error: 'You have already registered yourself as a student. Students can only register once.' 
-          });
-        }
-      } else if (userRole === 'parent') {
-        // Parents can register multiple students (no restriction)
-        // This is the default behavior
-      } else if (userRole === 'admin') {
-        // Admins can register unlimited students
-        // This is the default behavior
-      } else {
-        return res.status(403).json({ 
-          error: 'Invalid user role for student registration' 
-        });
-      }
-    }
-    // --- Student ID Generation Logic ---
-    // Get next global sequence number for student_id
-    let firstName = '', lastName = '';
-    if (full_name) {
-      const parts = full_name.trim().split(/\s+/);
-      firstName = parts[0] || '';
-      lastName = parts.length > 1 ? parts[parts.length - 1] : parts[0] || '';
-    }
-    const firstTwo = firstName.substring(0, 2).toUpperCase();
-    const lastTwo = lastName.slice(-2).toUpperCase();
-    // Get year from registration_date (format: YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss)
-    let yearPrefix = '';
-    if (registration_date) {
-      const yearMatch = registration_date.match(/(\d{4})/);
-      if (yearMatch) {
-        yearPrefix = yearMatch[1].slice(-2);
-      }
-    }
-    if (!yearPrefix) {
-      // fallback to current year if registration_date missing or invalid
-      yearPrefix = new Date().getFullYear().toString().slice(-2);
-    }
-    const seqResult = await pool.query(
-      `SELECT student_id FROM students ORDER BY id DESC LIMIT 1`
-    );
-    let nextSeq = 1;
-    if (seqResult.rows.length > 0) {
-      const lastId = seqResult.rows[0].student_id;
-      const match = lastId && lastId.match(/(\d{3})$/);
-      if (match) {
-        nextSeq = parseInt(match[1], 10) + 1;
-      }
-    }
-    const seqStr = String(nextSeq).padStart(3, '0');
-    const student_id = `${yearPrefix}-VOT-${firstTwo}${lastTwo}${seqStr}`;
-    // Ensure uniqueness
-    const uniqueCheck = await pool.query('SELECT 1 FROM students WHERE student_id = $1', [student_id]);
-    if (uniqueCheck.rows.length > 0) {
-      return res.status(500).json({ error: 'Failed to generate unique student ID. Please try again.' });
-    }
-    // --- End Student ID Generation ---
-    let insertQuery, insertValues;
-    if (registration_date) {
-      insertQuery = `INSERT INTO students (student_id, user_id, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training, student_picture, class_id, specialty_id, year, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`;
-      insertValues = [student_id, userId, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training, student_picture, class_id, specialty_id, year, registration_date];
-    } else {
-      insertQuery = `INSERT INTO students (student_id, user_id, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training, student_picture, class_id, specialty_id, year)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`;
-      insertValues = [student_id, userId, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training, student_picture, class_id, specialty_id, year];
-    }
-    const result = await pool.query(insertQuery, insertValues);
-    const newStudent = result.rows[0];
-    res.status(201).json({ id: newStudent.id, student_id: newStudent.student_id });
-  } catch (error) {
-    console.error('Error creating student:', error);
-    res.status(500).json({ error: 'Error creating student' });
-  }
-});
-
-// Students GET endpoint: always filter by user_id, include specialty_name
-app.get('/api/students', authenticateToken, async (req, res) => {
-  const userId = req.user.id;
-  const year = req.query.year || null;
-  try {
-    let query, params;
-    if (year) {
-      query = `SELECT s.*, sp.name as specialty_name FROM students s LEFT JOIN specialties sp ON s.specialty_id = sp.id WHERE s.user_id = $1 AND s.year = $2 ORDER BY s.created_at DESC`;
-      params = [userId, year];
-    } else {
-      query = `SELECT s.*, sp.name as specialty_name FROM students s LEFT JOIN specialties sp ON s.specialty_id = sp.id WHERE s.user_id = $1 ORDER BY s.created_at DESC`;
-      params = [userId];
-    }
-    const result = await pool.query(query, params);
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching students:', error);
-    res.status(500).json({ error: 'Error fetching students' });
-  }
-});
-
-app.put('/api/students/:id', upload.single('student_picture'), async (req, res) => {
-  const { 
-    full_name, 
-    sex, 
-    date_of_birth, 
-    place_of_birth, 
-    father_name, 
-    mother_name, 
-    guardian_contact, 
-    vocational_training,
-    registration_date // <-- Accept registration_date for editing
-  } = req.body;
-  const userId = req.user ? req.user.id : null;
-  const userRole = req.user ? req.user.role : 'admin';
-  const studentId = req.params.id;
-  // Get file path from uploaded file
-  const student_picture = req.file ? req.file.buffer : null;
-
-  try {
-    let resultStudent;
-    if (userRole === 'admin') {
-      // Admin can edit any student
-      resultStudent = await pool.query(
-        'SELECT * FROM students WHERE id = $1',
-        [studentId]
-      );
-    } else {
-      // Regular users can only edit their own students
-      resultStudent = await pool.query(
-        'SELECT * FROM students WHERE id = $1 AND user_id = $2',
-        [studentId, userId]
-      );
-    }
-    if (resultStudent.rows.length === 0) {
-      return res.status(404).json({ error: 'Student not found' });
-    }
-    // Build update query dynamically based on whether a new picture or registration_date is provided
-    let updateFields = [
-      'full_name = $1',
-      'sex = $2',
-      'date_of_birth = $3',
-      'place_of_birth = $4',
-      'father_name = $5',
-      'mother_name = $6',
-      'guardian_contact = $7',
-      'vocational_training = $8'
-    ];
-    let updateValues = [full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training];
-    let paramIndex = 9;
-    if (student_picture !== null) {
-      updateFields.push(`student_picture = $${paramIndex}`);
-      updateValues.push(student_picture);
-      paramIndex++;
-    }
-    if (registration_date) {
-      updateFields.push(`created_at = $${paramIndex}`);
-      updateValues.push(registration_date);
-      paramIndex++;
-    }
-    updateFields = updateFields.join(', ');
-    if (userRole === 'admin') {
-      updateValues.push(studentId);
-      const updateQuery = `UPDATE students SET ${updateFields} WHERE id = $${paramIndex}`;
-      await pool.query(updateQuery, updateValues);
-    } else {
-      updateValues.push(studentId, userId);
-      const updateQuery = `UPDATE students SET ${updateFields} WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}`;
-      await pool.query(updateQuery, updateValues);
-    }
-    res.json({ message: 'Student updated successfully' });
-  } catch (error) {
-    console.error('Error updating student:', error);
-    res.status(500).json({ error: 'Error updating student' });
-  }
-});
-
-// Delete all students endpoint (admin only) - MUST come before :id route
-app.delete('/api/students/delete-all', authenticateToken, async (req, res) => {
-  const userId = req.user.id;
-  const userRole = req.user.role;
-
-  try {
-    // Check if user is admin
-    if (userRole !== 'admin') {
-      return res.status(403).json({ error: 'Only admin can delete all students' });
-    }
-
-    // Delete all students
-    const result = await pool.query('DELETE FROM students');
-    
-    res.json({ 
-      message: `${result.rowCount} students deleted successfully`,
-      count: result.rowCount
-    });
-  } catch (error) {
-    console.error('Error deleting all students:', error);
-    res.status(500).json({ error: 'Error deleting all students' });
-  }
-});
-
-// Approve all students endpoint (admin only) - MUST come before :id route
-app.post('/api/students/approve-all', authenticateToken, async (req, res) => {
-  const userId = req.user.id;
-  const userRole = req.user.role;
-
-  try {
-    // Check if user is admin
-    if (userRole !== 'admin') {
-      return res.status(403).json({ error: 'Only admin can approve all students' });
-    }
-
-    // Update all students to approved status
-    const result = await pool.query(
-      'UPDATE students SET status = $1 WHERE status = $2',
-      ['approved', 'pending']
-    );
-    
-    res.json({ 
-      message: `${result.rowCount} students approved successfully`,
-      count: result.rowCount
-    });
-  } catch (error) {
-    console.error('Error approving all students:', error);
-    res.status(500).json({ error: 'Error approving all students' });
-  }
-});
-
-// Individual student delete - MUST come after specific routes
-app.delete('/api/students/:id', async (req, res) => {
-  const userId = req.user ? req.user.id : null;
-  const userRole = req.user ? req.user.role : 'admin';
-  const studentId = req.params.id;
-
-  try {
-    let result;
-    
-    if (userRole === 'admin') {
-      // Admin can delete any student
-      result = await pool.query(
-        'SELECT * FROM students WHERE id = $1',
-        [studentId]
-      );
-    } else {
-      // Regular users can only delete their own students
-      result = await pool.query(
-        'SELECT * FROM students WHERE id = $1 AND user_id = $2',
-        [studentId, userId]
-      );
-    }
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Student not found' });
-    }
-
-    // Delete the student
-    if (userRole === 'admin') {
-      // Admin can delete any student
-      await pool.query(
-        'DELETE FROM students WHERE id = $1',
-        [studentId]
-      );
-    } else {
-      // Regular users can only delete their own students
-      await pool.query(
-        'DELETE FROM students WHERE id = $1 AND user_id = $2',
-        [studentId, userId]
-      );
-    }
-    
-    res.json({ message: 'Student deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting student:', error);
-    res.status(500).json({ error: 'Error deleting student' });
-  }
-});
-
 // Excel upload endpoint for bulk student registration
 app.post('/api/students/upload', authenticateToken, excelUpload.single('file'), async (req, res) => {
   const userId = req.user.id;
@@ -2085,4 +1762,76 @@ app.post('/api/users/:id/suspend', authenticateToken, async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: 'Failed to suspend user' });
   }
+});
+
+// Student registration endpoint
+app.post('/api/students', upload.single('photo'), async (req, res) => {
+  console.log('BODY:', req.body);
+  console.log('FILE:', req.file);
+  try {
+    const {
+      studentId, regDate, fullName, sex, dob, pob,
+      father, mother, class: className, dept: specialtyName, contact
+    } = req.body;
+
+    // Validate required fields
+    if (!studentId || !regDate || !fullName || !sex || !dob || !pob || !className || !specialtyName || !contact) {
+      return res.status(400).json({ error: 'All fields except photo are required.' });
+    }
+
+    // Find class_id and specialty_id
+    const classResult = await pool.query('SELECT id FROM classes WHERE name = $1', [className]);
+    const specialtyResult = await pool.query('SELECT id FROM specialties WHERE name = $1', [specialtyName]);
+    const class_id = classResult.rows[0] ? classResult.rows[0].id : null;
+    const specialty_id = specialtyResult.rows[0] ? specialtyResult.rows[0].id : null;
+
+    // Handle photo upload
+    let photo_url = null;
+    if (req.file) {
+      const fs = require('fs');
+      const path = require('path');
+      const uploadsDir = path.join(__dirname, 'uploads');
+      if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+      const filename = `student_${Date.now()}_${req.file.originalname}`;
+      const filepath = path.join(uploadsDir, filename);
+      fs.writeFileSync(filepath, req.file.buffer);
+      photo_url = `/uploads/${filename}`;
+    }
+
+    // Insert student into DB
+    const insertResult = await pool.query(
+      `INSERT INTO students (student_id, registration_date, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, class_id, specialty_id, guardian_contact, photo_url)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [studentId, regDate, fullName, sex, dob, pob, father, mother, class_id, specialty_id, contact, photo_url]
+    );
+    const student = insertResult.rows[0];
+    res.status(201).json(student);
+  } catch (error) {
+    console.error('Error registering student:', error);
+    res.status(500).json({ error: 'Failed to register student', details: error.message });
+  }
+});
+
+// GET /api/students - List all students with class/specialty names
+app.get('/api/students', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT s.*, c.name AS class_name, sp.name AS specialty_name
+      FROM students s
+      LEFT JOIN classes c ON s.class_id = c.id
+      LEFT JOIN specialties sp ON s.specialty_id = sp.id
+      ORDER BY s.created_at DESC
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch students' });
+  }
+});
+
+// Add Multer error handler at the end, before app.listen or module.exports
+app.use(function (err, req, res, next) {
+  if (err instanceof require('multer').MulterError) {
+    return res.status(400).json({ error: err.message });
+  }
+  next(err);
 });

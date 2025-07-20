@@ -11,23 +11,6 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Students
-CREATE TABLE IF NOT EXISTS students (
-    id SERIAL PRIMARY KEY,
-    full_name VARCHAR(100) NOT NULL,
-    sex VARCHAR(10),
-    date_of_birth DATE,
-    place_of_birth VARCHAR(100),
-    father_name VARCHAR(100),
-    mother_name VARCHAR(100),
-    class_id INTEGER,
-    specialty_id INTEGER REFERENCES specialties(id),
-    vocational_training VARCHAR(100),
-    guardian_contact VARCHAR(50),
-    student_picture BYTEA,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
 -- Classes
 CREATE TABLE IF NOT EXISTS classes (
     id SERIAL PRIMARY KEY,
@@ -67,5 +50,23 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT,
     type VARCHAR(20) DEFAULT 'text', -- text, image, video, audio, etc.
     file_url VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Students
+CREATE TABLE IF NOT EXISTS students (
+    id SERIAL PRIMARY KEY,
+    student_id VARCHAR(32) UNIQUE NOT NULL,
+    registration_date DATE NOT NULL,
+    full_name VARCHAR(100) NOT NULL,
+    sex VARCHAR(10) NOT NULL,
+    date_of_birth DATE NOT NULL,
+    place_of_birth VARCHAR(100) NOT NULL,
+    father_name VARCHAR(100),
+    mother_name VARCHAR(100),
+    class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL,
+    specialty_id INTEGER REFERENCES specialties(id) ON DELETE SET NULL,
+    guardian_contact VARCHAR(50),
+    photo_url VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
