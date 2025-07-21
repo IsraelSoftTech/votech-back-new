@@ -202,6 +202,9 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     const user = users[0];
+    if (user.suspended) {
+      return res.status(403).json({ error: 'This account is suspended. Please contact the administrator.' });
+    }
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
       console.log('Invalid password for:', username);
@@ -982,23 +985,16 @@ app.get('/api/teachers/analytics/daily', authenticateToken, async (req, res) => 
 
 // 1. Search students for auto-suggest
 app.get('/api/students/search', authenticateToken, async (req, res) => {
-  const userId = req.user.id;
-  const userRole = req.user.role;
   const query = req.query.query || '';
   try {
-    let result;
-    if (userRole === 'admin') {
-      // Admin can search all students
-      result = await pool.query(
-        'SELECT id, full_name, class_id FROM students WHERE full_name LIKE $1 ORDER BY full_name ASC LIMIT 10',
-        [`%${query}%`]
-      );
-    } else {
-      // Regular users can only search their own students
-      result = await pool.query(
-        'SELECT id, full_name, class_id FROM students WHERE user_id = $1 AND full_name LIKE $2 ORDER BY full_name ASC LIMIT 10',
-        [userId, `%${query}%`]
-      );
+    // All users can search all students by name or student_id
+    const result = await pool.query(
+      'SELECT id, full_name, student_id FROM students WHERE LOWER(full_name) LIKE LOWER($1) OR LOWER(student_id) LIKE LOWER($1) ORDER BY full_name ASC LIMIT 10',
+      [`%${query}%`]
+    );
+    console.log(`[SEARCH DEBUG] Query: '${query}', Found: ${result.rows.length}`);
+    if (result.rows.length > 0) {
+      console.log('[SEARCH DEBUG] Results:', result.rows);
     }
     res.json(result.rows);
   } catch (error) {
@@ -1062,26 +1058,28 @@ app.get('/api/student/:id/fees', authenticateToken, async (req, res) => {
   const userRole = req.user.role;
   const studentId = req.params.id;
   const year = req.query.year ? parseInt(req.query.year) : null;
+  console.log(`[FEE STATS DEBUG] Fetching stats for studentId: ${studentId}, userId: ${userId}, role: ${userRole}`);
   try {
     // Get student and class with role-based access
     let resultStudent;
-    if (userRole === 'admin') {
-      // Admin can view fees for any student
+    if (userRole === 'admin' || userRole === 'Admin3' || userRole === 'Admin2' || userRole === 'Admin1' || userRole === 'Admin4') {
+      // Admins can view fees for any student
       resultStudent = await pool.query(
-        'SELECT s.id, s.full_name, s.class_id, c.name as class_name, c.registration_fee, c.tuition_fee, c.vocational_fee, c.sport_wear_fee, c.health_sanitation_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1',
+        'SELECT s.*, c.name as class_name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1',
         [studentId]
       );
     } else {
       // Regular users can only view their own students' fees
       resultStudent = await pool.query(
-        'SELECT s.id, s.full_name, s.class_id, c.name as class_name, c.registration_fee, c.tuition_fee, c.vocational_fee, c.sport_wear_fee, c.health_sanitation_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1 AND s.user_id = $2',
+        'SELECT s.*, c.name as class_name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1 AND s.user_id = $2',
         [studentId, userId]
       );
     }
-    
     const student = resultStudent.rows[0];
-    if (!student) return res.status(404).json({ error: 'Student not found' });
-    
+    if (!student) {
+      console.warn(`[FEE STATS DEBUG] Student not found for id: ${studentId}`);
+      return res.status(404).json({ error: 'Student not found' });
+    }
     // Get all fees paid
     let resultFees;
     if (year) {
@@ -1099,14 +1097,17 @@ app.get('/api/student/:id/fees', authenticateToken, async (req, res) => {
     const feeMap = Object.fromEntries(resultFees.rows.map(f => [f.fee_type, parseFloat(f.paid)]));
     const balance = {
       Registration: Math.max(0, parseFloat(student.registration_fee) - (feeMap['Registration'] || 0)),
+      Bus: Math.max(0, parseFloat(student.bus_fee) - (feeMap['Bus'] || 0)),
+      Internship: Math.max(0, parseFloat(student.internship_fee) - (feeMap['Internship'] || 0)),
+      Remedial: Math.max(0, parseFloat(student.remedial_fee) - (feeMap['Remedial'] || 0)),
       Tuition: Math.max(0, parseFloat(student.tuition_fee) - (feeMap['Tuition'] || 0)),
-      Vocational: Math.max(0, parseFloat(student.vocational_fee) - (feeMap['Vocational'] || 0)),
-      'Sport Wear': Math.max(0, parseFloat(student.sport_wear_fee) - (feeMap['Sport Wear'] || 0)),
-      'Sanitation & Health': Math.max(0, parseFloat(student.health_sanitation_fee) - (feeMap['Sanitation & Health'] || 0)),
+      PTA: Math.max(0, parseFloat(student.pta_fee) - (feeMap['PTA'] || 0)),
     };
+    console.log(`[FEE STATS DEBUG] Returning stats for studentId: ${studentId}`, { student, balance });
     res.json({ student, balance });
   } catch (error) {
-    res.status(500).json({ error: 'Error fetching student fees' });
+    console.error('[FEE STATS DEBUG] Error fetching student fee stats:', error.stack);
+    res.status(500).json({ error: 'Error fetching student fees', details: error.message });
   }
 });
 
@@ -1138,116 +1139,92 @@ app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
   const classId = req.params.classId;
   const year = req.query.year ? parseInt(req.query.year) : null;
   
-  console.log(`[DEBUG] Class fee request - ClassId: ${classId}, Year: ${year}, UserRole: ${userRole}, UserId: ${userId}`);
-  
   try {
     // First, check if the class exists
     const classCheck = await pool.query(
       'SELECT id, name, user_id FROM classes WHERE id = $1',
       [classId]
     );
-    
     if (classCheck.rows.length === 0) {
-      console.log(`[DEBUG] Class ${classId} does not exist in database`);
+      console.log(`[FEE DEBUG] Class with ID ${classId} not found.`);
       return res.status(404).json({ error: `Class with ID ${classId} not found` });
     }
-    
-    const classData = classCheck.rows[0];
-    console.log(`[DEBUG] Class found: ${classData.name} (ID: ${classData.id}, UserID: ${classData.user_id})`);
-    
+    const className = classCheck.rows[0].name;
+    console.log(`[FEE DEBUG] ClassId: ${classId}, ClassName: ${className}`);
     // Get all students in class with role-based access
     let resultStudents;
     if (userRole === 'admin') {
-      // Admin can view fees for all students in the class
       resultStudents = await pool.query(
-        'SELECT s.id, s.full_name, s.user_id, c.registration_fee, c.tuition_fee, c.vocational_fee, c.sport_wear_fee, c.health_sanitation_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.class_id = $1',
+        'SELECT s.id, s.full_name, s.user_id, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.class_id = $1',
         [classId]
       );
     } else {
-      // Regular users can only view their own students in the class
       resultStudents = await pool.query(
-        'SELECT s.id, s.full_name, s.user_id, c.registration_fee, c.tuition_fee, c.vocational_fee, c.sport_wear_fee, c.health_sanitation_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.class_id = $1 AND s.user_id = $2',
+        'SELECT s.id, s.full_name, s.user_id, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.class_id = $1 AND s.user_id = $2',
         [classId, userId]
       );
     }
-    
-    console.log(`[DEBUG] Found ${resultStudents.rows.length} students in class ${classId}`);
-    if (resultStudents.rows.length > 0) {
-      console.log(`[DEBUG] Students in class:`, resultStudents.rows.map(s => ({ id: s.id, name: s.full_name, user_id: s.user_id })));
-    }
-    
     const students = resultStudents.rows;
-    
-    // If no students found, return empty array with a message
+    console.log(`[FEE DEBUG] Found ${students.length} students in class ${className} (ID: ${classId})`);
+    if (students.length > 0) {
+      console.log('[FEE DEBUG] Student IDs:', students.map(s => s.id));
+    }
     if (students.length === 0) {
-      console.log(`[DEBUG] No students found in class ${classId}, returning empty stats`);
       return res.json([]);
     }
-    
     // Get all fees for these students
     const studentIds = students.map(s => s.id);
     let fees = [];
     if (studentIds.length > 0) {
-      // Build parameterized placeholders for IN clause
       const placeholders = studentIds.map((_, i) => `$${i + 1}`).join(',');
       if (year) {
         const params = [...studentIds, year];
         const query = `SELECT student_id, fee_type, SUM(amount) as paid FROM fees WHERE student_id IN (${placeholders}) AND EXTRACT(YEAR FROM paid_at) = $${studentIds.length + 1} GROUP BY student_id, fee_type`;
-        console.log(`[DEBUG] Executing fee query with year filter: ${query}`);
-        console.log(`[DEBUG] Query parameters:`, params);
         const resultFees = await pool.query(query, params);
         fees = resultFees.rows;
       } else {
         const query = `SELECT student_id, fee_type, SUM(amount) as paid FROM fees WHERE student_id IN (${placeholders}) GROUP BY student_id, fee_type`;
-        console.log(`[DEBUG] Executing fee query without year filter: ${query}`);
-        console.log(`[DEBUG] Query parameters:`, studentIds);
         const resultFees = await pool.query(query, studentIds);
         fees = resultFees.rows;
       }
-      console.log(`[DEBUG] Found ${fees.length} fee records for students in class ${classId}`);
-      if (fees.length > 0) {
-        console.log(`[DEBUG] Fee records:`, fees);
-      }
-    } else {
-      console.log(`[DEBUG] No students found in class ${classId}, returning empty stats`);
     }
-    
     // Map fees by student
     const feeMap = {};
     for (const f of fees) {
       if (!feeMap[f.student_id]) feeMap[f.student_id] = {};
       feeMap[f.student_id][f.fee_type] = parseFloat(f.paid);
     }
-    
     // Build stats
     const stats = students.map(s => {
       const paid = feeMap[s.id] || {};
-      const reg = parseFloat(s.registration_fee);
-      const tui = parseFloat(s.tuition_fee);
-      const voc = parseFloat(s.vocational_fee);
-      const sport = parseFloat(s.sport_wear_fee);
-      const health = parseFloat(s.health_sanitation_fee);
-      const total = reg + tui + voc + sport + health;
+      const reg = parseFloat(s.registration_fee) || 0;
+      const bus = parseFloat(s.bus_fee) || 0;
+      const intern = parseFloat(s.internship_fee) || 0;
+      const remedial = parseFloat(s.remedial_fee) || 0;
+      const tuition = parseFloat(s.tuition_fee) || 0;
+      const pta = parseFloat(s.pta_fee) || 0;
+      const total = reg + bus + intern + remedial + tuition + pta;
       const paidReg = paid['Registration'] || 0;
-      const paidTui = paid['Tuition'] || 0;
-      const paidVoc = paid['Vocational'] || 0;
-      const paidSport = paid['Sport Wear'] || 0;
-      const paidHealth = paid['Sanitation & Health'] || 0;
-      const paidTotal = paidReg + paidTui + paidVoc + paidSport + paidHealth;
+      const paidBus = paid['Bus'] || 0;
+      const paidIntern = paid['Internship'] || 0;
+      const paidRemedial = paid['Remedial'] || 0;
+      const paidTuition = paid['Tuition'] || 0;
+      const paidPTA = paid['PTA'] || 0;
+      const paidTotal = paidReg + paidBus + paidIntern + paidRemedial + paidTuition + paidPTA;
       return {
         name: s.full_name,
         Registration: paidReg,
-        Tuition: paidTui,
-        Vocational: paidVoc,
-        'Sport Wear': paidSport,
-        'Sanitation & Health': paidHealth,
+        Bus: paidBus,
+        Internship: paidIntern,
+        Remedial: paidRemedial,
+        Tuition: paidTuition,
+        PTA: paidPTA,
         Total: paidTotal,
         Balance: Math.max(0, total - paidTotal),
         Status: paidTotal >= total ? 'Paid' : 'Owing'
       };
     });
-    
-    console.log(`[DEBUG] Returning ${stats.length} student stats for class ${classId}`);
+    console.log('[FEE DEBUG] Fee stats to return:', stats);
     res.json(stats);
   } catch (error) {
     console.error('Error in /api/fees/class/:classId:', error);
@@ -1744,6 +1721,14 @@ app.delete('/api/users/:id', authenticateToken, async (req, res) => {
   if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
   const { id } = req.params;
   try {
+    // Check if user is Admin3
+    const userResult = await pool.query('SELECT role FROM users WHERE id = $1', [id]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (userResult.rows[0].role === 'Admin3') {
+      return res.status(403).json({ error: 'You cannot delete Accounts manager.' });
+    }
     await pool.query('DELETE FROM users WHERE id = $1', [id]);
     res.json({ message: 'User deleted' });
   } catch (error) {
@@ -1834,4 +1819,90 @@ app.use(function (err, req, res, next) {
     return res.status(400).json({ error: err.message });
   }
   next(err);
+});
+
+// Permanently delete a student by id
+app.delete('/api/students/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query('DELETE FROM students WHERE id = $1 RETURNING *', [id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+    res.json({ message: 'Student deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting student:', error);
+    res.status(500).json({ error: 'Failed to delete student' });
+  }
+});
+
+const uploadMany = multer({ storage: storage });
+
+// Helper to parse Excel serial date or string to yyyy-mm-dd
+function parseExcelDate(excelDate) {
+  if (!excelDate) return null;
+  if (typeof excelDate === 'number') {
+    // Excel's epoch starts at 1900-01-01
+    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+    const d = new Date(excelEpoch.getTime() + excelDate * 86400000);
+    return d.toISOString().slice(0, 10);
+  }
+  if (typeof excelDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(excelDate)) {
+    return excelDate;
+  }
+  // Try to parse as date string
+  const d = new Date(excelDate);
+  if (!isNaN(d)) return d.toISOString().slice(0, 10);
+  return null;
+}
+
+// Bulk student registration from Excel (Upload Many)
+app.post('/api/students/upload-many', uploadMany.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No Excel file uploaded' });
+    }
+    const XLSX = require('xlsx');
+    const workbook = XLSX.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+    // Remove header row
+    const rows = data.slice(1);
+    if (!rows.length) {
+      return res.status(400).json({ error: 'Excel file is empty' });
+    }
+    // Expected columns: Full Name, Sex, Date of Birth, Place of Birth, Father's Name, Mother's Name, Class, Department/Specialty, Contact
+    const today = new Date().toISOString().slice(0, 10);
+    let created = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row[0]) continue; // skip if no full name
+      const [fullName, sex, dob, pob, father, mother, className, dept, contact] = row;
+      // Find class_id and specialty_id
+      const classResult = await pool.query('SELECT id FROM classes WHERE name = $1', [className]);
+      const specialtyResult = await pool.query('SELECT id FROM specialties WHERE name = $1', [dept]);
+      const class_id = classResult.rows[0] ? classResult.rows[0].id : null;
+      const specialty_id = specialtyResult.rows[0] ? specialtyResult.rows[0].id : null;
+      // Generate student ID
+      const first = (fullName.split(' ')[0] || '').slice(0, 2).toUpperCase();
+      const last = (fullName.split(' ').slice(-1)[0] || '').slice(-2).toUpperCase();
+      const year = today.slice(2, 4);
+      const seq = (i + 1).toString().padStart(3, '0');
+      const studentId = `${year}-VOT-${first}${last}-${seq}`;
+      await pool.query(
+        `INSERT INTO students (student_id, registration_date, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, class_id, specialty_id, guardian_contact, photo_url)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [studentId, today, fullName, sex, parseExcelDate(dob), pob, father, mother, class_id, specialty_id, contact, null]
+      );
+      created++;
+    }
+    // Clean up the uploaded file
+    const fs = require('fs');
+    fs.unlinkSync(req.file.path);
+    res.json({ message: `${created} students uploaded successfully` });
+  } catch (error) {
+    console.error('Error in upload-many:', error);
+    res.status(500).json({ error: 'Error uploading students from Excel', details: error.message });
+  }
 });
