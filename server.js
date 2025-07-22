@@ -1906,3 +1906,114 @@ app.post('/api/students/upload-many', uploadMany.single('file'), async (req, res
     res.status(500).json({ error: 'Error uploading students from Excel', details: error.message });
   }
 });
+
+// === MESSAGES ENDPOINTS ===
+// Send a message
+app.post('/api/messages', authenticateToken, async (req, res) => {
+  const sender_id = req.user.id;
+  const { receiver_id, content } = req.body;
+  if (!receiver_id || !content) {
+    return res.status(400).json({ error: 'receiver_id and content are required' });
+  }
+  try {
+    const result = await pool.query(
+      'INSERT INTO messages (sender_id, receiver_id, content) VALUES ($1, $2, $3) RETURNING *',
+      [sender_id, receiver_id, content]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error sending message:', error);
+    res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
+// Get all messages between logged-in user and another user
+app.get('/api/messages/:userId', authenticateToken, async (req, res) => {
+  const user1 = req.user.id;
+  const user2 = parseInt(req.params.userId);
+  try {
+    const result = await pool.query(
+      `SELECT * FROM messages
+       WHERE (sender_id = $1 AND receiver_id = $2)
+          OR (sender_id = $2 AND receiver_id = $1)
+       ORDER BY created_at ASC`,
+      [user1, user2]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching messages:', error);
+    res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+});
+
+// All users can retrieve all users for chat
+app.get('/api/users/all-chat', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, name, username, contact, role, suspended FROM users ORDER BY created_at DESC');
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// Mark all messages from userId to logged-in user as read
+app.post('/api/messages/:userId/read', authenticateToken, async (req, res) => {
+  const userId = parseInt(req.params.userId);
+  const myId = req.user.id;
+  try {
+    await pool.query(
+      'UPDATE messages SET read = TRUE WHERE sender_id = $1 AND receiver_id = $2 AND read = FALSE',
+      [userId, myId]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to mark messages as read' });
+  }
+});
+
+// Chat list for sidebar: last message, unread count, etc.
+app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
+  const myId = req.user.id;
+  try {
+    // Get all users except self
+    const usersRes = await pool.query('SELECT id, username, name FROM users WHERE id != $1', [myId]);
+    const users = usersRes.rows;
+    // For each user, get last message and unread count
+    const chatList = await Promise.all(users.map(async (u) => {
+      // Last message between me and user
+      const lastMsgRes = await pool.query(
+        `SELECT * FROM messages WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1) ORDER BY created_at DESC LIMIT 1`,
+        [myId, u.id]
+      );
+      const lastMsg = lastMsgRes.rows[0] || null;
+      // Unread count (messages from user to me, not read)
+      const unreadRes = await pool.query(
+        'SELECT COUNT(*) FROM messages WHERE sender_id = $1 AND receiver_id = $2 AND read = FALSE',
+        [u.id, myId]
+      );
+      const unread = parseInt(unreadRes.rows[0].count, 10);
+      return {
+        id: u.id,
+        username: u.username,
+        name: u.name,
+        lastMessage: lastMsg ? {
+          content: lastMsg.content,
+          time: lastMsg.created_at,
+          read: lastMsg.read,
+          sender_id: lastMsg.sender_id
+        } : null,
+        unread
+      };
+    }));
+    // Sort by last message time desc
+    chatList.sort((a, b) => {
+      if (!a.lastMessage && !b.lastMessage) return 0;
+      if (!a.lastMessage) return 1;
+      if (!b.lastMessage) return -1;
+      return new Date(b.lastMessage.time) - new Date(a.lastMessage.time);
+    });
+    res.json(chatList);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch chat list' });
+  }
+});
