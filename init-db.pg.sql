@@ -68,3 +68,19 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     read BOOLEAN DEFAULT FALSE
 );
+
+-- Attendance
+CREATE TABLE IF NOT EXISTS attendance_sessions (
+    id SERIAL PRIMARY KEY,
+    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+    taken_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    session_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS attendance_records (
+    id SERIAL PRIMARY KEY,
+    session_id INTEGER REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+    student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+    status VARCHAR(10) NOT NULL CHECK (status IN ('present', 'absent')),
+    marked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

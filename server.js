@@ -2018,3 +2018,150 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch chat list' });
   }
 });
+
+// === Attendance Endpoints ===
+
+// Start a new attendance session for a class
+app.post('/api/attendance/start', authenticateToken, async (req, res) => {
+  const { class_id } = req.body;
+  if (!class_id) return res.status(400).json({ error: 'class_id is required' });
+  try {
+    const result = await pool.query(
+      'INSERT INTO attendance_sessions (class_id, taken_by) VALUES ($1, $2) RETURNING *',
+      [class_id, req.user.id]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to start attendance session', details: error.message });
+  }
+});
+
+// Get all classes (for attendance selection)
+app.get('/api/attendance/classes', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, name FROM classes ORDER BY name ASC');
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch classes', details: error.message });
+  }
+});
+
+// Get all students for a class
+app.get('/api/attendance/:classId/students', authenticateToken, async (req, res) => {
+  const { classId } = req.params;
+  try {
+    const result = await pool.query(
+      'SELECT id, full_name, student_id FROM students WHERE class_id = $1 ORDER BY full_name ASC',
+      [classId]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch students', details: error.message });
+  }
+});
+
+// Mark attendance for a student in a session
+app.post('/api/attendance/:sessionId/mark', authenticateToken, async (req, res) => {
+  const { sessionId } = req.params;
+  const { student_id, status } = req.body;
+  if (!student_id || !['present', 'absent'].includes(status)) {
+    return res.status(400).json({ error: 'student_id and valid status are required' });
+  }
+  try {
+    // Only one record per student per session
+    const existing = await pool.query(
+      'SELECT * FROM attendance_records WHERE session_id = $1 AND student_id = $2',
+      [sessionId, student_id]
+    );
+    if (existing.rows.length > 0) {
+      // Update status if already exists
+      await pool.query(
+        'UPDATE attendance_records SET status = $1, marked_at = CURRENT_TIMESTAMP WHERE session_id = $2 AND student_id = $3',
+        [status, sessionId, student_id]
+      );
+    } else {
+      await pool.query(
+        'INSERT INTO attendance_records (session_id, student_id, status) VALUES ($1, $2, $3)',
+        [sessionId, student_id, status]
+      );
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to mark attendance', details: error.message });
+  }
+});
+
+// Get today's attendance summary (total present/absent)
+app.get('/api/attendance/today-summary', authenticateToken, async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    const result = await pool.query(
+      `SELECT status, COUNT(*) as count
+       FROM attendance_records ar
+       JOIN attendance_sessions s ON ar.session_id = s.id
+       WHERE s.session_time >= $1 AND s.session_time < $2
+       GROUP BY status`,
+      [today, tomorrow]
+    );
+    let present = 0, absent = 0;
+    result.rows.forEach(r => {
+      if (r.status === 'present') present = parseInt(r.count, 10);
+      if (r.status === 'absent') absent = parseInt(r.count, 10);
+    });
+    res.json({ present, absent });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch today summary', details: error.message });
+  }
+});
+
+// Get attendance sessions and records for a class by date or week
+app.get('/api/attendance/sessions', authenticateToken, async (req, res) => {
+  const { classId, date, week } = req.query;
+  if (!classId) return res.status(400).json({ error: 'classId is required' });
+  try {
+    let sessions = [];
+    if (date) {
+      // Fetch all sessions for the class on the given date
+      const start = new Date(date);
+      start.setHours(0,0,0,0);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 1);
+      const result = await pool.query(
+        'SELECT * FROM attendance_sessions WHERE class_id = $1 AND session_time >= $2 AND session_time < $3 ORDER BY session_time ASC',
+        [classId, start, end]
+      );
+      sessions = result.rows;
+    } else if (week) {
+      // week format: YYYY-WW (ISO week)
+      const [year, weekNum] = week.split('-W');
+      const firstDay = new Date(year, 0, 1 + (weekNum - 1) * 7);
+      // Adjust to Monday
+      const dayOfWeek = firstDay.getDay();
+      const monday = new Date(firstDay);
+      monday.setDate(firstDay.getDate() - ((dayOfWeek + 6) % 7));
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 7);
+      const result = await pool.query(
+        'SELECT * FROM attendance_sessions WHERE class_id = $1 AND session_time >= $2 AND session_time < $3 ORDER BY session_time ASC',
+        [classId, monday, sunday]
+      );
+      sessions = result.rows;
+    } else {
+      return res.status(400).json({ error: 'date or week is required' });
+    }
+    // For each session, fetch records
+    for (let session of sessions) {
+      const recRes = await pool.query(
+        'SELECT student_id, status FROM attendance_records WHERE session_id = $1',
+        [session.id]
+      );
+      session.records = recRes.rows;
+    }
+    res.json(sessions);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch attendance sessions', details: error.message });
+  }
+});
