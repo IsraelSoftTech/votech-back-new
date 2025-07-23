@@ -2023,12 +2023,15 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
 
 // Start a new attendance session for a class
 app.post('/api/attendance/start', authenticateToken, async (req, res) => {
-  const { class_id } = req.body;
+  const { class_id, session_time } = req.body;
   if (!class_id) return res.status(400).json({ error: 'class_id is required' });
   try {
-    const result = await pool.query(
-      'INSERT INTO attendance_sessions (class_id, taken_by) VALUES ($1, $2) RETURNING *',
-      [class_id, req.user.id]
+    let result;
+    // Always store session_time in UTC ISO format
+    let sessionTimeToStore = session_time ? new Date(session_time).toISOString() : new Date().toISOString();
+    result = await pool.query(
+      'INSERT INTO attendance_sessions (class_id, taken_by, session_time) VALUES ($1, $2, $3) RETURNING *',
+      [class_id, req.user.id, sessionTimeToStore]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -2117,51 +2120,13 @@ app.get('/api/attendance/today-summary', authenticateToken, async (req, res) => 
   }
 });
 
-// Get attendance sessions and records for a class by date or week
-app.get('/api/attendance/sessions', authenticateToken, async (req, res) => {
-  const { classId, date, week } = req.query;
-  if (!classId) return res.status(400).json({ error: 'classId is required' });
+// Delete all attendance records and sessions
+app.delete('/api/attendance/all', authenticateToken, async (req, res) => {
   try {
-    let sessions = [];
-    if (date) {
-      // Fetch all sessions for the class on the given date
-      const start = new Date(date);
-      start.setHours(0,0,0,0);
-      const end = new Date(start);
-      end.setDate(start.getDate() + 1);
-      const result = await pool.query(
-        'SELECT * FROM attendance_sessions WHERE class_id = $1 AND session_time >= $2 AND session_time < $3 ORDER BY session_time ASC',
-        [classId, start, end]
-      );
-      sessions = result.rows;
-    } else if (week) {
-      // week format: YYYY-WW (ISO week)
-      const [year, weekNum] = week.split('-W');
-      const firstDay = new Date(year, 0, 1 + (weekNum - 1) * 7);
-      // Adjust to Monday
-      const dayOfWeek = firstDay.getDay();
-      const monday = new Date(firstDay);
-      monday.setDate(firstDay.getDate() - ((dayOfWeek + 6) % 7));
-      const sunday = new Date(monday);
-      sunday.setDate(monday.getDate() + 7);
-      const result = await pool.query(
-        'SELECT * FROM attendance_sessions WHERE class_id = $1 AND session_time >= $2 AND session_time < $3 ORDER BY session_time ASC',
-        [classId, monday, sunday]
-      );
-      sessions = result.rows;
-    } else {
-      return res.status(400).json({ error: 'date or week is required' });
-    }
-    // For each session, fetch records
-    for (let session of sessions) {
-      const recRes = await pool.query(
-        'SELECT student_id, status FROM attendance_records WHERE session_id = $1',
-        [session.id]
-      );
-      session.records = recRes.rows;
-    }
-    res.json(sessions);
+    await pool.query('DELETE FROM attendance_records');
+    await pool.query('DELETE FROM attendance_sessions');
+    res.json({ success: true, message: 'All attendance records and sessions deleted.' });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch attendance sessions', details: error.message });
+    res.status(500).json({ error: 'Failed to delete all attendance records', details: error.message });
   }
 });
