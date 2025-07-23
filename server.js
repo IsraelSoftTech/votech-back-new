@@ -97,7 +97,8 @@ const findAvailablePort = (startPort) => {
 // CORS configuration with dynamic origin
 const corsOptions = {
   origin: [
-    'https://votech-jz0j.onrender.com', // production frontend
+    'https://votech-latest-front.onrender.com', // added for new frontend
+ 
     'http://localhost:3000',             // local development
     'http://localhost:3004'              // local development (alternate port)
   ],
