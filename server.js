@@ -820,14 +820,9 @@ app.put('/api/teachers/:id/status', authenticateToken, async (req, res) => {
   const teacherId = req.params.id;
 
   try {
-    // Check if user is admin
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Only admin can approve/reject teachers' });
-    }
-
     // Validate status
-    if (!['approved', 'rejected'].includes(status)) {
-      return res.status(400).json({ error: 'Invalid status. Must be "approved" or "rejected"' });
+    if (!['approved', 'pending', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status. Must be "approved", "pending", or "rejected"' });
     }
 
     // Update the teacher status
@@ -2123,5 +2118,91 @@ app.post('/api/teacher-application', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error in /api/teacher-application:', error);
     res.status(500).json({ error: 'Error submitting application' });
+  }
+});
+
+// Get teacher status by ID
+app.get('/api/teachers/:id/status', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query('SELECT status FROM teachers WHERE id = $1', [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Teacher not found' });
+    res.json({ status: result.rows[0].status });
+  } catch (error) {
+    console.error('Error fetching teacher status:', error);
+    res.status(500).json({ error: 'Error fetching teacher status' });
+  }
+});
+
+// Get all users with role 'Teacher' (for salary management)
+app.get('/api/teachers/users', authenticateToken, async (req, res) => {
+  try {
+    // Define allowed roles for salary assignment (excluding 'student' and 'parent')
+    const allowedRoles = [
+      'teacher', 'Teacher', 'Admin1', 'Admin2', 'Admin3', 'Admin4', 'Secretary', 'Discipline', 'Psychosocialist'
+    ];
+    const result = await pool.query(
+      `SELECT id, name, username, contact, email, role FROM users WHERE role = ANY($1) ORDER BY name ASC`,
+      [allowedRoles]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch teacher users' });
+  }
+});
+
+// SALARY ENDPOINTS
+app.get('/api/salaries', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM salary');
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching salaries' });
+  }
+});
+
+app.get('/api/salaries/:teacherId', authenticateToken, async (req, res) => {
+  const teacherId = req.params.teacherId;
+  try {
+    const result = await pool.query('SELECT * FROM salary WHERE teacher_id = $1', [teacherId]);
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching salary for teacher' });
+  }
+});
+
+app.post('/api/salaries', authenticateToken, async (req, res) => {
+  const { teacher_id, amount } = req.body;
+  try {
+    const result = await pool.query(
+      'INSERT INTO salary (teacher_id, amount) VALUES ($1, $2) RETURNING *',
+      [teacher_id, amount]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: 'Error setting salary' });
+  }
+});
+
+app.post('/api/salaries/pay', authenticateToken, async (req, res) => {
+  const { salary_id } = req.body;
+  try {
+    const result = await pool.query(
+      'UPDATE salary SET paid = TRUE, paid_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *',
+      [salary_id]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: 'Error paying salary' });
+  }
+});
+
+app.delete('/api/salaries/:id', authenticateToken, async (req, res) => {
+  const id = req.params.id;
+  try {
+    await pool.query('DELETE FROM salary WHERE id = $1', [id]);
+    res.json({ message: 'Salary record deleted' });
+  } catch (error) {
+    res.status(500).json({ error: 'Error deleting salary record' });
   }
 });
