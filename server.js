@@ -738,49 +738,36 @@ app.delete('/api/vocational/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Teachers endpoints
+// Teachers endpoints (Admin: full CRUD, others: only their own if needed)
 app.post('/api/teachers', authenticateToken, async (req, res) => {
-  const { teacher_name, subjects, id_card } = req.body;
-  const userId = req.user.id;
-
+  const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
+  // Allow only admins to add teachers (or remove this check if all can add)
+  if (!['admin', 'Admin1', 'Admin2', 'Admin3', 'Admin4'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
   try {
-    // Check if user has already registered a teacher
-    const existingTeacher = await pool.query(
-      'SELECT id FROM teachers WHERE user_id = $1',
-      [userId]
-    );
-    
-    if (existingTeacher.rows.length > 0) {
-      return res.status(400).json({ error: 'You have already registered a teacher. Only one teacher registration is allowed per account.' });
-    }
-
     const result = await pool.query(
-      `INSERT INTO teachers (user_id, teacher_name, subjects, id_card, status)
-       VALUES ($1, $2, $3, $4, 'pending') RETURNING *`,
-      [userId, teacher_name, subjects, id_card]
+      `INSERT INTO teachers (full_name, sex, id_card, dob, pob, subjects, classes, contact)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [full_name, sex, id_card, dob, pob, subjects, classes, contact]
     );
-    
-    res.status(201).json({ id: result.rows[0].id });
+    res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating teacher:', error);
     res.status(500).json({ error: 'Error creating teacher' });
   }
 });
 
-// Teachers GET endpoint: always filter by user_id
+// Get all teachers (admin) or only own (if needed)
 app.get('/api/teachers', authenticateToken, async (req, res) => {
-  const userId = req.user.id;
-  const year = req.query.year ? parseInt(req.query.year) : null;
   try {
-    let query, params;
-    if (year) {
-      query = 'SELECT * FROM teachers WHERE user_id = $1 AND EXTRACT(YEAR FROM created_at) = $2 ORDER BY created_at DESC';
-      params = [userId, year];
+    let result;
+    if (['admin', 'Admin1', 'Admin2', 'Admin3', 'Admin4'].includes(req.user.role)) {
+      result = await pool.query('SELECT * FROM teachers ORDER BY created_at DESC');
     } else {
-      query = 'SELECT * FROM teachers WHERE user_id = $1 ORDER BY created_at DESC';
-      params = [userId];
+      // If you want to restrict for non-admins, add logic here
+      result = await pool.query('SELECT * FROM teachers ORDER BY created_at DESC');
     }
-    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching teachers:', error);
@@ -789,61 +776,45 @@ app.get('/api/teachers', authenticateToken, async (req, res) => {
 });
 
 app.put('/api/teachers/:id', authenticateToken, async (req, res) => {
-  const { teacher_name, subjects, id_card, classes_taught, salary_amount } = req.body;
-  const userId = req.user.id;
-  const userRole = req.user.role;
-  const teacherId = req.params.id;
-
+  const { id } = req.params;
+  const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
+  if (!['admin', 'Admin1', 'Admin2', 'Admin3', 'Admin4'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
   try {
-    let resultTeacher;
-    
-    if (userRole === 'admin') {
-      // Admin can edit any teacher
-      resultTeacher = await pool.query(
-        'SELECT * FROM teachers WHERE id = $1',
-        [teacherId]
-      );
-    } else {
-      // Regular users can only edit their own teachers
-      resultTeacher = await pool.query(
-        'SELECT * FROM teachers WHERE id = $1 AND user_id = $2',
-        [teacherId, userId]
-      );
-    }
-    
-    if (resultTeacher.rows.length === 0) {
-      return res.status(404).json({ error: 'Teacher not found' });
-    }
-
-    // Update the teacher
-    let result;
-    if (userRole === 'admin') {
-      // Admin can update any teacher
-      result = await pool.query(
-        `UPDATE teachers 
-         SET teacher_name = $1, subjects = $2, id_card = $3, classes_taught = $4, salary_amount = $5
-         WHERE id = $6 RETURNING *`,
-        [teacher_name, subjects, id_card, classes_taught, salary_amount, teacherId]
-      );
-    } else {
-      // Regular users can only update their own teachers
-      result = await pool.query(
-        `UPDATE teachers 
-         SET teacher_name = $1, subjects = $2, id_card = $3, classes_taught = $4, salary_amount = $5
-         WHERE id = $6 AND user_id = $7 RETURNING *`,
-        [teacher_name, subjects, id_card, classes_taught, salary_amount, teacherId, userId]
-      );
-    }
-    
-    res.json({ message: 'Teacher updated successfully' });
+    const result = await pool.query(
+      `UPDATE teachers SET full_name=$1, sex=$2, id_card=$3, dob=$4, pob=$5, subjects=$6, classes=$7, contact=$8 WHERE id=$9 RETURNING *`,
+      [full_name, sex, id_card, dob, pob, subjects, classes, contact, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Teacher not found' });
+    res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating teacher:', error);
     res.status(500).json({ error: 'Error updating teacher' });
   }
 });
 
+app.delete('/api/teachers/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  if (!['admin', 'Admin1', 'Admin2', 'Admin3', 'Admin4'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const result = await pool.query('DELETE FROM teachers WHERE id=$1 RETURNING *', [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Teacher not found' });
+    res.json({ message: 'Teacher deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting teacher:', error);
+    res.status(500).json({ error: 'Error deleting teacher' });
+  }
+});
+
 // New endpoint for admin to approve/reject teachers
 app.put('/api/teachers/:id/status', authenticateToken, async (req, res) => {
+  console.log('User object for approval:', req.user);
+  if (req.user.role !== 'Admin3') {
+    return res.status(403).json({ error: 'Only Admin3 can approve/reject teachers' });
+  }
   const { status } = req.body;
   const userId = req.user.id;
   const teacherId = req.params.id;
@@ -875,54 +846,6 @@ app.put('/api/teachers/:id/status', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error updating teacher status:', error);
     res.status(500).json({ error: 'Error updating teacher status' });
-  }
-});
-
-app.delete('/api/teachers/:id', authenticateToken, async (req, res) => {
-  const userId = req.user.id;
-  const userRole = req.user.role;
-  const teacherId = req.params.id;
-
-  try {
-    let resultTeacherDel;
-    
-    if (userRole === 'admin') {
-      // Admin can delete any teacher
-      resultTeacherDel = await pool.query(
-        'SELECT * FROM teachers WHERE id = $1',
-        [teacherId]
-      );
-    } else {
-      // Regular users can only delete their own teachers
-      resultTeacherDel = await pool.query(
-        'SELECT * FROM teachers WHERE id = $1 AND user_id = $2',
-        [teacherId, userId]
-      );
-    }
-    
-    if (resultTeacherDel.rows.length === 0) {
-      return res.status(404).json({ error: 'Teacher not found' });
-    }
-
-    // Delete the teacher
-    if (userRole === 'admin') {
-      // Admin can delete any teacher
-      await pool.query(
-        'DELETE FROM teachers WHERE id = $1',
-        [teacherId]
-      );
-    } else {
-      // Regular users can only delete their own teachers
-      await pool.query(
-        'DELETE FROM teachers WHERE id = $1 AND user_id = $2',
-        [teacherId, userId]
-      );
-    }
-    
-    res.json({ message: 'Teacher deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting teacher:', error);
-    res.status(500).json({ error: 'Error deleting teacher' });
   }
 });
 
@@ -2128,5 +2051,77 @@ app.delete('/api/attendance/all', authenticateToken, async (req, res) => {
     res.json({ success: true, message: 'All attendance records and sessions deleted.' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete all attendance records', details: error.message });
+  }
+});
+
+// === Subjects endpoints ===
+app.get('/api/subjects', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM subjects ORDER BY created_at DESC');
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch subjects' });
+  }
+});
+
+app.post('/api/subjects', async (req, res) => {
+  let { name } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  // Auto-generate code: first 3 letters (no spaces, upper) + random 3 digits, max 6 chars
+  let code = name.replace(/[^A-Za-z0-9]/g, '').slice(0,3).toUpperCase() + Math.floor(100 + Math.random() * 900);
+  code = code.slice(0, 6);
+  try {
+    const result = await pool.query('INSERT INTO subjects (name, code) VALUES ($1, $2) RETURNING *', [name, code]);
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create subject' });
+  }
+});
+
+app.put('/api/subjects/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, code } = req.body;
+  if (!name || !code) return res.status(400).json({ error: 'Name and code are required' });
+  try {
+    const result = await pool.query('UPDATE subjects SET name=$1, code=$2 WHERE id=$3 RETURNING *', [name, code, id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Subject not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update subject' });
+  }
+});
+
+app.delete('/api/subjects/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query('DELETE FROM subjects WHERE id=$1 RETURNING *', [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Subject not found' });
+    res.json({ message: 'Subject deleted' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete subject' });
+  }
+});
+
+// Teacher self-application endpoint
+app.post('/api/teacher-application', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'Teacher') {
+    return res.status(403).json({ error: 'Only teachers can apply here' });
+  }
+  const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
+  // Prevent duplicate applications by contact or full_name
+  try {
+    const exists = await pool.query('SELECT * FROM teachers WHERE contact = $1 OR full_name = $2', [contact, full_name]);
+    if (exists.rows.length > 0) {
+      return res.status(400).json({ error: 'Application already exists for this teacher' });
+    }
+    const result = await pool.query(
+      `INSERT INTO teachers (full_name, sex, id_card, dob, pob, subjects, classes, contact, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending') RETURNING *`,
+      [full_name, sex, id_card, dob, pob, subjects, classes, contact]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error in /api/teacher-application:', error);
+    res.status(500).json({ error: 'Error submitting application' });
   }
 });

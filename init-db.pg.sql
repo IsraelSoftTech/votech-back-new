@@ -84,3 +84,26 @@ CREATE TABLE IF NOT EXISTS attendance_records (
     status VARCHAR(10) NOT NULL CHECK (status IN ('present', 'absent')),
     marked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Teachers
+CREATE TABLE IF NOT EXISTS teachers (
+    id SERIAL PRIMARY KEY,
+    full_name VARCHAR(100) NOT NULL,
+    sex VARCHAR(10) NOT NULL,
+    id_card VARCHAR(50) NOT NULL,
+    dob DATE NOT NULL,
+    pob VARCHAR(100) NOT NULL,
+    subjects VARCHAR(255) NOT NULL,
+    classes VARCHAR(255) NOT NULL,
+    contact VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'pending';
+
+CREATE TABLE IF NOT EXISTS subjects (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    code VARCHAR(20) UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
