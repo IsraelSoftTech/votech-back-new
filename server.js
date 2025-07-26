@@ -2172,11 +2172,21 @@ app.get('/api/salaries/:teacherId', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/salaries', authenticateToken, async (req, res) => {
-  const { teacher_id, amount } = req.body;
+  const { teacher_id, amount, month } = req.body;
   try {
+    // Check if salary for this teacher and month already exists
+    const existingCheck = await pool.query(
+      'SELECT * FROM salary WHERE teacher_id = $1 AND month = $2',
+      [teacher_id, month]
+    );
+    
+    if (existingCheck.rows.length > 0) {
+      return res.status(400).json({ error: 'Salary for this teacher and month already exists' });
+    }
+    
     const result = await pool.query(
-      'INSERT INTO salary (teacher_id, amount) VALUES ($1, $2) RETURNING *',
-      [teacher_id, amount]
+      'INSERT INTO salary (teacher_id, amount, month) VALUES ($1, $2, $3) RETURNING *',
+      [teacher_id, amount, month]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -2185,11 +2195,37 @@ app.post('/api/salaries', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/salaries/pay', authenticateToken, async (req, res) => {
-  const { salary_id } = req.body;
+  const { salary_id, month } = req.body;
   try {
-    const result = await pool.query(
-      'UPDATE salary SET paid = TRUE, paid_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *',
+    // Check if salary is already paid
+    const checkPaid = await pool.query(
+      'SELECT * FROM salary WHERE id = $1',
       [salary_id]
+    );
+    
+    if (checkPaid.rows.length === 0) {
+      return res.status(404).json({ error: 'Salary record not found' });
+    }
+    
+    if (checkPaid.rows[0].paid) {
+      return res.status(400).json({ error: 'Salary is already paid' });
+    }
+    
+    // Check if teacher already has a paid salary for this month
+    if (month) {
+      const existingPaid = await pool.query(
+        'SELECT * FROM salary WHERE teacher_id = $1 AND month = $2 AND paid = TRUE',
+        [checkPaid.rows[0].teacher_id, month]
+      );
+      
+      if (existingPaid.rows.length > 0) {
+        return res.status(400).json({ error: 'Salary for this teacher and month is already paid' });
+      }
+    }
+    
+    const result = await pool.query(
+      'UPDATE salary SET paid = TRUE, paid_at = CURRENT_TIMESTAMP, month = $2 WHERE id = $1 RETURNING *',
+      [salary_id, month]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -2204,5 +2240,66 @@ app.delete('/api/salaries/:id', authenticateToken, async (req, res) => {
     res.json({ message: 'Salary record deleted' });
   } catch (error) {
     res.status(500).json({ error: 'Error deleting salary record' });
+  }
+});
+
+// === Inventory Endpoints ===
+app.get('/api/inventory', async (req, res) => {
+  const { type } = req.query;
+  try {
+    const result = await pool.query(
+      'SELECT * FROM inventory WHERE type = $1 ORDER BY date DESC',
+      [type]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch inventory' });
+  }
+});
+
+app.post('/api/inventory', async (req, res) => {
+  const { date, item_name, department, quantity, estimated_cost, type } = req.body;
+  try {
+    const result = await pool.query(
+      `INSERT INTO inventory (date, item_name, department, quantity, estimated_cost, type)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [date, item_name, department, quantity, estimated_cost, type]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to register item' });
+  }
+});
+
+app.put('/api/inventory/:id', async (req, res) => {
+  const { date, item_name, department, quantity, estimated_cost, type, depreciation_rate } = req.body;
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `UPDATE inventory SET date=$1, item_name=$2, department=$3, quantity=$4, estimated_cost=$5, type=$6, depreciation_rate=$7, updated_at=NOW()
+       WHERE id=$8 RETURNING *`,
+      [date, item_name, department, quantity, estimated_cost, type, depreciation_rate, id]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update item' });
+  }
+});
+
+app.delete('/api/inventory/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM inventory WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete item' });
+  }
+});
+
+app.get('/api/departments', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT name FROM specialties');
+    res.json(result.rows.map(r => r.name));
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch departments' });
   }
 });

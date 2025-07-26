@@ -113,7 +113,22 @@ CREATE TABLE IF NOT EXISTS salary (
     id SERIAL PRIMARY KEY,
     teacher_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     amount NUMERIC(12,2) NOT NULL,
+    month VARCHAR(20),
     paid BOOLEAN DEFAULT FALSE,
     paid_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Inventory
+CREATE TABLE IF NOT EXISTS inventory (
+  id SERIAL PRIMARY KEY,
+  date DATE NOT NULL,
+  item_name VARCHAR(255) NOT NULL,
+  department VARCHAR(255) NOT NULL,
+  quantity INTEGER NOT NULL,
+  estimated_cost NUMERIC(12,2) NOT NULL,
+  type VARCHAR(20) NOT NULL, -- 'income' or 'expenditure'
+  depreciation_rate NUMERIC(5,2),
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
 );
