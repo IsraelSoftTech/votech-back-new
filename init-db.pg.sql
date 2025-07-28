@@ -132,3 +132,13 @@ CREATE TABLE IF NOT EXISTS inventory (
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Academic Years
+CREATE TABLE IF NOT EXISTS academic_years (
+    id SERIAL PRIMARY KEY,
+    year_name VARCHAR(50) NOT NULL,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    is_active BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
