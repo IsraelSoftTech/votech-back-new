@@ -111,8 +111,20 @@ const corsOptions = {
 
 // Middleware
 app.use(cors(corsOptions));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+// Conditional middleware to handle both JSON and FormData
+app.use((req, res, next) => {
+  // Skip JSON parsing for file upload routes
+  if (req.path.includes('/teacher-application') && (req.method === 'POST' || req.method === 'PUT')) {
+    // For file uploads, let multer handle the parsing
+    next();
+  } else {
+    // For other routes, use JSON parsing
+    express.json({ limit: '10mb' })(req, res, next);
+  }
+});
+
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static('uploads')); // Serve uploaded files
 app.options('*', cors(corsOptions));
 
@@ -258,7 +270,7 @@ app.post('/api/register', async (req, res) => {
   }
   // Expanded allowed roles
   const allowedRoles = [
-    'student', 'teacher', 'parent',
+    'student', 'Teacher', 'parent',
     'Admin1', 'Admin2', 'Admin3', 'Admin4',
     'Secretary', 'Discipline', 'Psychosocialist'
   ];
@@ -2098,21 +2110,70 @@ app.delete('/api/subjects/:id', async (req, res) => {
 });
 
 // Teacher self-application endpoint
-app.post('/api/teacher-application', authenticateToken, async (req, res) => {
-  if (req.user.role !== 'Teacher') {
-    return res.status(403).json({ error: 'Only teachers can apply here' });
+app.post('/api/teacher-application', authenticateToken, upload.single('qualification_certificate'), async (req, res) => {
+  console.log('=== TEACHER APPLICATION POST DEBUG ===');
+  console.log('Content-Type:', req.headers['content-type']);
+  console.log('Body keys:', Object.keys(req.body));
+  console.log('Body values:', req.body);
+  console.log('File:', req.file ? req.file.originalname : 'No file');
+  console.log('User:', req.user);
+  console.log('=====================================');
+  
+  // Allow specific roles to submit teacher applications
+  const allowedRoles = ['Teacher', 'Admin2', 'Admin3', 'Admin4', 'Discipline', 'Psychosocialist'];
+  if (!allowedRoles.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Only authorized roles can apply here' });
   }
+  
+  // Extract form data from req.body
   const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
-  // Prevent duplicate applications by contact or full_name
-  try {
-    const exists = await pool.query('SELECT * FROM teachers WHERE contact = $1 OR full_name = $2', [contact, full_name]);
-    if (exists.rows.length > 0) {
-      return res.status(400).json({ error: 'Application already exists for this teacher' });
+  
+  console.log('Extracted form data:', { full_name, sex, id_card, dob, pob, subjects, classes, contact });
+  
+  // Validate required fields
+  if (!full_name || !sex || !id_card || !dob || !pob || !subjects || !contact) {
+    console.log('Missing required fields:', { full_name, sex, id_card, dob, pob, subjects, contact });
+    return res.status(400).json({ error: 'All required fields must be provided' });
+  }
+  
+  // Handle file upload
+  let certificate_url = null;
+  if (req.file) {
+    const fileExtension = path.extname(req.file.originalname).toLowerCase();
+    if (!['.pdf', '.jpg', '.jpeg', '.png'].includes(fileExtension)) {
+      return res.status(400).json({ error: 'Only PDF, JPG, JPEG, and PNG files are allowed for qualification certificate' });
     }
+    
+    // Save file to uploads directory
+    const fileName = `certificate_${Date.now()}_${req.file.originalname}`;
+    const filePath = path.join(__dirname, 'uploads', fileName);
+    
+    try {
+      // Ensure uploads directory exists
+      if (!fs.existsSync(path.join(__dirname, 'uploads'))) {
+        fs.mkdirSync(path.join(__dirname, 'uploads'), { recursive: true });
+      }
+      
+      fs.writeFileSync(filePath, req.file.buffer);
+      certificate_url = `/uploads/${fileName}`;
+    } catch (error) {
+      console.error('Error saving file:', error);
+      return res.status(500).json({ error: 'Error saving certificate file' });
+    }
+  }
+  
+  // Prevent duplicate applications - check by user_id first (most reliable)
+  try {
+    // Check if this user has already submitted an application
+    const existingByUserId = await pool.query('SELECT * FROM teachers WHERE user_id = $1', [req.user.id]);
+    if (existingByUserId.rows.length > 0) {
+      return res.status(400).json({ error: 'You have already submitted an application. Only one application per user is allowed.' });
+    }
+    
     const result = await pool.query(
-      `INSERT INTO teachers (full_name, sex, id_card, dob, pob, subjects, classes, contact, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending') RETURNING *`,
-      [full_name, sex, id_card, dob, pob, subjects, classes, contact]
+      `INSERT INTO teachers (full_name, sex, id_card, dob, pob, subjects, classes, contact, status, user_id, certificate_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10) RETURNING *`,
+      [full_name, sex, id_card, dob, pob, subjects, classes || '', contact, req.user.id, certificate_url]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -2303,3 +2364,119 @@ app.get('/api/departments', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch departments' });
   }
 });
+
+// Teacher edit their own application (only if status is 'pending')
+app.put('/api/teacher-application/:id', authenticateToken, upload.single('qualification_certificate'), async (req, res) => {
+  console.log('=== TEACHER APPLICATION PUT DEBUG ===');
+  console.log('Content-Type:', req.headers['content-type']);
+  console.log('Body keys:', Object.keys(req.body));
+  console.log('Body values:', req.body);
+  console.log('File:', req.file ? req.file.originalname : 'No file');
+  console.log('User:', req.user);
+  console.log('ID:', req.params.id);
+  console.log('=====================================');
+  
+  // Allow specific roles to edit teacher applications
+  const allowedRoles = ['Teacher', 'Admin2', 'Admin3', 'Admin4', 'Discipline', 'Psychosocialist'];
+  if (!allowedRoles.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Only authorized roles can edit their applications' });
+  }
+  
+  const { id } = req.params;
+  const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
+  
+  console.log('Extracted form data:', { full_name, sex, id_card, dob, pob, subjects, classes, contact });
+  
+  // Validate required fields
+  if (!full_name || !sex || !id_card || !dob || !pob || !subjects || !contact) {
+    console.log('Missing required fields:', { full_name, sex, id_card, dob, pob, subjects, contact });
+    return res.status(400).json({ error: 'All required fields must be provided' });
+  }
+  
+  try {
+    // First check if the application exists and belongs to this user
+    const existingApp = await pool.query('SELECT * FROM teachers WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    if (existingApp.rows.length === 0) {
+      return res.status(404).json({ error: 'Application not found or you do not have permission to edit it' });
+    }
+    
+    // Check if the application status is 'pending' (only pending applications can be edited)
+    if (existingApp.rows[0].status !== 'pending') {
+      return res.status(403).json({ error: 'Only pending applications can be edited' });
+    }
+    
+    // Handle file upload
+    let certificate_url = existingApp.rows[0].certificate_url; // Keep existing if no new file
+    if (req.file) {
+      const fileExtension = path.extname(req.file.originalname).toLowerCase();
+      if (!['.pdf', '.jpg', '.jpeg', '.png'].includes(fileExtension)) {
+        return res.status(400).json({ error: 'Only PDF, JPG, JPEG, and PNG files are allowed for qualification certificate' });
+      }
+      
+      // Save file to uploads directory
+      const fileName = `certificate_${Date.now()}_${req.file.originalname}`;
+      const filePath = path.join(__dirname, 'uploads', fileName);
+      
+      try {
+        // Ensure uploads directory exists
+        if (!fs.existsSync(path.join(__dirname, 'uploads'))) {
+          fs.mkdirSync(path.join(__dirname, 'uploads'), { recursive: true });
+        }
+        
+        fs.writeFileSync(filePath, req.file.buffer);
+        certificate_url = `/uploads/${fileName}`;
+      } catch (error) {
+        console.error('Error saving file:', error);
+        return res.status(500).json({ error: 'Error saving certificate file' });
+      }
+    }
+    
+    // Update the application
+    const result = await pool.query(
+      `UPDATE teachers 
+       SET full_name = $1, sex = $2, id_card = $3, dob = $4, pob = $5, subjects = $6, classes = $7, contact = $8, certificate_url = $9
+       WHERE id = $10 AND user_id = $11 RETURNING *`,
+      [full_name, sex, id_card, dob, pob, subjects, classes || '', contact, certificate_url, id, req.user.id]
+    );
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating teacher application:', error);
+    res.status(500).json({ error: 'Error updating application' });
+  }
+});
+
+// Teacher delete their own application (only if status is 'pending')
+app.delete('/api/teacher-application/:id', authenticateToken, async (req, res) => {
+  // Allow specific roles to delete teacher applications
+  const allowedRoles = ['Teacher', 'Admin2', 'Admin3', 'Admin4', 'Discipline', 'Psychosocialist'];
+  if (!allowedRoles.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Only authorized roles can delete their applications' });
+  }
+  
+  const { id } = req.params;
+  
+  try {
+    // First check if the application exists and belongs to this user
+    const existingApp = await pool.query('SELECT * FROM teachers WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    if (existingApp.rows.length === 0) {
+      return res.status(404).json({ error: 'Application not found or you do not have permission to delete it' });
+    }
+    
+    // Check if the application status is 'pending' (only pending applications can be deleted)
+    if (existingApp.rows[0].status !== 'pending') {
+      return res.status(403).json({ error: 'Only pending applications can be deleted' });
+    }
+    
+    // Delete the application
+    await pool.query('DELETE FROM teachers WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    
+    res.json({ message: 'Application deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting teacher application:', error);
+    res.status(500).json({ error: 'Error deleting application' });
+  }
+});
+
+// Serve static files from uploads directory
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));

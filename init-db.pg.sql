@@ -96,6 +96,9 @@ CREATE TABLE IF NOT EXISTS teachers (
     subjects VARCHAR(255) NOT NULL,
     classes VARCHAR(255) NOT NULL,
     contact VARCHAR(50) NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    status VARCHAR(20) DEFAULT 'pending',
+    certificate_url VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
