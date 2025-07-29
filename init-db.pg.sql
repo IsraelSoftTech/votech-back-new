@@ -64,9 +64,42 @@ CREATE TABLE IF NOT EXISTS messages (
     id SERIAL PRIMARY KEY,
     sender_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     receiver_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    group_id INTEGER,
     content TEXT NOT NULL,
+    file_url VARCHAR(255),
+    file_name VARCHAR(255),
+    file_type VARCHAR(50),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     read BOOLEAN DEFAULT FALSE
+);
+
+-- Group chats
+CREATE TABLE IF NOT EXISTS groups (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    creator_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Group participants (many-to-many)
+CREATE TABLE IF NOT EXISTS group_participants (
+    id SERIAL PRIMARY KEY,
+    group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(group_id, user_id)
+);
+
+-- Salaries table
+CREATE TABLE IF NOT EXISTS salaries (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    amount DECIMAL(10,2) NOT NULL,
+    month VARCHAR(7) NOT NULL, -- Format: YYYY-MM
+    paid BOOLEAN DEFAULT FALSE,
+    paid_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, month)
 );
 
 -- Attendance
