@@ -101,6 +101,7 @@ const findAvailablePort = (startPort) => {
 const corsOptions = {
   origin: [
     'https://votech-latest-front.onrender.com', // added for new frontend
+    'https://votechs7academygroup.com',
  
     'http://localhost:3000',             // local development
     'http://localhost:3004'              // local development (alternate port)
