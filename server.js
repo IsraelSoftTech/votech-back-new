@@ -23,6 +23,9 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 });
 
+// Import routes
+const lessonPlansRouter = require('./routes/lessonPlans');
+
 const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const PORT = 5000;
@@ -127,6 +130,9 @@ app.use((req, res, next) => {
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static('uploads')); // Serve uploaded files
 app.options('*', cors(corsOptions));
+
+// Use routes
+app.use('/api/lesson-plans', lessonPlansRouter);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -1172,7 +1178,8 @@ function verifyDatabaseStructure() {
       'vocational',
       'teachers',
       'fees',
-      'id_cards'
+      'id_cards',
+      'lesson_plans'
     ];
 
     const checkTable = (tableName) => {
@@ -1365,6 +1372,142 @@ async function runMigrations() {
       `);
     }
     
+    // Check if subjects table exists and has all required columns
+    const subjectsTable = await pool.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_name = 'subjects'"
+    );
+    if (subjectsTable.rows.length === 0) {
+      console.log('Creating subjects table...');
+      await pool.query(`
+        CREATE TABLE subjects (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          code VARCHAR(50) UNIQUE,
+          description TEXT,
+          credits INTEGER DEFAULT 0,
+          department VARCHAR(100),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    } else {
+      // Check if subjects table has all required columns
+      const subjectsColumns = await pool.query(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'subjects' AND column_name IN ('description', 'credits', 'department', 'updated_at')"
+      );
+      const existingSubjectsColumns = subjectsColumns.rows.map(row => row.column_name);
+      
+      if (!existingSubjectsColumns.includes('description')) {
+        console.log('Adding description column to subjects table...');
+        await pool.query('ALTER TABLE subjects ADD COLUMN description TEXT');
+      }
+      if (!existingSubjectsColumns.includes('credits')) {
+        console.log('Adding credits column to subjects table...');
+        await pool.query('ALTER TABLE subjects ADD COLUMN credits INTEGER DEFAULT 0');
+      }
+      if (!existingSubjectsColumns.includes('department')) {
+        console.log('Adding department column to subjects table...');
+        await pool.query('ALTER TABLE subjects ADD COLUMN department VARCHAR(100)');
+      }
+      if (!existingSubjectsColumns.includes('updated_at')) {
+        console.log('Adding updated_at column to subjects table...');
+        await pool.query('ALTER TABLE subjects ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+      }
+    }
+    
+    // Check if lesson_plans table exists and has all required columns
+    const lessonPlansTable = await pool.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_name = 'lesson_plans'"
+    );
+    if (lessonPlansTable.rows.length === 0) {
+      console.log('Creating lesson_plans table...');
+      await pool.query(`
+        CREATE TABLE lesson_plans (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          title VARCHAR(255) NOT NULL,
+          subject VARCHAR(100),
+          class_name VARCHAR(100),
+          week VARCHAR(50),
+          objectives TEXT,
+          content TEXT,
+          activities TEXT,
+          assessment TEXT,
+          resources TEXT,
+          file_url VARCHAR(255),
+          file_name VARCHAR(255),
+          status VARCHAR(20) DEFAULT 'pending',
+          admin_comment TEXT,
+          period_type VARCHAR(50) DEFAULT 'weekly',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    } else {
+      // Check if lesson_plans table has all required columns
+      const lessonPlansColumns = await pool.query(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'lesson_plans' AND column_name IN ('subject', 'class_name', 'week', 'objectives', 'content', 'activities', 'assessment', 'resources', 'file_url', 'file_name', 'status', 'admin_comment', 'updated_at', 'period_type')"
+      );
+      const existingLessonPlansColumns = lessonPlansColumns.rows.map(row => row.column_name);
+      
+      if (!existingLessonPlansColumns.includes('subject')) {
+        console.log('Adding subject column to lesson_plans table...');
+        await pool.query('ALTER TABLE lesson_plans ADD COLUMN subject VARCHAR(100)');
+      }
+      if (!existingLessonPlansColumns.includes('class_name')) {
+        console.log('Adding class_name column to lesson_plans table...');
+        await pool.query('ALTER TABLE lesson_plans ADD COLUMN class_name VARCHAR(100)');
+      }
+      if (!existingLessonPlansColumns.includes('week')) {
+        console.log('Adding week column to lesson_plans table...');
+        await pool.query('ALTER TABLE lesson_plans ADD COLUMN week VARCHAR(50)');
+      }
+      if (!existingLessonPlansColumns.includes('objectives')) {
+        console.log('Adding objectives column to lesson_plans table...');
+        await pool.query('ALTER TABLE lesson_plans ADD COLUMN objectives TEXT');
+      }
+      if (!existingLessonPlansColumns.includes('content')) {
+        console.log('Adding content column to lesson_plans table...');
+        await pool.query('ALTER TABLE lesson_plans ADD COLUMN content TEXT');
+      }
+      if (!existingLessonPlansColumns.includes('activities')) {
+        console.log('Adding activities column to lesson_plans table...');
+        await pool.query('ALTER TABLE lesson_plans ADD COLUMN activities TEXT');
+      }
+      if (!existingLessonPlansColumns.includes('assessment')) {
+        console.log('Adding assessment column to lesson_plans table...');
+        await pool.query('ALTER TABLE lesson_plans ADD COLUMN assessment TEXT');
+      }
+      if (!existingLessonPlansColumns.includes('resources')) {
+        console.log('Adding resources column to lesson_plans table...');
+        await pool.query('ALTER TABLE lesson_plans ADD COLUMN resources TEXT');
+      }
+      if (!existingLessonPlansColumns.includes('file_url')) {
+        console.log('Adding file_url column to lesson_plans table...');
+        await pool.query('ALTER TABLE lesson_plans ADD COLUMN file_url VARCHAR(255)');
+      }
+      if (!existingLessonPlansColumns.includes('file_name')) {
+        console.log('Adding file_name column to lesson_plans table...');
+        await pool.query('ALTER TABLE lesson_plans ADD COLUMN file_name VARCHAR(255)');
+      }
+      if (!existingLessonPlansColumns.includes('status')) {
+        console.log('Adding status column to lesson_plans table...');
+        await pool.query('ALTER TABLE lesson_plans ADD COLUMN status VARCHAR(20) DEFAULT \'pending\'');
+      }
+      if (!existingLessonPlansColumns.includes('admin_comment')) {
+        console.log('Adding admin_comment column to lesson_plans table...');
+        await pool.query('ALTER TABLE lesson_plans ADD COLUMN admin_comment TEXT');
+      }
+      if (!existingLessonPlansColumns.includes('updated_at')) {
+        console.log('Adding updated_at column to lesson_plans table...');
+        await pool.query('ALTER TABLE lesson_plans ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+      }
+      if (!existingLessonPlansColumns.includes('period_type')) {
+        console.log('Adding period_type column to lesson_plans table...');
+        await pool.query('ALTER TABLE lesson_plans ADD COLUMN period_type VARCHAR(50) DEFAULT \'weekly\'');
+      }
+    }
+    
     console.log('Messages table file attachment columns migration completed');
   } catch (error) {
     console.error('Error running migrations:', error);
@@ -1506,6 +1649,26 @@ const initializeDatabase = async () => {
         depreciation_rate NUMERIC(5,2),
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS lesson_plans (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        subject VARCHAR(100),
+        class_name VARCHAR(100),
+        week VARCHAR(50),
+        objectives TEXT,
+        content TEXT,
+        activities TEXT,
+        assessment TEXT,
+        resources TEXT,
+        file_url VARCHAR(255),
+        file_name VARCHAR(255),
+        status VARCHAR(20) DEFAULT 'pending',
+        admin_comment TEXT,
+        period_type VARCHAR(50) DEFAULT 'weekly',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
     console.log('All required tables created or already exist.');
@@ -1857,6 +2020,85 @@ app.post('/api/users/:id/suspend', authenticateToken, async (req, res) => {
   }
 });
 
+// Chat endpoints
+app.get('/api/users/all-chat', authenticateToken, async (req, res) => {
+  try {
+    // Get all users except the current user for chat
+    const result = await pool.query(
+      'SELECT id, name, username, role, contact FROM users WHERE id != $1 AND suspended = false ORDER BY name',
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching users for chat:', error);
+    res.status(500).json({ error: 'Failed to fetch users for chat' });
+  }
+});
+
+app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
+  try {
+    // First get all users except current user
+    const usersResult = await pool.query(
+      'SELECT id, name, username, role, contact FROM users WHERE id != $1 AND suspended = false ORDER BY name',
+      [req.user.id]
+    );
+    
+    // Then get the last message for each conversation
+    const lastMessagesResult = await pool.query(`
+      SELECT 
+        CASE 
+          WHEN sender_id = $1 THEN receiver_id 
+          ELSE sender_id 
+        END as other_user_id,
+        content as last_message,
+        created_at as last_message_time,
+        sender_id
+      FROM messages 
+      WHERE sender_id = $1 OR receiver_id = $1
+      ORDER BY created_at DESC
+    `, [req.user.id]);
+    
+    // Create a map of last messages by user
+    const lastMessagesMap = {};
+    lastMessagesResult.rows.forEach(msg => {
+      if (!lastMessagesMap[msg.other_user_id] || 
+          new Date(msg.last_message_time) > new Date(lastMessagesMap[msg.other_user_id].last_message_time)) {
+        lastMessagesMap[msg.other_user_id] = msg;
+      }
+    });
+    
+    // Combine user data with last message data
+    const chatList = usersResult.rows.map(user => ({
+      id: user.id,
+      name: user.name,
+      username: user.username,
+      role: user.role,
+      contact: user.contact,
+      last_message: lastMessagesMap[user.id]?.last_message || null,
+      last_message_time: lastMessagesMap[user.id]?.last_message_time || null,
+      sender_id: lastMessagesMap[user.id]?.sender_id || null
+    }));
+    
+    // Sort by last message time (most recent first), then by name
+    chatList.sort((a, b) => {
+      if (!a.last_message_time && !b.last_message_time) {
+        // Both have no messages, sort by name (handle null names)
+        const nameA = a.name || '';
+        const nameB = b.name || '';
+        return nameA.localeCompare(nameB);
+      }
+      if (!a.last_message_time) return 1;
+      if (!b.last_message_time) return -1;
+      return new Date(b.last_message_time) - new Date(a.last_message_time);
+    });
+    
+    res.json(chatList);
+  } catch (error) {
+    console.error('Error fetching chat list:', error);
+    res.status(500).json({ error: 'Failed to fetch chat list' });
+  }
+});
+
 // Student registration endpoint
 app.post('/api/students', upload.single('photo'), async (req, res) => {
   console.log('BODY:', req.body);
@@ -2094,14 +2336,14 @@ app.get('/api/messages/:userId', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT m.*, 
-              u1.username as sender_username, u1.name as sender_name,
-              u2.username as receiver_username, u2.name as receiver_name
-       FROM messages m
-       JOIN users u1 ON m.sender_id = u1.id
-       JOIN users u2 ON m.receiver_id = u2.id
-       WHERE (m.sender_id = $1 AND m.receiver_id = $2) 
-          OR (m.sender_id = $2 AND m.receiver_id = $1)
-       ORDER BY m.created_at ASC`,
+               u1.username as sender_username, u1.name as sender_name,
+               u2.username as receiver_username, u2.name as receiver_name
+        FROM messages m
+        JOIN users u1 ON m.sender_id = u1.id
+        JOIN users u2 ON m.receiver_id = u2.id
+        WHERE (m.sender_id = $1 AND m.receiver_id = $2) 
+           OR (m.sender_id = $2 AND m.receiver_id = $1)
+        ORDER BY m.created_at ASC`,
       [user1, user2]
     );
     res.json(result.rows);
@@ -2116,10 +2358,19 @@ app.post('/api/messages/:userId/read', authenticateToken, async (req, res) => {
   const user1 = req.user.id;
   const user2 = parseInt(req.params.userId);
   try {
-    await pool.query(
-      'UPDATE messages SET read = TRUE WHERE sender_id = $1 AND receiver_id = $2 AND read = FALSE',
-      [user2, user1]
-    );
+    // Check if 'read' column exists, if not, skip this operation
+    const columnCheck = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'messages' AND column_name = 'read'
+    `);
+    
+    if (columnCheck.rows.length > 0) {
+      await pool.query(
+        'UPDATE messages SET read = TRUE WHERE sender_id = $1 AND receiver_id = $2 AND read = FALSE',
+        [user2, user1]
+      );
+    }
     res.json({ success: true });
   } catch (error) {
     console.error('Error marking messages as read:', error);
@@ -2127,363 +2378,114 @@ app.post('/api/messages/:userId/read', authenticateToken, async (req, res) => {
   }
 });
 
-// === GROUP CHAT ENDPOINTS ===
+// === SUBJECTS ENDPOINTS ===
 
-// Get all users for chat (excluding current user)
-app.get('/api/users/all-chat', authenticateToken, async (req, res) => {
+// Get all subjects
+app.get('/api/subjects', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM subjects ORDER BY name');
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching subjects:', error);
+    res.status(500).json({ error: 'Failed to fetch subjects' });
+  }
+});
+
+// Create a new subject
+app.post('/api/subjects', authenticateToken, async (req, res) => {
+  const { name, code, description, credits, department } = req.body;
+  
+  if (!name) {
+    return res.status(400).json({ error: 'Subject name is required' });
+  }
+  
   try {
     const result = await pool.query(
-      'SELECT id, username, name, role FROM users WHERE id != $1 ORDER BY name, username',
-      [req.user.id]
-    );
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching users for chat:', error);
-    res.status(500).json({ error: 'Failed to fetch users' });
-  }
-});
-
-// Get chat list (users and groups with last message and unread count)
-app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    
-    // Get user-to-user chats
-    const userChats = await pool.query(`
-      SELECT 
-        u.id,
-        u.username,
-        u.name,
-        'user' as type,
-        last_msg.content as last_message_content,
-        last_msg.created_at as last_message_time,
-        unread_count.count as unread
-      FROM users u
-      LEFT JOIN LATERAL (
-        SELECT content, created_at
-        FROM messages 
-        WHERE (sender_id = u.id AND receiver_id = $1) OR (sender_id = $1 AND receiver_id = u.id)
-        ORDER BY created_at DESC 
-        LIMIT 1
-      ) last_msg ON true
-      LEFT JOIN LATERAL (
-        SELECT COUNT(*) as count
-        FROM messages 
-        WHERE sender_id = u.id AND receiver_id = $1 AND read = FALSE
-      ) unread_count ON true
-      WHERE u.id != $1
-    `, [userId]);
-
-    // Get group chats
-    const groupChats = await pool.query(`
-      SELECT 
-        g.id,
-        g.name as groupName,
-        'group' as type,
-        last_msg.content as last_message_content,
-        last_msg.created_at as last_message_time,
-        unread_count.count as unread
-      FROM groups g
-      JOIN group_participants gp ON g.id = gp.group_id
-      LEFT JOIN LATERAL (
-        SELECT content, created_at
-        FROM messages 
-        WHERE group_id = g.id
-        ORDER BY created_at DESC 
-        LIMIT 1
-      ) last_msg ON true
-      LEFT JOIN LATERAL (
-        SELECT COUNT(*) as count
-        FROM messages 
-        WHERE group_id = g.id AND sender_id != $1 AND read = FALSE
-      ) unread_count ON true
-      WHERE gp.user_id = $1
-    `, [userId]);
-
-    console.log('Group chats raw data:', groupChats.rows);
-    console.log('Sample group chat row:', groupChats.rows[0]);
-    console.log('Group chat row keys:', groupChats.rows[0] ? Object.keys(groupChats.rows[0]) : 'No groups');
-
-    const allChats = [
-      ...userChats.rows.map(row => ({
-        ...row,
-        lastMessage: row.last_message_content ? {
-          content: row.last_message_content,
-          time: row.last_message_time
-        } : null
-      })),
-      ...groupChats.rows.map(row => ({
-        id: row.id,
-        groupName: row.groupName,
-        type: row.type,
-        unread: row.unread || 0,
-        lastMessage: row.last_message_content ? {
-          content: row.last_message_content,
-          time: row.last_message_time
-        } : null
-      }))
-    ];
-
-    console.log('Final allChats data:', allChats);
-    console.log('Group chats in final data:', allChats.filter(chat => chat.type === 'group'));
-    console.log('Sample processed group chat:', allChats.filter(chat => chat.type === 'group')[0]);
-
-    res.json(allChats);
-  } catch (error) {
-    console.error('Error fetching chat list:', error);
-    res.status(500).json({ error: 'Failed to fetch chat list' });
-  }
-});
-
-// Create a new group
-app.post('/api/groups', authenticateToken, async (req, res) => {
-  const { name, participant_ids } = req.body;
-  const creator_id = req.user.id;
-  
-  if (!name || !participant_ids || !Array.isArray(participant_ids)) {
-    return res.status(400).json({ error: 'Group name and participant_ids array are required' });
-  }
-
-  try {
-    await pool.query('BEGIN');
-    
-    // Create the group
-    const groupResult = await pool.query(
-      'INSERT INTO groups (name, creator_id) VALUES ($1, $2) RETURNING *',
-      [name, creator_id]
-    );
-    const group = groupResult.rows[0];
-    
-    // Add creator to participants
-    const allParticipants = [creator_id, ...participant_ids];
-    
-    // Add all participants
-    for (const user_id of allParticipants) {
-      await pool.query(
-        'INSERT INTO group_participants (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-        [group.id, user_id]
-      );
-    }
-    
-    // Send initial system message
-    const creatorUser = await pool.query('SELECT username, name FROM users WHERE id = $1', [creator_id]);
-    const creatorName = creatorUser.rows[0]?.name || creatorUser.rows[0]?.username || 'Unknown';
-    const systemMessage = `${creatorName} added you to ${name}`;
-    
-    await pool.query(
-      'INSERT INTO messages (sender_id, group_id, content) VALUES ($1, $2, $3)',
-      [creator_id, group.id, systemMessage]
-    );
-    
-    await pool.query('COMMIT');
-    res.status(201).json(group);
-  } catch (error) {
-    await pool.query('ROLLBACK');
-    console.error('Error creating group:', error);
-    res.status(500).json({ error: 'Failed to create group' });
-  }
-});
-
-// Get all groups for current user
-app.get('/api/groups', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT g.*, u.username as creator_username, u.name as creator_name
-      FROM groups g
-      JOIN group_participants gp ON g.id = gp.group_id
-      JOIN users u ON g.creator_id = u.id
-      WHERE gp.user_id = $1
-      ORDER BY g.created_at DESC
-    `, [req.user.id]);
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching groups:', error);
-    res.status(500).json({ error: 'Failed to fetch groups' });
-  }
-});
-
-// Get group participants
-app.get('/api/groups/:groupId/participants', authenticateToken, async (req, res) => {
-  const groupId = parseInt(req.params.groupId);
-  try {
-    const result = await pool.query(`
-      SELECT u.id, u.username, u.name, u.role, gp.joined_at
-      FROM group_participants gp
-      JOIN users u ON gp.user_id = u.id
-      WHERE gp.group_id = $1
-      ORDER BY gp.joined_at ASC
-    `, [groupId]);
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching group participants:', error);
-    res.status(500).json({ error: 'Failed to fetch group participants' });
-  }
-});
-
-// Get group messages
-app.get('/api/groups/:groupId/messages', authenticateToken, async (req, res) => {
-  const groupId = parseInt(req.params.groupId);
-  const userId = req.user.id;
-  
-  try {
-    // Check if user is a participant
-    const participantCheck = await pool.query(
-      'SELECT * FROM group_participants WHERE group_id = $1 AND user_id = $2',
-      [groupId, userId]
-    );
-    if (participantCheck.rows.length === 0) {
-      return res.status(403).json({ error: 'You are not a member of this group' });
-    }
-    
-    const result = await pool.query(`
-      SELECT m.*, u.username as sender_username, u.name as sender_name
-      FROM messages m
-      JOIN users u ON m.sender_id = u.id
-      WHERE m.group_id = $1
-      ORDER BY m.created_at ASC
-    `, [groupId]);
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching group messages:', error);
-    res.status(500).json({ error: 'Failed to fetch group messages' });
-  }
-});
-
-// Send a group message
-app.post('/api/groups/:groupId/messages', authenticateToken, async (req, res) => {
-  const groupId = parseInt(req.params.groupId);
-  const senderId = req.user.id;
-  const { content } = req.body;
-  
-  if (!content) {
-    return res.status(400).json({ error: 'Message content is required' });
-  }
-  
-  try {
-    // Check if user is a participant
-    const participantCheck = await pool.query(
-      'SELECT * FROM group_participants WHERE group_id = $1 AND user_id = $2',
-      [groupId, senderId]
-    );
-    if (participantCheck.rows.length === 0) {
-      return res.status(403).json({ error: 'You are not a member of this group' });
-    }
-    
-    const result = await pool.query(
-      'INSERT INTO messages (sender_id, group_id, content) VALUES ($1, $2, $3) RETURNING *',
-      [senderId, groupId, content]
+      'INSERT INTO subjects (name, code, description, credits, department) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [name, code || null, description || null, credits || 0, department || null]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error sending group message:', error);
-    res.status(500).json({ error: 'Failed to send group message' });
+    console.error('Error creating subject:', error);
+    if (error.code === '23505') { // Unique violation
+      res.status(400).json({ error: 'Subject code already exists' });
+    } else {
+      res.status(500).json({ error: 'Failed to create subject' });
+    }
   }
 });
 
-// Send a group message with file attachment
-app.post('/api/groups/:groupId/messages/with-file', authenticateToken, multer({ storage: multer.memoryStorage() }).single('file'), async (req, res) => {
-  const group_id = parseInt(req.params.groupId);
-  const sender_id = req.user.id;
-  const { content } = req.body;
-  const file = req.file;
-
-  if (!content && !file) {
-    return res.status(400).json({ error: 'Message content or file is required' });
+// Update a subject
+app.put('/api/subjects/:id', authenticateToken, async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { name, code, description, credits, department } = req.body;
+  
+  if (!name) {
+    return res.status(400).json({ error: 'Subject name is required' });
   }
-
+  
   try {
-    const participantCheck = await pool.query(
-      'SELECT * FROM group_participants WHERE group_id = $1 AND user_id = $2',
-      [group_id, sender_id]
-    );
-    if (participantCheck.rows.length === 0) {
-      return res.status(403).json({ error: 'You are not a member of this group' });
-    }
-
-    let fileUrl = null;
-    let fileName = null;
-    let fileType = null;
-    if (file) {
-      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'application/pdf'];
-      if (!allowedTypes.includes(file.mimetype)) {
-        return res.status(400).json({ error: 'Only images (JPEG, PNG, GIF) and PDF files are allowed' });
-      }
-      if (file.size > 5 * 1024 * 1024) {
-        return res.status(400).json({ error: 'File size must be less than 5MB' });
-      }
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      const fileExtension = require('path').extname(file.originalname);
-      fileName = `groupmsg_${group_id}_${uniqueSuffix}${fileExtension}`;
-      const fs = require('fs');
-      const uploadPath = require('path').join(__dirname, 'uploads', fileName);
-      fs.writeFileSync(uploadPath, file.buffer);
-      fileUrl = `/uploads/${fileName}`;
-      fileType = file.mimetype;
-    }
-
     const result = await pool.query(
-      'INSERT INTO messages (sender_id, group_id, content, file_url, file_name, file_type) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-      [sender_id, group_id, content || '', fileUrl, fileName, fileType]
+      'UPDATE subjects SET name = $1, code = $2, description = $3, credits = $4, department = $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6 RETURNING *',
+      [name, code || null, description || null, credits || 0, department || null, id]
     );
-    res.status(201).json(result.rows[0]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Subject not found' });
+    }
+    
+    res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error sending group message with file:', error);
-    res.status(500).json({ error: 'Failed to send group message with file' });
+    console.error('Error updating subject:', error);
+    if (error.code === '23505') { // Unique violation
+      res.status(400).json({ error: 'Subject code already exists' });
+    } else {
+      res.status(500).json({ error: 'Failed to update subject' });
+    }
   }
 });
 
-// Mark all group messages as read for the current user
-app.post('/api/groups/:groupId/read', authenticateToken, async (req, res) => {
-  const group_id = parseInt(req.params.groupId);
-  const user_id = req.user.id;
+// Delete a subject
+app.delete('/api/subjects/:id', authenticateToken, async (req, res) => {
+  const id = parseInt(req.params.id);
+  
   try {
-    // Only mark as read messages not sent by the user
-    await pool.query(
-      'UPDATE messages SET read = TRUE WHERE group_id = $1 AND sender_id != $2 AND read = FALSE',
-      [group_id, user_id]
-    );
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Error marking group messages as read:', error);
-    res.status(500).json({ error: 'Failed to mark group messages as read' });
-  }
-});
-
-// Delete a group (only creator can delete)
-app.delete('/api/groups/:groupId', authenticateToken, async (req, res) => {
-  const group_id = parseInt(req.params.groupId);
-  const user_id = req.user.id;
-  try {
-    const groupRes = await pool.query('SELECT * FROM groups WHERE id = $1', [group_id]);
-    if (groupRes.rows.length === 0) {
-      return res.status(404).json({ error: 'Group not found' });
+    const result = await pool.query('DELETE FROM subjects WHERE id = $1 RETURNING *', [id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Subject not found' });
     }
-    const group = groupRes.rows[0];
-    if (group.creator_id !== user_id) {
-      return res.status(403).json({ error: 'Only the group creator can delete this group' });
-    }
-    await pool.query('BEGIN');
-    await pool.query('DELETE FROM group_participants WHERE group_id = $1', [group_id]);
-    await pool.query('DELETE FROM messages WHERE group_id = $1', [group_id]);
-    await pool.query('DELETE FROM groups WHERE id = $1', [group_id]);
-    await pool.query('COMMIT');
-    res.json({ message: 'Group deleted successfully' });
+    
+    res.json({ message: 'Subject deleted successfully' });
   } catch (error) {
-    await pool.query('ROLLBACK');
-    console.error('Error deleting group:', error);
-    res.status(500).json({ error: 'Failed to delete group' });
+    console.error('Error deleting subject:', error);
+    res.status(500).json({ error: 'Failed to delete subject' });
   }
 });
 
 // === SALARIES ENDPOINTS ===
+
+// Get all salaries
 app.get('/api/salaries', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT s.*, u.name as teacher_name, u.username, u.contact as teacher_contact
+      SELECT 
+        s.id,
+        s.user_id,
+        s.amount,
+        s.month,
+        s.paid,
+        s.paid_at,
+        s.created_at,
+        u.name as user_name,
+        u.username,
+        u.role,
+        u.contact
       FROM salaries s
       JOIN users u ON s.user_id = u.id
-      ORDER BY s.created_at DESC
+      ORDER BY s.month DESC, u.name
     `);
+    
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching salaries:', error);
@@ -2491,25 +2493,32 @@ app.get('/api/salaries', authenticateToken, async (req, res) => {
   }
 });
 
-app.get('/api/salaries/:userId', authenticateToken, async (req, res) => {
-  const userId = parseInt(req.params.userId);
+// Get salaries for a specific user
+app.get('/api/salaries/user/:userId', authenticateToken, async (req, res) => {
   try {
+    const userId = parseInt(req.params.userId);
     const result = await pool.query(`
-      SELECT s.*, u.name as teacher_name, u.username, u.contact as teacher_contact
+      SELECT s.*, u.name as user_name, u.username, u.role, u.contact
       FROM salaries s
       JOIN users u ON s.user_id = u.id
-      WHERE s.user_id = $1
-      ORDER BY s.created_at DESC
+      WHERE s.user_id = $1 
+      ORDER BY s.month DESC
     `, [userId]);
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching user salary:', error);
-    res.status(500).json({ error: 'Failed to fetch user salary' });
+    console.error('Error fetching user salaries:', error);
+    res.status(500).json({ error: 'Failed to fetch user salaries' });
   }
 });
 
+// Create a new salary record
 app.post('/api/salaries', authenticateToken, async (req, res) => {
   const { user_id, amount, month } = req.body;
+  
+  if (!user_id || !amount || !month) {
+    return res.status(400).json({ error: 'user_id, amount, and month are required' });
+  }
+  
   try {
     const result = await pool.query(
       'INSERT INTO salaries (user_id, amount, month) VALUES ($1, $2, $3) RETURNING *',
@@ -2518,63 +2527,228 @@ app.post('/api/salaries', authenticateToken, async (req, res) => {
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating salary:', error);
-    res.status(500).json({ error: 'Failed to create salary' });
+    if (error.code === '23505') { // Unique violation
+      res.status(400).json({ error: 'Salary record for this user and month already exists' });
+    } else {
+      res.status(500).json({ error: 'Failed to create salary' });
+    }
   }
 });
 
-app.post('/api/salaries/pay', authenticateToken, async (req, res) => {
-  const { salary_id, month } = req.body;
+// Update a salary record
+app.put('/api/salaries/:id', authenticateToken, async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { amount, month, paid } = req.body;
+  
   try {
-    const result = await pool.query(
-      'UPDATE salaries SET paid = TRUE, paid_at = CURRENT_TIMESTAMP WHERE id = $1 AND month = $2 RETURNING *',
-      [salary_id, month]
-    );
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Salary not found' });
+    let updateFields = [];
+    let updateValues = [];
+    let paramIndex = 1;
+    
+    if (amount !== undefined) {
+      updateFields.push(`amount = $${paramIndex}`);
+      updateValues.push(amount);
+      paramIndex++;
     }
+    
+    if (month !== undefined) {
+      updateFields.push(`month = $${paramIndex}`);
+      updateValues.push(month);
+      paramIndex++;
+    }
+    
+    if (paid !== undefined) {
+      updateFields.push(`paid = $${paramIndex}`);
+      updateValues.push(paid);
+      paramIndex++;
+      
+      if (paid) {
+        updateFields.push(`paid_at = CURRENT_TIMESTAMP`);
+      } else {
+        updateFields.push(`paid_at = NULL`);
+      }
+    }
+    
+    if (updateFields.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    
+    updateValues.push(id);
+    const updateQuery = `UPDATE salaries SET ${updateFields.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
+    
+    const result = await pool.query(updateQuery, updateValues);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Salary record not found' });
+    }
+    
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error paying salary:', error);
-    res.status(500).json({ error: 'Failed to pay salary' });
+    console.error('Error updating salary:', error);
+    if (error.code === '23505') { // Unique violation
+      res.status(400).json({ error: 'Salary record for this user and month already exists' });
+    } else {
+      res.status(500).json({ error: 'Failed to update salary' });
+    }
   }
 });
 
+// Delete a salary record
 app.delete('/api/salaries/:id', authenticateToken, async (req, res) => {
   const id = parseInt(req.params.id);
+  
   try {
     const result = await pool.query('DELETE FROM salaries WHERE id = $1 RETURNING *', [id]);
+    
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Salary not found' });
+      return res.status(404).json({ error: 'Salary record not found' });
     }
-    res.json({ message: 'Salary deleted successfully' });
+    
+    res.json({ message: 'Salary record deleted successfully' });
   } catch (error) {
     console.error('Error deleting salary:', error);
     res.status(500).json({ error: 'Failed to delete salary' });
   }
 });
 
-// Get all users for salary management (same as chat)
-app.get('/api/teachers/users', authenticateToken, async (req, res) => {
+// Mark salary as paid
+app.post('/api/salaries/:id/pay', authenticateToken, async (req, res) => {
+  const id = parseInt(req.params.id);
+  
   try {
     const result = await pool.query(
-      'SELECT id, username, name, role, contact FROM users WHERE id != $1 ORDER BY name, username',
-      [req.user.id]
+      'UPDATE salaries SET paid = TRUE, paid_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *',
+      [id]
     );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Salary record not found' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error marking salary as paid:', error);
+    res.status(500).json({ error: 'Failed to mark salary as paid' });
+  }
+});
+
+// Get salary statistics
+app.get('/api/salaries/stats', authenticateToken, async (req, res) => {
+  try {
+    const stats = await pool.query(`
+      SELECT 
+        COUNT(*) as total_records,
+        COUNT(CASE WHEN paid = true THEN 1 END) as paid_records,
+        COUNT(CASE WHEN paid = false THEN 1 END) as unpaid_records,
+        SUM(amount) as total_amount,
+        SUM(CASE WHEN paid = true THEN amount ELSE 0 END) as paid_amount,
+        SUM(CASE WHEN paid = false THEN amount ELSE 0 END) as unpaid_amount
+      FROM salaries
+    `);
+    
+    res.json(stats.rows[0]);
+  } catch (error) {
+    console.error('Error fetching salary statistics:', error);
+    res.status(500).json({ error: 'Failed to fetch salary statistics' });
+  }
+});
+
+// Get all users with salary information (for user-organized view)
+app.get('/api/salaries/users', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        u.id,
+        u.name as user_name,
+        u.username,
+        u.role,
+        u.contact,
+        s.id as salary_id,
+        s.amount,
+        s.month,
+        s.paid,
+        s.paid_at,
+        s.created_at as salary_created_at
+      FROM users u
+      LEFT JOIN salaries s ON u.id = s.user_id
+      WHERE u.suspended = false
+      ORDER BY u.name, s.month DESC
+    `);
+    
+    // Group by user and organize salary data
+    const userSalaries = {};
+    result.rows.forEach(row => {
+      const userId = row.id;
+      if (!userSalaries[userId]) {
+        userSalaries[userId] = {
+          id: userId,
+          name: row.user_name,
+          username: row.username,
+          role: row.role,
+          contact: row.contact,
+          salaries: []
+        };
+      }
+      
+      if (row.salary_id) {
+        userSalaries[userId].salaries.push({
+          id: row.salary_id,
+          amount: row.amount,
+          month: row.month,
+          paid: row.paid,
+          paid_at: row.paid_at,
+          created_at: row.salary_created_at
+        });
+      }
+    });
+    
+    // Convert to array and sort by name
+    const salaryList = Object.values(userSalaries).sort((a, b) => 
+      (a.name || '').localeCompare(b.name || '')
+    );
+    
+    res.json(salaryList);
+  } catch (error) {
+    console.error('Error fetching user salaries:', error);
+    res.status(500).json({ error: 'Failed to fetch user salaries' });
+  }
+});
+
+// Get teacher user accounts (for salary management)
+app.get('/api/teachers/users', authenticateToken, async (req, res) => {
+  try {
+    // Get all users for salary management (not just teachers)
+    const result = await pool.query(`
+      SELECT id, name, username, role, contact 
+      FROM users 
+      WHERE suspended = false 
+      ORDER BY name
+    `);
+    
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching users for salary:', error);
-    res.status(500).json({ error: 'Failed to fetch users' });
+    console.error('Error fetching users for salary management:', error);
+    res.status(500).json({ error: 'Failed to fetch users for salary management' });
   }
 });
 
 // === INVENTORY ENDPOINTS ===
+
+// Get inventory items with type filter
 app.get('/api/inventory', authenticateToken, async (req, res) => {
-  const { type = 'income' } = req.query;
   try {
-    const result = await pool.query(
-      'SELECT * FROM inventory WHERE type = $1 ORDER BY created_at DESC',
-      [type]
-    );
+    const { type } = req.query;
+    let query = 'SELECT * FROM inventory';
+    let params = [];
+    
+    if (type) {
+      query += ' WHERE type = $1';
+      params.push(type);
+    }
+    
+    query += ' ORDER BY created_at DESC';
+    
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching inventory:', error);
@@ -2582,31 +2756,46 @@ app.get('/api/inventory', authenticateToken, async (req, res) => {
   }
 });
 
+// Register new inventory item
 app.post('/api/inventory', authenticateToken, async (req, res) => {
-  const { date, item_name, department, quantity, estimated_cost, type, depreciation_rate } = req.body;
   try {
+    const { date, item_name, department, quantity, estimated_cost, type, depreciation_rate } = req.body;
+    
+    if (!date || !item_name || !department || !quantity || !estimated_cost || !type) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
     const result = await pool.query(
-      'INSERT INTO inventory (date, item_name, department, quantity, estimated_cost, type, depreciation_rate) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [date, item_name, department, quantity, estimated_cost, type, depreciation_rate]
+      `INSERT INTO inventory (date, item_name, department, quantity, estimated_cost, type, depreciation_rate)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [date, item_name, department, quantity, estimated_cost, type, depreciation_rate || null]
     );
+    
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error creating inventory item:', error);
-    res.status(500).json({ error: 'Failed to create inventory item' });
+    console.error('Error registering inventory item:', error);
+    res.status(500).json({ error: 'Failed to register inventory item' });
   }
 });
 
+// Update inventory item
 app.put('/api/inventory/:id', authenticateToken, async (req, res) => {
-  const id = parseInt(req.params.id);
-  const { date, item_name, department, quantity, estimated_cost, type, depreciation_rate } = req.body;
   try {
+    const id = parseInt(req.params.id);
+    const { date, item_name, department, quantity, estimated_cost, type, depreciation_rate } = req.body;
+    
     const result = await pool.query(
-      'UPDATE inventory SET date = $1, item_name = $2, department = $3, quantity = $4, estimated_cost = $5, type = $6, depreciation_rate = $7, updated_at = CURRENT_TIMESTAMP WHERE id = $8 RETURNING *',
-      [date, item_name, department, quantity, estimated_cost, type, depreciation_rate, id]
+      `UPDATE inventory SET 
+        date = $1, item_name = $2, department = $3, quantity = $4, 
+        estimated_cost = $5, type = $6, depreciation_rate = $7, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $8 RETURNING *`,
+      [date, item_name, department, quantity, estimated_cost, type, depreciation_rate || null, id]
     );
+    
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Inventory item not found' });
     }
+    
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating inventory item:', error);
@@ -2614,13 +2803,17 @@ app.put('/api/inventory/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Delete inventory item
 app.delete('/api/inventory/:id', authenticateToken, async (req, res) => {
-  const id = parseInt(req.params.id);
   try {
+    const id = parseInt(req.params.id);
+    
     const result = await pool.query('DELETE FROM inventory WHERE id = $1 RETURNING *', [id]);
+    
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Inventory item not found' });
     }
+    
     res.json({ message: 'Inventory item deleted successfully' });
   } catch (error) {
     console.error('Error deleting inventory item:', error);
@@ -2629,29 +2822,206 @@ app.delete('/api/inventory/:id', authenticateToken, async (req, res) => {
 });
 
 // === DEPARTMENTS ENDPOINTS ===
+
+// Get all departments
 app.get('/api/departments', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query('SELECT name FROM specialties ORDER BY name');
-    const departments = result.rows.map(row => row.name);
-    res.json(departments);
+    // Get departments from specialties table (since that's where departments are stored)
+    const result = await pool.query('SELECT DISTINCT name as department FROM specialties ORDER BY name');
+    
+    // Also include any departments from inventory table
+    const inventoryDepartments = await pool.query('SELECT DISTINCT department FROM inventory WHERE department IS NOT NULL ORDER BY department');
+    
+    // Combine and deduplicate departments
+    const allDepartments = new Set();
+    
+    result.rows.forEach(row => allDepartments.add(row.department));
+    inventoryDepartments.rows.forEach(row => allDepartments.add(row.department));
+    
+    const departments = Array.from(allDepartments).sort();
+    
+    res.json(departments.map(dept => ({ name: dept })));
   } catch (error) {
     console.error('Error fetching departments:', error);
     res.status(500).json({ error: 'Failed to fetch departments' });
   }
 });
 
-// Get all users for salary management (not just teachers)
-app.get('/api/users/all', authenticateToken, async (req, res) => {
+// Get salary by ID
+app.get('/api/salaries/:id', authenticateToken, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    
+    const result = await pool.query(`
+      SELECT s.*, u.name as user_name, u.username, u.role, u.contact
+      FROM salaries s
+      JOIN users u ON s.user_id = u.id
+      WHERE s.id = $1
+    `, [id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Salary record not found' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching salary by ID:', error);
+    res.status(500).json({ error: 'Failed to fetch salary' });
+  }
+});
+
+// Get all users with salary information (for user-organized view)
+app.get('/api/salaries/users', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT id, username, name, role, contact
-      FROM users 
-      WHERE role IN ('Teacher', 'Admin1', 'Admin2', 'Admin3', 'Admin4', 'Discipline', 'Psychosocialist')
-      ORDER BY name, username
+      SELECT 
+        u.id,
+        u.name as user_name,
+        u.username,
+        u.role,
+        u.contact,
+        s.id as salary_id,
+        s.amount,
+        s.month,
+        s.paid,
+        s.paid_at,
+        s.created_at as salary_created_at
+      FROM users u
+      LEFT JOIN salaries s ON u.id = s.user_id
+      WHERE u.suspended = false
+      ORDER BY u.name, s.month DESC
     `);
+    
+    // Group by user and organize salary data
+    const userSalaries = {};
+    result.rows.forEach(row => {
+      const userId = row.id;
+      if (!userSalaries[userId]) {
+        userSalaries[userId] = {
+          id: userId,
+          name: row.user_name,
+          username: row.username,
+          role: row.role,
+          contact: row.contact,
+          salaries: []
+        };
+      }
+      
+      if (row.salary_id) {
+        userSalaries[userId].salaries.push({
+          id: row.salary_id,
+          amount: row.amount,
+          month: row.month,
+          paid: row.paid,
+          paid_at: row.paid_at,
+          created_at: row.salary_created_at
+        });
+      }
+    });
+    
+    // Convert to array and sort by name
+    const salaryList = Object.values(userSalaries).sort((a, b) => 
+      (a.name || '').localeCompare(b.name || '')
+    );
+    
+    res.json(salaryList);
+  } catch (error) {
+    console.error('Error fetching user salaries:', error);
+    res.status(500).json({ error: 'Failed to fetch user salaries' });
+  }
+});
+
+// Pay salary (frontend expects this endpoint)
+app.post('/api/salaries/pay', authenticateToken, async (req, res) => {
+  try {
+    const { salary_id, month } = req.body;
+    
+    if (!salary_id) {
+      return res.status(400).json({ error: 'salary_id is required' });
+    }
+    
+    const result = await pool.query(
+      'UPDATE salaries SET paid = TRUE, paid_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *',
+      [salary_id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Salary record not found' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error paying salary:', error);
+    res.status(500).json({ error: 'Failed to pay salary' });
+  }
+});
+
+// Mark salary as paid
+app.post('/api/salaries/:id/pay', authenticateToken, async (req, res) => {
+  const id = parseInt(req.params.id);
+  
+  try {
+    const result = await pool.query(
+      'UPDATE salaries SET paid = TRUE, paid_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *',
+      [id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Salary record not found' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error marking salary as paid:', error);
+    res.status(500).json({ error: 'Failed to mark salary as paid' });
+  }
+});
+
+// Get salary by ID (specific salary record)
+app.get('/api/salaries/record/:id', authenticateToken, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    
+    const result = await pool.query(`
+      SELECT s.*, u.name as user_name, u.username, u.role, u.contact
+      FROM salaries s
+      JOIN users u ON s.user_id = u.id
+      WHERE s.id = $1
+    `, [id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Salary record not found' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching salary by ID:', error);
+    res.status(500).json({ error: 'Failed to fetch salary' });
+  }
+});
+
+// Get salaries by user ID (for a specific teacher/user) - This should come before the generic :id route
+app.get('/api/salaries/:userId', authenticateToken, async (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId);
+    
+    // Check if this is a valid user ID (not a salary ID)
+    const userCheck = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const result = await pool.query(`
+      SELECT s.*, u.name as user_name, u.username, u.role, u.contact
+      FROM salaries s
+      JOIN users u ON s.user_id = u.id
+      WHERE s.user_id = $1 
+      ORDER BY s.month DESC
+    `, [userId]);
+    
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching all users:', error);
-    res.status(500).json({ error: 'Failed to fetch users' });
+    console.error('Error fetching user salaries:', error);
+    res.status(500).json({ error: 'Failed to fetch user salaries' });
   }
 });
