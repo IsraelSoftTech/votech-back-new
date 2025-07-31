@@ -80,7 +80,7 @@ const upload = multer({
 
 // Configure multer for Excel file uploads
 const excelUpload = multer({ 
-  storage: storage,
+  storage: multer.memoryStorage(), // Use memory storage instead of disk storage
   limits: {
     fileSize: 10 * 1024 * 1024 // 10MB limit for Excel files
   },
@@ -95,7 +95,7 @@ const excelUpload = multer({
   }
 });
 
-// Create uploads directory if it doesn't exist
+// Create uploads directory if it doesn't exist (for non-Excel files)
 const fs = require('fs');
 if (!fs.existsSync('uploads')) {
   fs.mkdirSync('uploads');
@@ -498,8 +498,8 @@ app.post('/api/students/upload', authenticateToken, excelUpload.single('file'), 
   }
 
   try {
-    // Read the Excel file
-    const workbook = XLSX.readFile(req.file.path);
+    // Read the Excel file from memory
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
     
@@ -3157,6 +3157,17 @@ app.get('/api/marks', authenticateToken, async (req, res) => {
   }
 });
 
+// Helper function to validate FTP URL
+const validateFtpUrl = (url) => {
+  if (!url) {
+    throw new Error('File URL is required');
+  }
+  if (url && url.startsWith('https://st60307.ispot.cc/votechs7academygroup/')) {
+    return url;
+  }
+  return url; // Return as is if not FTP URL
+};
+
 // Upload marks file
 app.post('/api/marks/upload', authenticateToken, excelUpload.single('marksFile'), async (req, res) => {
   try {
@@ -3207,8 +3218,8 @@ app.post('/api/marks/upload', authenticateToken, excelUpload.single('marksFile')
 
     console.log('[DEBUG] Processing Excel file...');
 
-    // Process the Excel file
-    const workbook = XLSX.readFile(req.file.path);
+    // Process the Excel file from memory
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
     const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
@@ -3236,28 +3247,29 @@ app.post('/api/marks/upload', authenticateToken, excelUpload.single('marksFile')
     const studentData = data.slice(1).filter(row => row[0] && row[1]); // Only rows with S/N and names
     console.log('[DEBUG] Student data rows:', studentData.length);
 
-    // Upload file to FTP if configured
-    let fileUrl = req.file.path;
-    if (process.env.FTP_HOST) {
-      try {
-        const ftpFileName = `marks_${classId}_${sequenceId}_${Date.now()}.xlsx`;
-        await ftpService.uploadFile(req.file.path, ftpFileName);
-        fileUrl = `${process.env.FTP_URL}/${ftpFileName}`;
-        console.log('[DEBUG] File uploaded to FTP:', fileUrl);
-      } catch (ftpError) {
-        console.error('FTP upload failed:', ftpError);
-        // Continue with local file
-      }
+    // Upload file to FTP using buffer
+    let fileUrl = null;
+    try {
+      const ftpFileName = `marks_${classId}_${sequenceId}_${Date.now()}.xlsx`;
+      fileUrl = await ftpService.uploadBuffer(req.file.buffer, ftpFileName);
+      console.log('[DEBUG] File uploaded to FTP:', fileUrl);
+    } catch (ftpError) {
+      console.error('FTP upload failed:', ftpError);
+      // If FTP fails, we can't proceed since we don't have a local file
+      return res.status(500).json({ error: 'Failed to upload file to FTP server' });
     }
 
     console.log('[DEBUG] Saving to database...');
 
-    // Save to database
+    // Validate and save to database
+    const validatedFileUrl = validateFtpUrl(fileUrl);
+    console.log('[DEBUG] Saving file URL to database:', validatedFileUrl);
+    
     const result = await pool.query(`
       INSERT INTO marks (class_id, sequence_id, file_url, uploaded_by, student_data)
       VALUES ($1, $2, $3, $4, $5)
       RETURNING *
-    `, [classId, sequenceId, fileUrl, uploadedBy, JSON.stringify(studentData)]);
+    `, [classId, sequenceId, validatedFileUrl, uploadedBy, JSON.stringify(studentData)]);
 
     console.log('[DEBUG] Marks saved successfully, ID:', result.rows[0].id);
 
@@ -3345,8 +3357,8 @@ app.put('/api/marks/:id', authenticateToken, excelUpload.single('marksFile'), as
 
     console.log('[DEBUG] File received for update:', req.file.originalname, req.file.size, 'bytes');
 
-    // Process the Excel file
-    const workbook = XLSX.readFile(req.file.path);
+    // Process the Excel file from memory
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
     const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
@@ -3374,29 +3386,30 @@ app.put('/api/marks/:id', authenticateToken, excelUpload.single('marksFile'), as
     const studentData = data.slice(1).filter(row => row[0] && row[1]);
     console.log('[DEBUG] Student data rows for update:', studentData.length);
 
-    // Upload file to FTP if configured
-    let fileUrl = req.file.path;
-    if (process.env.FTP_HOST) {
-      try {
-        const ftpFileName = `marks_${mark.class_id}_${mark.sequence_id}_${Date.now()}.xlsx`;
-        await ftpService.uploadFile(req.file.path, ftpFileName);
-        fileUrl = `${process.env.FTP_URL}/${ftpFileName}`;
-        console.log('[DEBUG] Updated file uploaded to FTP:', fileUrl);
-      } catch (ftpError) {
-        console.error('FTP upload failed:', ftpError);
-        // Continue with local file
-      }
+    // Upload file to FTP using buffer
+    let fileUrl = null;
+    try {
+      const ftpFileName = `marks_${mark.class_id}_${mark.sequence_id}_${Date.now()}.xlsx`;
+      fileUrl = await ftpService.uploadBuffer(req.file.buffer, ftpFileName);
+      console.log('[DEBUG] Updated file uploaded to FTP:', fileUrl);
+    } catch (ftpError) {
+      console.error('FTP upload failed:', ftpError);
+      // If FTP fails, we can't proceed since we don't have a local file
+      return res.status(500).json({ error: 'Failed to upload file to FTP server' });
     }
 
     console.log('[DEBUG] Updating database...');
 
-    // Update marks
+    // Validate and update marks
+    const validatedFileUrl = validateFtpUrl(fileUrl);
+    console.log('[DEBUG] Updating file URL in database:', validatedFileUrl);
+    
     const result = await pool.query(`
       UPDATE marks 
       SET file_url = $1, student_data = $2, updated_at = NOW()
       WHERE id = $3
       RETURNING *
-    `, [fileUrl, JSON.stringify(studentData), marksId]);
+    `, [validatedFileUrl, JSON.stringify(studentData), marksId]);
 
     console.log('[DEBUG] Marks updated successfully, ID:', result.rows[0].id);
 

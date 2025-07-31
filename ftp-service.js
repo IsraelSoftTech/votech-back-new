@@ -10,6 +10,8 @@ class FTPService {
 
   async uploadFile(localFilePath, remoteFileName) {
     try {
+      console.log(`[FTP] Starting upload: ${localFilePath} -> ${remoteFileName}`);
+      
       await this.client.access({
         host: 'st60307.ispot.cc',
         user: 'votechs7academygroup@st60307.ispot.cc',
@@ -20,16 +22,24 @@ class FTPService {
         }
       });
 
+      console.log(`[FTP] Connected successfully`);
+
       // Upload the file
       await this.client.uploadFrom(localFilePath, remoteFileName);
       
+      console.log(`[FTP] File uploaded successfully`);
+      
       // Return the public URL
-      return `https://st60307.ispot.cc/votechs7academygroup/${remoteFileName}`;
+      const publicUrl = `https://st60307.ispot.cc/votechs7academygroup/${remoteFileName}`;
+      console.log(`[FTP] Public URL: ${publicUrl}`);
+      
+      return publicUrl;
     } catch (error) {
-      console.error('FTP upload error:', error);
+      console.error('[FTP] Upload error:', error);
       throw new Error(`Failed to upload file to FTP: ${error.message}`);
     } finally {
       this.client.close();
+      console.log(`[FTP] Connection closed`);
     }
   }
 
