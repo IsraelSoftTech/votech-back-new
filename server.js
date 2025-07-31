@@ -3038,6 +3038,431 @@ app.get('/api/departments', authenticateToken, async (req, res) => {
   }
 });
 
-// === Lesson Plans API ===
+// Get students by class
+app.get('/api/students/class/:classId', authenticateToken, async (req, res) => {
+  try {
+    const { classId } = req.params;
+    console.log(`[DEBUG] Fetching students for class ID: ${classId}`);
+    
+    // Validate class exists
+    const classResult = await pool.query('SELECT * FROM classes WHERE id = $1', [classId]);
+    if (classResult.rows.length === 0) {
+      console.log(`[DEBUG] Class not found with ID: ${classId}`);
+      return res.status(404).json({ error: 'Class not found' });
+    }
 
-// ... existing code ...
+    console.log(`[DEBUG] Class found: ${classResult.rows[0].name}`);
+
+    // Get students for the class
+    const result = await pool.query(`
+      SELECT 
+        id,
+        full_name,
+        student_id,
+        class_id
+      FROM students 
+      WHERE class_id = $1 
+      ORDER BY full_name
+    `, [classId]);
+
+    console.log(`[DEBUG] Found ${result.rows.length} students for class ${classId}`);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching students by class:', error);
+    res.status(500).json({ error: 'Failed to fetch students for class', details: error.message });
+  }
+});
+
+// Test endpoint to check students table
+app.get('/api/students/test', authenticateToken, async (req, res) => {
+  try {
+    console.log('[DEBUG] Testing students table access');
+    const result = await pool.query('SELECT COUNT(*) as count FROM students');
+    console.log(`[DEBUG] Students table has ${result.rows[0].count} records`);
+    res.json({ message: 'Students table accessible', count: result.rows[0].count });
+  } catch (error) {
+    console.error('Error testing students table:', error);
+    res.status(500).json({ error: 'Students table test failed', details: error.message });
+  }
+});
+
+// Test endpoint to check marks table
+app.get('/api/marks/test', authenticateToken, async (req, res) => {
+  try {
+    console.log('[DEBUG] Testing marks table access');
+    const result = await pool.query('SELECT COUNT(*) as count FROM marks');
+    console.log(`[DEBUG] Marks table has ${result.rows[0].count} records`);
+    res.json({ message: 'Marks table accessible', count: result.rows[0].count });
+  } catch (error) {
+    console.error('Error testing marks table:', error);
+    res.status(500).json({ error: 'Marks table test failed', details: error.message });
+  }
+});
+
+// Test endpoint to check specific marks record
+app.get('/api/marks/test/:id', authenticateToken, async (req, res) => {
+  try {
+    const marksId = req.params.id;
+    console.log('[DEBUG] Testing marks record access for ID:', marksId);
+    
+    const result = await pool.query(`
+      SELECT 
+        m.*,
+        c.name as class_name,
+        u.username as uploaded_by_name
+      FROM marks m
+      JOIN classes c ON m.class_id = c.id
+      JOIN users u ON m.uploaded_by = u.id
+      WHERE m.id = $1
+    `, [marksId]);
+    
+    if (result.rows.length === 0) {
+      console.log('[DEBUG] Marks record not found:', marksId);
+      res.json({ message: 'Marks record not found', exists: false });
+    } else {
+      console.log('[DEBUG] Marks record found:', result.rows[0]);
+      res.json({ message: 'Marks record accessible', exists: true, data: result.rows[0] });
+    }
+  } catch (error) {
+    console.error('Error testing marks record:', error);
+    res.status(500).json({ error: 'Marks record test failed', details: error.message });
+  }
+});
+
+// === Marks Management API ===
+
+// Get all uploaded marks
+app.get('/api/marks', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        m.id,
+        m.class_id,
+        m.sequence_id,
+        m.file_url,
+        m.upload_date,
+        m.uploaded_by,
+        c.name as class_name,
+        CONCAT('Sequence ', m.sequence_id) as sequence_name,
+        u.username as uploaded_by_name
+      FROM marks m
+      JOIN classes c ON m.class_id = c.id
+      JOIN users u ON m.uploaded_by = u.id
+      ORDER BY m.upload_date DESC
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching marks:', error);
+    res.status(500).json({ error: 'Failed to fetch marks' });
+  }
+});
+
+// Upload marks file
+app.post('/api/marks/upload', authenticateToken, excelUpload.single('marksFile'), async (req, res) => {
+  try {
+    console.log('[DEBUG] Marks upload request received');
+    const { classId, sequenceId } = req.body;
+    const uploadedBy = req.user.id;
+    
+    console.log('[DEBUG] Request data:', { classId, sequenceId, uploadedBy });
+    
+    if (!req.file) {
+      console.log('[DEBUG] No file uploaded');
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    console.log('[DEBUG] File received:', req.file.originalname, req.file.size, 'bytes');
+
+    if (!classId || !sequenceId) {
+      console.log('[DEBUG] Missing classId or sequenceId');
+      return res.status(400).json({ error: 'Class ID and Sequence ID are required' });
+    }
+
+    // Validate class exists
+    const classResult = await pool.query('SELECT * FROM classes WHERE id = $1', [classId]);
+    if (classResult.rows.length === 0) {
+      console.log('[DEBUG] Class not found:', classId);
+      return res.status(400).json({ error: 'Class not found' });
+    }
+
+    console.log('[DEBUG] Class found:', classResult.rows[0].name);
+
+    // Validate sequence (1-6)
+    const sequence = parseInt(sequenceId);
+    if (sequence < 1 || sequence > 6) {
+      console.log('[DEBUG] Invalid sequence:', sequence);
+      return res.status(400).json({ error: 'Invalid sequence. Must be between 1 and 6' });
+    }
+
+    // Check if marks already exist for this class and sequence
+    const existingResult = await pool.query(
+      'SELECT * FROM marks WHERE class_id = $1 AND sequence_id = $2',
+      [classId, sequenceId]
+    );
+
+    if (existingResult.rows.length > 0) {
+      console.log('[DEBUG] Marks already exist for this class and sequence');
+      return res.status(400).json({ error: 'Marks already exist for this class and sequence' });
+    }
+
+    console.log('[DEBUG] Processing Excel file...');
+
+    // Process the Excel file
+    const workbook = XLSX.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+    console.log('[DEBUG] Excel data rows:', data.length);
+
+    // Validate Excel format
+    if (data.length < 2) {
+      console.log('[DEBUG] Invalid Excel format - insufficient rows');
+      return res.status(400).json({ error: 'Invalid Excel file format' });
+    }
+
+    const headers = data[0];
+    console.log('[DEBUG] Excel headers:', headers);
+    
+    if (!headers || headers.length < 3 || 
+        headers[0] !== 'S/N' || 
+        headers[1] !== 'FULL NAMES' || 
+        headers[2] !== 'Marks/20') {
+      console.log('[DEBUG] Invalid Excel format - wrong headers');
+      return res.status(400).json({ error: 'Invalid Excel format. Expected columns: S/N, FULL NAMES, Marks/20' });
+    }
+
+    // Extract student data (skip header row)
+    const studentData = data.slice(1).filter(row => row[0] && row[1]); // Only rows with S/N and names
+    console.log('[DEBUG] Student data rows:', studentData.length);
+
+    // Upload file to FTP if configured
+    let fileUrl = req.file.path;
+    if (process.env.FTP_HOST) {
+      try {
+        const ftpFileName = `marks_${classId}_${sequenceId}_${Date.now()}.xlsx`;
+        await ftpService.uploadFile(req.file.path, ftpFileName);
+        fileUrl = `${process.env.FTP_URL}/${ftpFileName}`;
+        console.log('[DEBUG] File uploaded to FTP:', fileUrl);
+      } catch (ftpError) {
+        console.error('FTP upload failed:', ftpError);
+        // Continue with local file
+      }
+    }
+
+    console.log('[DEBUG] Saving to database...');
+
+    // Save to database
+    const result = await pool.query(`
+      INSERT INTO marks (class_id, sequence_id, file_url, uploaded_by, student_data)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *
+    `, [classId, sequenceId, fileUrl, uploadedBy, JSON.stringify(studentData)]);
+
+    console.log('[DEBUG] Marks saved successfully, ID:', result.rows[0].id);
+
+    res.status(201).json({
+      message: 'Marks uploaded successfully',
+      marks: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Error uploading marks:', error);
+    res.status(500).json({ error: 'Failed to upload marks: ' + error.message });
+  }
+});
+
+// Delete marks
+app.delete('/api/marks/:id', authenticateToken, async (req, res) => {
+  try {
+    const marksId = req.params.id;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    // Check if marks exist
+    const marksResult = await pool.query(
+      'SELECT * FROM marks WHERE id = $1',
+      [marksId]
+    );
+
+    if (marksResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Marks not found' });
+    }
+
+    const mark = marksResult.rows[0];
+
+    // Check if user has permission to delete (uploader or Admin3)
+    const canDelete = userRole === 'Admin3' || mark.uploaded_by === userId;
+    if (!canDelete) {
+      return res.status(403).json({ error: 'You do not have permission to delete these marks' });
+    }
+
+    // Delete marks
+    await pool.query('DELETE FROM marks WHERE id = $1', [marksId]);
+
+    res.json({ message: 'Marks deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting marks:', error);
+    res.status(500).json({ error: 'Failed to delete marks' });
+  }
+});
+
+// Update marks
+app.put('/api/marks/:id', authenticateToken, excelUpload.single('marksFile'), async (req, res) => {
+  try {
+    console.log('[DEBUG] Update marks request received');
+    const marksId = req.params.id;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    console.log('[DEBUG] Update request:', { marksId, userId, userRole });
+
+    // Check if marks exist
+    const marksResult = await pool.query(
+      'SELECT * FROM marks WHERE id = $1',
+      [marksId]
+    );
+
+    if (marksResult.rows.length === 0) {
+      console.log('[DEBUG] Marks not found:', marksId);
+      return res.status(404).json({ error: 'Marks not found' });
+    }
+
+    const mark = marksResult.rows[0];
+    console.log('[DEBUG] Found marks:', mark);
+
+    // Check if user has permission to edit (uploader or Admin3)
+    const canEdit = userRole === 'Admin3' || mark.uploaded_by === userId;
+    if (!canEdit) {
+      console.log('[DEBUG] Permission denied for user:', userId);
+      return res.status(403).json({ error: 'You do not have permission to edit these marks' });
+    }
+
+    if (!req.file) {
+      console.log('[DEBUG] No file uploaded for update');
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    console.log('[DEBUG] File received for update:', req.file.originalname, req.file.size, 'bytes');
+
+    // Process the Excel file
+    const workbook = XLSX.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+    console.log('[DEBUG] Excel data rows for update:', data.length);
+
+    // Validate Excel format
+    if (data.length < 2) {
+      console.log('[DEBUG] Invalid Excel format - insufficient rows');
+      return res.status(400).json({ error: 'Invalid Excel file format' });
+    }
+
+    const headers = data[0];
+    console.log('[DEBUG] Excel headers for update:', headers);
+    
+    if (!headers || headers.length < 3 || 
+        headers[0] !== 'S/N' || 
+        headers[1] !== 'FULL NAMES' || 
+        headers[2] !== 'Marks/20') {
+      console.log('[DEBUG] Invalid Excel format - wrong headers');
+      return res.status(400).json({ error: 'Invalid Excel format. Expected columns: S/N, FULL NAMES, Marks/20' });
+    }
+
+    // Extract student data (skip header row)
+    const studentData = data.slice(1).filter(row => row[0] && row[1]);
+    console.log('[DEBUG] Student data rows for update:', studentData.length);
+
+    // Upload file to FTP if configured
+    let fileUrl = req.file.path;
+    if (process.env.FTP_HOST) {
+      try {
+        const ftpFileName = `marks_${mark.class_id}_${mark.sequence_id}_${Date.now()}.xlsx`;
+        await ftpService.uploadFile(req.file.path, ftpFileName);
+        fileUrl = `${process.env.FTP_URL}/${ftpFileName}`;
+        console.log('[DEBUG] Updated file uploaded to FTP:', fileUrl);
+      } catch (ftpError) {
+        console.error('FTP upload failed:', ftpError);
+        // Continue with local file
+      }
+    }
+
+    console.log('[DEBUG] Updating database...');
+
+    // Update marks
+    const result = await pool.query(`
+      UPDATE marks 
+      SET file_url = $1, student_data = $2, updated_at = NOW()
+      WHERE id = $3
+      RETURNING *
+    `, [fileUrl, JSON.stringify(studentData), marksId]);
+
+    console.log('[DEBUG] Marks updated successfully, ID:', result.rows[0].id);
+
+    res.json({
+      message: 'Marks updated successfully',
+      marks: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Error updating marks:', error);
+    res.status(500).json({ error: 'Failed to update marks: ' + error.message });
+  }
+});
+
+// Get marks by class and sequence
+app.get('/api/marks/:classId/:sequenceId', authenticateToken, async (req, res) => {
+  try {
+    const { classId, sequenceId } = req.params;
+
+    const result = await pool.query(`
+      SELECT 
+        m.*,
+        c.name as class_name,
+        CONCAT('Sequence ', m.sequence_id) as sequence_name,
+        u.username as uploaded_by_name
+      FROM marks m
+      JOIN classes c ON m.class_id = c.id
+      JOIN users u ON m.uploaded_by = u.id
+      WHERE m.class_id = $1 AND m.sequence_id = $2
+    `, [classId, sequenceId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Marks not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching marks:', error);
+    res.status(500).json({ error: 'Failed to fetch marks' });
+  }
+});
+
+// Get marks statistics
+app.get('/api/marks/statistics', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        COUNT(*) as total_marks,
+        COUNT(DISTINCT class_id) as classes_with_marks,
+        COUNT(DISTINCT uploaded_by) as users_uploaded
+      FROM marks
+    `);
+
+    const classResult = await pool.query('SELECT COUNT(*) as total_classes FROM classes');
+    
+    const stats = {
+      ...result.rows[0],
+      total_classes: parseInt(classResult.rows[0].total_classes),
+      classes_without_marks: parseInt(classResult.rows[0].total_classes) - parseInt(result.rows[0].classes_with_marks)
+    };
+
+    res.json(stats);
+  } catch (error) {
+    console.error('Error fetching marks statistics:', error);
+    res.status(500).json({ error: 'Failed to fetch marks statistics' });
+  }
+});
+
+// === Lesson Plans API ===

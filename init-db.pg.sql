@@ -150,3 +150,16 @@ CREATE TABLE IF NOT EXISTS lesson_plans (
     reviewed_at TIMESTAMP,
     reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
+
+-- Marks Management
+CREATE TABLE IF NOT EXISTS marks (
+    id SERIAL PRIMARY KEY,
+    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+    sequence_id INTEGER NOT NULL CHECK (sequence_id BETWEEN 1 AND 6),
+    file_url VARCHAR(500) NOT NULL,
+    student_data JSONB, -- Store the parsed Excel data
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(class_id, sequence_id) -- Ensure only one marks file per class per sequence
+);
