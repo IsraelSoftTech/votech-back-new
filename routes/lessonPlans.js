@@ -3,6 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { Pool } = require('pg');
+const ftpService = require('../ftp-service');
 require('dotenv').config();
 
 const router = express.Router();
@@ -36,23 +37,9 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadDir = path.join(__dirname, '..', 'uploads', 'lesson-plans');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'lesson-plan-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
+// Configure multer for file uploads - using memory storage for FTP upload
 const upload = multer({ 
-  storage: storage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024 // 10MB limit
   },
@@ -74,29 +61,25 @@ const upload = multer({
 // Create lesson plans table if it doesn't exist
 const initializeLessonPlansTable = async () => {
   try {
+    // Drop the existing table if it exists to fix schema issues
+    await pool.query('DROP TABLE IF EXISTS lesson_plans CASCADE');
+    
+    // Create the table with the correct schema
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS lesson_plans (
+      CREATE TABLE lesson_plans (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
         title VARCHAR(255) NOT NULL,
-        subject VARCHAR(100),
-        class_name VARCHAR(100),
-        week VARCHAR(50),
-        objectives TEXT,
-        content TEXT,
-        activities TEXT,
-        assessment TEXT,
-        resources TEXT,
-        file_url VARCHAR(255),
-        file_name VARCHAR(255),
-        status VARCHAR(20) DEFAULT 'pending',
+        period_type VARCHAR(20) NOT NULL CHECK (period_type IN ('weekly', 'monthly', 'yearly')),
+        file_url VARCHAR(500) NOT NULL,
+        status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
         admin_comment TEXT,
-        period_type VARCHAR(50) DEFAULT 'weekly',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        reviewed_at TIMESTAMP,
+        reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
       )
     `);
-    console.log('Lesson plans table initialized');
+    console.log('Lesson plans table recreated with correct schema');
   } catch (error) {
     console.error('Error initializing lesson plans table:', error);
   }
@@ -105,123 +88,42 @@ const initializeLessonPlansTable = async () => {
 // Initialize table on module load
 initializeLessonPlansTable();
 
-// Run migrations to add missing columns
-const runLessonPlansMigrations = async () => {
-  try {
-    console.log('Running lesson plans migrations...');
-    
-    // Check if lesson_plans table has all required columns
-    const lessonPlansColumns = await pool.query(
-      "SELECT column_name FROM information_schema.columns WHERE table_name = 'lesson_plans' AND column_name IN ('subject', 'class_name', 'week', 'objectives', 'content', 'activities', 'assessment', 'resources', 'file_url', 'file_name', 'status', 'admin_comment', 'updated_at', 'created_at', 'period_type')"
-    );
-    const existingLessonPlansColumns = lessonPlansColumns.rows.map(row => row.column_name);
-    
-    if (!existingLessonPlansColumns.includes('subject')) {
-      console.log('Adding subject column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN subject VARCHAR(100)');
-    }
-    if (!existingLessonPlansColumns.includes('class_name')) {
-      console.log('Adding class_name column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN class_name VARCHAR(100)');
-    }
-    if (!existingLessonPlansColumns.includes('week')) {
-      console.log('Adding week column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN week VARCHAR(50)');
-    }
-    if (!existingLessonPlansColumns.includes('objectives')) {
-      console.log('Adding objectives column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN objectives TEXT');
-    }
-    if (!existingLessonPlansColumns.includes('content')) {
-      console.log('Adding content column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN content TEXT');
-    }
-    if (!existingLessonPlansColumns.includes('activities')) {
-      console.log('Adding activities column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN activities TEXT');
-    }
-    if (!existingLessonPlansColumns.includes('assessment')) {
-      console.log('Adding assessment column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN assessment TEXT');
-    }
-    if (!existingLessonPlansColumns.includes('resources')) {
-      console.log('Adding resources column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN resources TEXT');
-    }
-    if (!existingLessonPlansColumns.includes('file_url')) {
-      console.log('Adding file_url column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN file_url VARCHAR(255)');
-    }
-    if (!existingLessonPlansColumns.includes('file_name')) {
-      console.log('Adding file_name column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN file_name VARCHAR(255)');
-    }
-    if (!existingLessonPlansColumns.includes('status')) {
-      console.log('Adding status column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN status VARCHAR(20) DEFAULT \'pending\'');
-    }
-    if (!existingLessonPlansColumns.includes('admin_comment')) {
-      console.log('Adding admin_comment column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN admin_comment TEXT');
-    }
-    if (!existingLessonPlansColumns.includes('period_type')) {
-      console.log('Adding period_type column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN period_type VARCHAR(50) DEFAULT \'weekly\'');
-    }
-    if (!existingLessonPlansColumns.includes('updated_at')) {
-      console.log('Adding updated_at column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
-    }
-    if (!existingLessonPlansColumns.includes('created_at')) {
-      console.log('Adding created_at column to lesson_plans table...');
-      await pool.query('ALTER TABLE lesson_plans ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
-    }
-    
-    console.log('Lesson plans migrations completed');
-  } catch (error) {
-    console.error('Error running lesson plans migrations:', error);
-  }
-};
-
-// Run migrations on module load
-runLessonPlansMigrations();
-
 // Upload a new lesson plan
 router.post('/', authenticateToken, upload.single('file'), async (req, res) => {
   try {
-    const {
-      title,
-      subject,
-      class_name,
-      week,
-      objectives,
-      content,
-      activities,
-      assessment,
-      resources,
-      period_type
-    } = req.body;
+    const { title, period_type } = req.body;
 
     if (!title) {
       return res.status(400).json({ error: 'Title is required' });
     }
 
+    if (!req.file) {
+      return res.status(400).json({ error: 'File is required' });
+    }
+
     let fileUrl = null;
-    let fileName = null;
-    if (req.file) {
-      fileUrl = `/uploads/lesson-plans/${req.file.filename}`;
-      fileName = req.file.originalname;
+    try {
+      const filename = `lesson_plan_${Date.now()}_${req.file.originalname}`;
+      fileUrl = await ftpService.uploadBuffer(req.file.buffer, filename);
+      console.log('Lesson plan uploaded to FTP:', fileUrl);
+    } catch (error) {
+      console.error('Failed to upload lesson plan to FTP:', error);
+      // Fallback to local storage
+      const uploadDir = path.join(__dirname, '..', 'uploads', 'lesson-plans');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      const localFilename = 'lesson-plan-' + uniqueSuffix + path.extname(req.file.originalname);
+      const localFilePath = path.join(uploadDir, localFilename);
+      fs.writeFileSync(localFilePath, req.file.buffer);
+      fileUrl = `/uploads/lesson-plans/${localFilename}`;
     }
 
     const result = await pool.query(
-      `INSERT INTO lesson_plans (
-        user_id, title, subject, class_name, week, objectives, content, 
-        activities, assessment, resources, file_url, file_name, period_type
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
-      [
-        req.user.id, title, subject, class_name, week, objectives, content,
-        activities, assessment, resources, fileUrl, fileName, period_type || 'weekly'
-      ]
+      `INSERT INTO lesson_plans (user_id, title, period_type, file_url) 
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [req.user.id, title, period_type || 'weekly', fileUrl]
     );
 
     res.status(201).json(result.rows[0]);
@@ -235,7 +137,7 @@ router.post('/', authenticateToken, upload.single('file'), async (req, res) => {
 router.get('/my', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT * FROM lesson_plans WHERE user_id = $1 ORDER BY created_at DESC`,
+      `SELECT * FROM lesson_plans WHERE user_id = $1 ORDER BY submitted_at DESC`,
       [req.user.id]
     );
     res.json(result.rows);
@@ -248,17 +150,26 @@ router.get('/my', authenticateToken, async (req, res) => {
 // Get all lesson plans (for admins)
 router.get('/all', authenticateToken, async (req, res) => {
   try {
+    console.log('Get all lesson plans request from user:', req.user.id, 'Role:', req.user.role);
+    
     // Check if user is admin
     if (!['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    // Simple query to get all lesson plans with user info
     const result = await pool.query(
-      `SELECT lp.*, u.name as teacher_name, u.username 
+      `SELECT 
+        lp.*,
+        u.name as teacher_name,
+        u.username as teacher_username,
+        u.role as teacher_role
        FROM lesson_plans lp 
-       JOIN users u ON lp.user_id = u.id 
-       ORDER BY lp.created_at DESC`
+       LEFT JOIN users u ON lp.user_id = u.id 
+       ORDER BY lp.submitted_at DESC`
     );
+    
+    console.log('Found', result.rows.length, 'lesson plans');
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching all lesson plans:', error);
@@ -297,15 +208,33 @@ router.put('/:id', authenticateToken, upload.single('file'), async (req, res) =>
     let fileName = existingPlan.rows[0].file_name;
 
     if (req.file) {
-      // Delete old file if exists
-      if (fileUrl) {
+      // Delete old file if exists (only if it's a local file)
+      if (fileUrl && fileUrl.startsWith('/uploads/')) {
         const oldFilePath = path.join(__dirname, '..', fileUrl);
         if (fs.existsSync(oldFilePath)) {
           fs.unlinkSync(oldFilePath);
         }
       }
-      fileUrl = `/uploads/lesson-plans/${req.file.filename}`;
-      fileName = req.file.originalname;
+      
+      try {
+        const filename = `lesson_plan_${Date.now()}_${req.file.originalname}`;
+        fileUrl = await ftpService.uploadBuffer(req.file.buffer, filename);
+        fileName = req.file.originalname;
+        console.log('Updated lesson plan uploaded to FTP:', fileUrl);
+      } catch (error) {
+        console.error('Failed to upload updated lesson plan to FTP:', error);
+        // Fallback to local storage with updated path
+        const uploadDir = path.join(__dirname, '..', 'uploads', 'lesson-plans');
+        if (!fs.existsSync(uploadDir)) {
+          fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const localFilename = 'lesson-plan-' + uniqueSuffix + path.extname(req.file.originalname);
+        const localFilePath = path.join(uploadDir, localFilename);
+        fs.writeFileSync(localFilePath, req.file.buffer);
+        fileUrl = `/uploads/lesson-plans/${localFilename}`;
+        fileName = req.file.originalname;
+      }
     }
 
     const result = await pool.query(
@@ -381,9 +310,9 @@ router.put('/:id/review', authenticateToken, async (req, res) => {
 
     const result = await pool.query(
       `UPDATE lesson_plans SET 
-        status = $1, admin_comment = $2, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $3 RETURNING *`,
-      [status, admin_comment, lessonPlanId]
+        status = $1, admin_comment = $2, reviewed_at = CURRENT_TIMESTAMP, reviewed_by = $3
+       WHERE id = $4 RETURNING *`,
+      [status, admin_comment, req.user.id, lessonPlanId]
     );
 
     if (result.rows.length === 0) {
@@ -431,6 +360,34 @@ router.delete('/:id/admin', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error deleting lesson plan:', error);
     res.status(500).json({ error: 'Failed to delete lesson plan' });
+  }
+});
+
+// Test endpoint to check if everything is working
+router.get('/test', authenticateToken, async (req, res) => {
+  try {
+    // Check if user is admin
+    if (!['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Get total count
+    const countResult = await pool.query('SELECT COUNT(*) FROM lesson_plans');
+    const totalCount = countResult.rows[0].count;
+
+    // Get all plans
+    const plansResult = await pool.query('SELECT * FROM lesson_plans ORDER BY submitted_at DESC');
+    
+    res.json({
+      message: 'Test successful',
+      totalLessonPlans: totalCount,
+      lessonPlans: plansResult.rows,
+      userRole: req.user.role,
+      userId: req.user.id
+    });
+  } catch (error) {
+    console.error('Test endpoint error:', error);
+    res.status(500).json({ error: 'Test failed', details: error.message });
   }
 });
 

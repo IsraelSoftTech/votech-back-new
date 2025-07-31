@@ -90,18 +90,6 @@ CREATE TABLE IF NOT EXISTS group_participants (
     UNIQUE(group_id, user_id)
 );
 
--- Salaries table
-CREATE TABLE IF NOT EXISTS salaries (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    amount DECIMAL(10,2) NOT NULL,
-    month VARCHAR(7) NOT NULL, -- Format: YYYY-MM
-    paid BOOLEAN DEFAULT FALSE,
-    paid_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, month)
-);
-
 -- Attendance
 CREATE TABLE IF NOT EXISTS attendance_sessions (
     id SERIAL PRIMARY KEY,
@@ -118,40 +106,10 @@ CREATE TABLE IF NOT EXISTS attendance_records (
     marked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Teachers
-CREATE TABLE IF NOT EXISTS teachers (
-    id SERIAL PRIMARY KEY,
-    full_name VARCHAR(100) NOT NULL,
-    sex VARCHAR(10) NOT NULL,
-    id_card VARCHAR(50) NOT NULL,
-    dob DATE NOT NULL,
-    pob VARCHAR(100) NOT NULL,
-    subjects VARCHAR(255) NOT NULL,
-    classes VARCHAR(255) NOT NULL,
-    contact VARCHAR(50) NOT NULL,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    status VARCHAR(20) DEFAULT 'pending',
-    certificate_url VARCHAR(255),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-ALTER TABLE teachers ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'pending';
-
 CREATE TABLE IF NOT EXISTS subjects (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     code VARCHAR(20) UNIQUE NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Salary
-CREATE TABLE IF NOT EXISTS salary (
-    id SERIAL PRIMARY KEY,
-    teacher_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    amount NUMERIC(12,2) NOT NULL,
-    month VARCHAR(20),
-    paid BOOLEAN DEFAULT FALSE,
-    paid_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

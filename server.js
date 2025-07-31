@@ -25,6 +25,10 @@ const pool = new Pool({
 
 // Import routes
 const lessonPlansRouter = require('./routes/lessonPlans');
+const groupsRouter = require('./routes/groups');
+
+// Import FTP service at the top of the file
+const ftpService = require('./ftp-service');
 
 const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
@@ -48,7 +52,31 @@ const storage = multer.diskStorage({
 });
 
 // Use memory storage for student uploads
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit for all files
+    files: 3 // Maximum 3 files (certificate, cv, photo)
+  },
+  fileFilter: function (req, file, cb) {
+    // Allow images, PDFs, and common document formats
+    const allowedTypes = [
+      'image/jpeg',
+      'image/jpg', 
+      'image/png',
+      'image/gif',
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ];
+    
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`File type ${file.mimetype} not allowed. Only images, PDFs, and Word documents are accepted.`), false);
+    }
+  }
+});
 
 // Configure multer for Excel file uploads
 const excelUpload = multer({ 
@@ -99,12 +127,30 @@ const findAvailablePort = (startPort) => {
 
 // CORS configuration with dynamic origin
 const corsOptions = {
-  origin: [
-    'https://votech-latest-front.onrender.com', // added for new frontend
- 
-    'http://localhost:3000',             // local development
-    'http://localhost:3004'              // local development (alternate port)
-  ],
+  origin: function (origin, callback) {
+    console.log('CORS request from origin:', origin);
+    
+    const allowedOrigins = [
+      'https://votechs7academygroup.com', // Production frontend
+      'https://votech-latest-front.onrender.com', // Keep for backup
+      'http://localhost:3000',             // local development
+      'http://localhost:3004'              // local development (alternate port)
+    ];
+    
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) {
+      console.log('No origin provided, allowing request');
+      return callback(null, true);
+    }
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      console.log('Origin allowed:', origin);
+      callback(null, true);
+    } else {
+      console.log('Origin not allowed:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
   exposedHeaders: ['Content-Range', 'X-Content-Range'],
@@ -115,24 +161,14 @@ const corsOptions = {
 // Middleware
 app.use(cors(corsOptions));
 
-// Conditional middleware to handle both JSON and FormData
-app.use((req, res, next) => {
-  // Skip JSON parsing for file upload routes
-  if (req.path.includes('/teacher-application') && (req.method === 'POST' || req.method === 'PUT')) {
-    // For file uploads, let multer handle the parsing
-    next();
-  } else {
-    // For other routes, use JSON parsing
-    express.json({ limit: '10mb' })(req, res, next);
-  }
-});
-
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static('uploads')); // Serve uploaded files
 app.options('*', cors(corsOptions));
 
 // Use routes
 app.use('/api/lesson-plans', lessonPlansRouter);
+app.use('/api/groups', groupsRouter);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -173,6 +209,11 @@ const authenticateToken = (req, res, next) => {
 // Public endpoints (no authentication required)
 app.get('/api/test', (req, res) => {
   res.json({ message: 'Server is running' });
+});
+
+// Test lesson plans endpoint
+app.get('/api/lesson-plans/test', (req, res) => {
+  res.json({ message: 'Lesson plans endpoint is working' });
 });
 
 // Temporary endpoint to create admin user (remove in production)
@@ -1305,51 +1346,6 @@ async function runMigrations() {
       `);
     }
     
-    // Check if salaries table exists
-    const salariesTable = await pool.query(
-      "SELECT table_name FROM information_schema.tables WHERE table_name = 'salaries'"
-    );
-    if (salariesTable.rows.length === 0) {
-      console.log('Creating salaries table...');
-      await pool.query(`
-        CREATE TABLE salaries (
-          id SERIAL PRIMARY KEY,
-          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-          amount DECIMAL(10,2) NOT NULL,
-          month VARCHAR(7) NOT NULL,
-          paid BOOLEAN DEFAULT FALSE,
-          paid_at TIMESTAMP,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE(user_id, month)
-        )
-      `);
-    } else {
-      // Check if salaries table needs migration from teacher_id to user_id
-      const teacherIdColumn = await pool.query(
-        "SELECT column_name FROM information_schema.columns WHERE table_name = 'salaries' AND column_name = 'teacher_id'"
-      );
-      if (teacherIdColumn.rows.length > 0) {
-        console.log('Migrating salaries table from teacher_id to user_id...');
-        // Add user_id column
-        await pool.query('ALTER TABLE salaries ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE');
-        // Copy data from teachers table to users table (if possible)
-        await pool.query(`
-          UPDATE salaries 
-          SET user_id = u.id 
-          FROM teachers t, users u 
-          WHERE salaries.teacher_id = t.id 
-          AND (t.contact = u.contact OR t.full_name = u.name)
-        `);
-        // Drop the old teacher_id column and constraint
-        await pool.query('ALTER TABLE salaries DROP CONSTRAINT IF EXISTS salaries_teacher_id_fkey');
-        await pool.query('ALTER TABLE salaries DROP COLUMN teacher_id');
-        // Update unique constraint
-        await pool.query('ALTER TABLE salaries DROP CONSTRAINT IF EXISTS salaries_teacher_id_month_key');
-        await pool.query('ALTER TABLE salaries ADD CONSTRAINT salaries_user_id_month_key UNIQUE(user_id, month)');
-        console.log('Salaries table migration completed');
-      }
-    }
-    
     // Check if inventory table exists
     const inventoryTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'inventory'"
@@ -1508,6 +1504,18 @@ async function runMigrations() {
       }
     }
     
+    // Check if students table has photo_url column
+    const photoUrlColumn = await pool.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'students' AND column_name = 'photo_url'"
+    );
+    if (photoUrlColumn.rows.length === 0) {
+      console.log('Adding photo_url column to students table...');
+      await pool.query('ALTER TABLE students ADD COLUMN photo_url VARCHAR(255)');
+      console.log('photo_url column added to students table successfully');
+    } else {
+      console.log('photo_url column already exists in students table');
+    }
+    
     console.log('Messages table file attachment columns migration completed');
   } catch (error) {
     console.error('Error running migrations:', error);
@@ -1585,7 +1593,6 @@ const initializeDatabase = async () => {
         subjects TEXT,
         id_card VARCHAR(100),
         classes_taught TEXT,
-        salary_amount VARCHAR(50),
         status VARCHAR(20) DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -1627,16 +1634,6 @@ const initializeDatabase = async () => {
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
         joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(group_id, user_id)
-      );
-      CREATE TABLE IF NOT EXISTS salaries (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        amount DECIMAL(10,2) NOT NULL,
-        month VARCHAR(7) NOT NULL,
-        paid BOOLEAN DEFAULT FALSE,
-        paid_at TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(user_id, month)
       );
       CREATE TABLE IF NOT EXISTS inventory (
         id SERIAL PRIMARY KEY,
@@ -1922,13 +1919,39 @@ app.get('/api/specialties/:id/classes', async (req, res) => {
 app.get('/api/students/:id/picture', async (req, res) => {
   const studentId = req.params.id;
   try {
-    const result = await pool.query('SELECT student_picture FROM students WHERE id = $1', [studentId]);
-    if (result.rows.length === 0 || !result.rows[0].student_picture) {
-      console.warn(`[IMAGE] No image found for student ID: ${studentId}`);
-      return res.status(404).send('No image');
+    const result = await pool.query('SELECT student_picture, photo_url FROM students WHERE id = $1', [studentId]);
+    if (result.rows.length === 0) {
+      console.warn(`[IMAGE] No student found for ID: ${studentId}`);
+      return res.status(404).send('No student found');
     }
-    res.set('Content-Type', 'image/jpeg');
-    res.send(result.rows[0].student_picture);
+    
+    const student = result.rows[0];
+    
+    // First try photo_url (new schema)
+    if (student.photo_url) {
+      console.log(`[IMAGE] Serving photo_url for student ID: ${studentId}`);
+      // If it's a full URL, redirect to it
+      if (student.photo_url.startsWith('http')) {
+        return res.redirect(student.photo_url);
+      }
+      // If it's a local path, serve the file
+      const fs = require('fs');
+      const path = require('path');
+      const filePath = path.join(__dirname, student.photo_url);
+      if (fs.existsSync(filePath)) {
+        return res.sendFile(filePath);
+      }
+    }
+    
+    // Fallback to student_picture (old schema - BYTEA)
+    if (student.student_picture) {
+      console.log(`[IMAGE] Serving student_picture for student ID: ${studentId}`);
+      res.set('Content-Type', 'image/jpeg');
+      return res.send(student.student_picture);
+    }
+    
+    console.warn(`[IMAGE] No image found for student ID: ${studentId}`);
+    return res.status(404).send('No image');
   } catch (error) {
     console.error(`[IMAGE] Error retrieving image for student ID: ${studentId}:`, error);
     res.status(500).send('Error retrieving image');
@@ -2058,6 +2081,22 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
       ORDER BY created_at DESC
     `, [req.user.id]);
     
+    // Get unread message counts for individual chats
+    const unreadCountsResult = await pool.query(`
+      SELECT 
+        sender_id,
+        COUNT(*) as unread_count
+      FROM messages 
+      WHERE receiver_id = $1 AND sender_id != $1 AND read = false
+      GROUP BY sender_id
+    `, [req.user.id]);
+    
+    // Create a map of unread counts by user
+    const unreadCountsMap = {};
+    unreadCountsResult.rows.forEach(row => {
+      unreadCountsMap[row.sender_id] = parseInt(row.unread_count);
+    });
+    
     // Create a map of last messages by user
     const lastMessagesMap = {};
     lastMessagesResult.rows.forEach(msg => {
@@ -2068,31 +2107,105 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
     });
     
     // Combine user data with last message data
-    const chatList = usersResult.rows.map(user => ({
+    const userChatList = usersResult.rows.map(user => ({
       id: user.id,
       name: user.name,
       username: user.username,
       role: user.role,
       contact: user.contact,
-      last_message: lastMessagesMap[user.id]?.last_message || null,
-      last_message_time: lastMessagesMap[user.id]?.last_message_time || null,
-      sender_id: lastMessagesMap[user.id]?.sender_id || null
+      lastMessage: lastMessagesMap[user.id] ? {
+        content: lastMessagesMap[user.id].last_message,
+        time: lastMessagesMap[user.id].last_message_time,
+        sender_id: lastMessagesMap[user.id].sender_id
+      } : null,
+      unread: unreadCountsMap[user.id] || 0,
+      type: 'user'
     }));
+
+    // Get groups that the current user is a member of
+    const groupsResult = await pool.query(`
+      SELECT g.*, u.username as creator_name
+      FROM groups g
+      JOIN users u ON g.creator_id = u.id
+      WHERE g.id IN (
+        SELECT group_id FROM group_participants WHERE user_id = $1
+      )
+      ORDER BY g.created_at DESC
+    `, [req.user.id]);
+
+    // Get last message for each group
+    const groupMessagesResult = await pool.query(`
+      SELECT 
+        group_id,
+        content as last_message,
+        created_at as last_message_time,
+        sender_id
+      FROM messages 
+      WHERE group_id IN (
+        SELECT group_id FROM group_participants WHERE user_id = $1
+      )
+      ORDER BY created_at DESC
+    `, [req.user.id]);
+
+    // Get unread message counts for group chats
+    const groupUnreadCountsResult = await pool.query(`
+      SELECT 
+        group_id,
+        COUNT(*) as unread_count
+      FROM messages 
+      WHERE group_id IN (
+        SELECT group_id FROM group_participants WHERE user_id = $1
+      ) AND sender_id != $1 AND read = false
+      GROUP BY group_id
+    `, [req.user.id]);
+    
+    // Create a map of unread counts by group
+    const groupUnreadCountsMap = {};
+    groupUnreadCountsResult.rows.forEach(row => {
+      groupUnreadCountsMap[row.group_id] = parseInt(row.unread_count);
+    });
+
+    // Create a map of last messages by group
+    const groupMessagesMap = {};
+    groupMessagesResult.rows.forEach(msg => {
+      if (!groupMessagesMap[msg.group_id] || 
+          new Date(msg.last_message_time) > new Date(groupMessagesMap[msg.group_id].last_message_time)) {
+        groupMessagesMap[msg.group_id] = msg;
+      }
+    });
+
+    // Combine group data with last message data
+    const groupChatList = groupsResult.rows.map(group => ({
+      id: group.id,
+      name: group.name,
+      groupName: group.name, // For compatibility with frontend
+      creator_name: group.creator_name,
+      lastMessage: groupMessagesMap[group.id] ? {
+        content: groupMessagesMap[group.id].last_message,
+        time: groupMessagesMap[group.id].last_message_time,
+        sender_id: groupMessagesMap[group.id].sender_id
+      } : null,
+      unread: groupUnreadCountsMap[group.id] || 0,
+      type: 'group'
+    }));
+
+    // Combine user and group chats
+    const allChats = [...userChatList, ...groupChatList];
     
     // Sort by last message time (most recent first), then by name
-    chatList.sort((a, b) => {
-      if (!a.last_message_time && !b.last_message_time) {
+    allChats.sort((a, b) => {
+      if (!a.lastMessage?.time && !b.lastMessage?.time) {
         // Both have no messages, sort by name (handle null names)
         const nameA = a.name || '';
         const nameB = b.name || '';
         return nameA.localeCompare(nameB);
       }
-      if (!a.last_message_time) return 1;
-      if (!b.last_message_time) return -1;
-      return new Date(b.last_message_time) - new Date(a.last_message_time);
+      if (!a.lastMessage?.time) return 1;
+      if (!b.lastMessage?.time) return -1;
+      return new Date(b.lastMessage.time) - new Date(a.lastMessage.time);
     });
     
-    res.json(chatList);
+    res.json(allChats);
   } catch (error) {
     console.error('Error fetching chat list:', error);
     res.status(500).json({ error: 'Failed to fetch chat list' });
@@ -2123,14 +2236,24 @@ app.post('/api/students', upload.single('photo'), async (req, res) => {
     // Handle photo upload
     let photo_url = null;
     if (req.file) {
-      const fs = require('fs');
-      const path = require('path');
-      const uploadsDir = path.join(__dirname, 'uploads');
-      if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-      const filename = `student_${Date.now()}_${req.file.originalname}`;
-      const filepath = path.join(uploadsDir, filename);
-      fs.writeFileSync(filepath, req.file.buffer);
-      photo_url = `/uploads/${filename}`;
+      try {
+        const filename = `student_${Date.now()}_${req.file.originalname}`;
+        // Upload to FTP instead of local storage
+        photo_url = await ftpService.uploadBuffer(req.file.buffer, filename);
+        console.log('Photo uploaded to FTP:', photo_url);
+      } catch (error) {
+        console.error('Failed to upload photo to FTP:', error);
+        // Fallback to local storage if FTP fails
+        const fs = require('fs');
+        const path = require('path');
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+        const filename = `student_${Date.now()}_${req.file.originalname}`;
+        const filepath = path.join(uploadsDir, filename);
+        fs.writeFileSync(filepath, req.file.buffer);
+        photo_url = `/uploads/${filename}`;
+        console.log('Photo saved locally as fallback:', photo_url);
+      }
     }
 
     // Insert student into DB
@@ -2309,12 +2432,19 @@ app.post('/api/messages/with-file', authenticateToken, upload.single('file'), as
       const fileExtension = path.extname(file.originalname);
       fileName = `message_${uniqueSuffix}${fileExtension}`;
       
-      // Save file to uploads directory
-      const fs = require('fs');
-      const uploadPath = path.join(__dirname, 'uploads', fileName);
-      fs.writeFileSync(uploadPath, file.buffer);
+      // Upload file to FTP
+      try {
+        fileUrl = await ftpService.uploadBuffer(file.buffer, fileName);
+        console.log('Message file uploaded to FTP:', fileUrl);
+      } catch (error) {
+        console.error('Failed to upload message file to FTP:', error);
+        // Fallback to local storage
+        const fs = require('fs');
+        const uploadPath = path.join(__dirname, 'uploads', fileName);
+        fs.writeFileSync(uploadPath, file.buffer);
+        fileUrl = `/uploads/${fileName}`;
+      }
       
-      fileUrl = `/uploads/${fileName}`;
       fileType = file.mimetype;
     }
 
@@ -2463,275 +2593,6 @@ app.delete('/api/subjects/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// === SALARIES ENDPOINTS ===
-
-// Get all salaries
-app.get('/api/salaries', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT 
-        s.id,
-        s.user_id,
-        s.amount,
-        s.month,
-        s.paid,
-        s.paid_at,
-        s.created_at,
-        u.name as user_name,
-        u.username,
-        u.role,
-        u.contact
-      FROM salaries s
-      JOIN users u ON s.user_id = u.id
-      ORDER BY s.month DESC, u.name
-    `);
-    
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching salaries:', error);
-    res.status(500).json({ error: 'Failed to fetch salaries' });
-  }
-});
-
-// Get salaries for a specific user
-app.get('/api/salaries/user/:userId', authenticateToken, async (req, res) => {
-  try {
-    const userId = parseInt(req.params.userId);
-    const result = await pool.query(`
-      SELECT s.*, u.name as user_name, u.username, u.role, u.contact
-      FROM salaries s
-      JOIN users u ON s.user_id = u.id
-      WHERE s.user_id = $1 
-      ORDER BY s.month DESC
-    `, [userId]);
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching user salaries:', error);
-    res.status(500).json({ error: 'Failed to fetch user salaries' });
-  }
-});
-
-// Create a new salary record
-app.post('/api/salaries', authenticateToken, async (req, res) => {
-  const { user_id, amount, month } = req.body;
-  
-  if (!user_id || !amount || !month) {
-    return res.status(400).json({ error: 'user_id, amount, and month are required' });
-  }
-  
-  try {
-    const result = await pool.query(
-      'INSERT INTO salaries (user_id, amount, month) VALUES ($1, $2, $3) RETURNING *',
-      [user_id, amount, month]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Error creating salary:', error);
-    if (error.code === '23505') { // Unique violation
-      res.status(400).json({ error: 'Salary record for this user and month already exists' });
-    } else {
-      res.status(500).json({ error: 'Failed to create salary' });
-    }
-  }
-});
-
-// Update a salary record
-app.put('/api/salaries/:id', authenticateToken, async (req, res) => {
-  const id = parseInt(req.params.id);
-  const { amount, month, paid } = req.body;
-  
-  try {
-    let updateFields = [];
-    let updateValues = [];
-    let paramIndex = 1;
-    
-    if (amount !== undefined) {
-      updateFields.push(`amount = $${paramIndex}`);
-      updateValues.push(amount);
-      paramIndex++;
-    }
-    
-    if (month !== undefined) {
-      updateFields.push(`month = $${paramIndex}`);
-      updateValues.push(month);
-      paramIndex++;
-    }
-    
-    if (paid !== undefined) {
-      updateFields.push(`paid = $${paramIndex}`);
-      updateValues.push(paid);
-      paramIndex++;
-      
-      if (paid) {
-        updateFields.push(`paid_at = CURRENT_TIMESTAMP`);
-      } else {
-        updateFields.push(`paid_at = NULL`);
-      }
-    }
-    
-    if (updateFields.length === 0) {
-      return res.status(400).json({ error: 'No fields to update' });
-    }
-    
-    updateValues.push(id);
-    const updateQuery = `UPDATE salaries SET ${updateFields.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
-    
-    const result = await pool.query(updateQuery, updateValues);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Salary record not found' });
-    }
-    
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error updating salary:', error);
-    if (error.code === '23505') { // Unique violation
-      res.status(400).json({ error: 'Salary record for this user and month already exists' });
-    } else {
-      res.status(500).json({ error: 'Failed to update salary' });
-    }
-  }
-});
-
-// Delete a salary record
-app.delete('/api/salaries/:id', authenticateToken, async (req, res) => {
-  const id = parseInt(req.params.id);
-  
-  try {
-    const result = await pool.query('DELETE FROM salaries WHERE id = $1 RETURNING *', [id]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Salary record not found' });
-    }
-    
-    res.json({ message: 'Salary record deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting salary:', error);
-    res.status(500).json({ error: 'Failed to delete salary' });
-  }
-});
-
-// Mark salary as paid
-app.post('/api/salaries/:id/pay', authenticateToken, async (req, res) => {
-  const id = parseInt(req.params.id);
-  
-  try {
-    const result = await pool.query(
-      'UPDATE salaries SET paid = TRUE, paid_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *',
-      [id]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Salary record not found' });
-    }
-    
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error marking salary as paid:', error);
-    res.status(500).json({ error: 'Failed to mark salary as paid' });
-  }
-});
-
-// Get salary statistics
-app.get('/api/salaries/stats', authenticateToken, async (req, res) => {
-  try {
-    const stats = await pool.query(`
-      SELECT 
-        COUNT(*) as total_records,
-        COUNT(CASE WHEN paid = true THEN 1 END) as paid_records,
-        COUNT(CASE WHEN paid = false THEN 1 END) as unpaid_records,
-        SUM(amount) as total_amount,
-        SUM(CASE WHEN paid = true THEN amount ELSE 0 END) as paid_amount,
-        SUM(CASE WHEN paid = false THEN amount ELSE 0 END) as unpaid_amount
-      FROM salaries
-    `);
-    
-    res.json(stats.rows[0]);
-  } catch (error) {
-    console.error('Error fetching salary statistics:', error);
-    res.status(500).json({ error: 'Failed to fetch salary statistics' });
-  }
-});
-
-// Get all users with salary information (for user-organized view)
-app.get('/api/salaries/users', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT 
-        u.id,
-        u.name as user_name,
-        u.username,
-        u.role,
-        u.contact,
-        s.id as salary_id,
-        s.amount,
-        s.month,
-        s.paid,
-        s.paid_at,
-        s.created_at as salary_created_at
-      FROM users u
-      LEFT JOIN salaries s ON u.id = s.user_id
-      WHERE u.suspended = false
-      ORDER BY u.name, s.month DESC
-    `);
-    
-    // Group by user and organize salary data
-    const userSalaries = {};
-    result.rows.forEach(row => {
-      const userId = row.id;
-      if (!userSalaries[userId]) {
-        userSalaries[userId] = {
-          id: userId,
-          name: row.user_name,
-          username: row.username,
-          role: row.role,
-          contact: row.contact,
-          salaries: []
-        };
-      }
-      
-      if (row.salary_id) {
-        userSalaries[userId].salaries.push({
-          id: row.salary_id,
-          amount: row.amount,
-          month: row.month,
-          paid: row.paid,
-          paid_at: row.paid_at,
-          created_at: row.salary_created_at
-        });
-      }
-    });
-    
-    // Convert to array and sort by name
-    const salaryList = Object.values(userSalaries).sort((a, b) => 
-      (a.name || '').localeCompare(b.name || '')
-    );
-    
-    res.json(salaryList);
-  } catch (error) {
-    console.error('Error fetching user salaries:', error);
-    res.status(500).json({ error: 'Failed to fetch user salaries' });
-  }
-});
-
-// Get teacher user accounts (for salary management)
-app.get('/api/teachers/users', authenticateToken, async (req, res) => {
-  try {
-    // Get all users for salary management (not just teachers)
-    const result = await pool.query(`
-      SELECT id, name, username, role, contact 
-      FROM users 
-      WHERE suspended = false 
-      ORDER BY name
-    `);
-    
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching users for salary management:', error);
-    res.status(500).json({ error: 'Failed to fetch users for salary management' });
-  }
-});
-
 // === INVENTORY ENDPOINTS ===
 
 // Get inventory items with type filter
@@ -2847,181 +2708,336 @@ app.get('/api/departments', authenticateToken, async (req, res) => {
   }
 });
 
-// Get salary by ID
-app.get('/api/salaries/:id', authenticateToken, async (req, res) => {
+// ===== TEACHER APPLICATION ENDPOINTS =====
+
+// Submit teacher application
+app.post('/api/teacher-application', authenticateToken, upload.fields([
+  { name: 'certificate', maxCount: 1 },
+  { name: 'cv', maxCount: 1 },
+  { name: 'photo', maxCount: 1 }
+]), async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    console.log('Teacher application submission started');
+    console.log('User ID:', req.user.id);
+    console.log('Request body:', req.body);
+    console.log('Request files:', req.files ? Object.keys(req.files) : 'No files');
     
-    const result = await pool.query(`
-      SELECT s.*, u.name as user_name, u.username, u.role, u.contact
-      FROM salaries s
-      JOIN users u ON s.user_id = u.id
-      WHERE s.id = $1
-    `, [id]);
+    const userId = req.user.id;
+    const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
     
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Salary record not found' });
+    // Validate required fields
+    if (!full_name || !sex || !id_card || !dob || !pob || !subjects || !classes || !contact) {
+      console.log('Missing required fields:', { full_name, sex, id_card, dob, pob, subjects, classes, contact });
+      return res.status(400).json({ error: 'All fields are required' });
     }
     
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error fetching salary by ID:', error);
-    res.status(500).json({ error: 'Failed to fetch salary' });
-  }
-});
-
-// Get all users with salary information (for user-organized view)
-app.get('/api/salaries/users', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT 
-        u.id,
-        u.name as user_name,
-        u.username,
-        u.role,
-        u.contact,
-        s.id as salary_id,
-        s.amount,
-        s.month,
-        s.paid,
-        s.paid_at,
-        s.created_at as salary_created_at
-      FROM users u
-      LEFT JOIN salaries s ON u.id = s.user_id
-      WHERE u.suspended = false
-      ORDER BY u.name, s.month DESC
-    `);
+    console.log('All required fields present');
     
-    // Group by user and organize salary data
-    const userSalaries = {};
-    result.rows.forEach(row => {
-      const userId = row.id;
-      if (!userSalaries[userId]) {
-        userSalaries[userId] = {
-          id: userId,
-          name: row.user_name,
-          username: row.username,
-          role: row.role,
-          contact: row.contact,
-          salaries: []
-        };
+    // Upload files to FTP and get URLs
+    let certificate_url = null;
+    let cv_url = null;
+    let photo_url = null;
+
+    if (req.files && req.files.certificate && req.files.certificate[0]) {
+      console.log('Processing certificate file:', req.files.certificate[0].originalname);
+      try {
+        const filename = `certificate_${Date.now()}_${req.files.certificate[0].originalname}`;
+        certificate_url = await ftpService.uploadBuffer(req.files.certificate[0].buffer, filename);
+        console.log('Certificate uploaded to FTP:', certificate_url);
+      } catch (error) {
+        console.error('Failed to upload certificate to FTP:', error);
+        // Fallback to local storage
+        const fs = require('fs');
+        const path = require('path');
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+        const filename = `certificate_${Date.now()}_${req.files.certificate[0].originalname}`;
+        const filepath = path.join(uploadsDir, filename);
+        fs.writeFileSync(filepath, req.files.certificate[0].buffer);
+        certificate_url = `/uploads/${filename}`;
+        console.log('Certificate saved locally:', certificate_url);
       }
-      
-      if (row.salary_id) {
-        userSalaries[userId].salaries.push({
-          id: row.salary_id,
-          amount: row.amount,
-          month: row.month,
-          paid: row.paid,
-          paid_at: row.paid_at,
-          created_at: row.salary_created_at
-        });
+    }
+
+    if (req.files && req.files.cv && req.files.cv[0]) {
+      console.log('Processing CV file:', req.files.cv[0].originalname);
+      try {
+        const filename = `cv_${Date.now()}_${req.files.cv[0].originalname}`;
+        cv_url = await ftpService.uploadBuffer(req.files.cv[0].buffer, filename);
+        console.log('CV uploaded to FTP:', cv_url);
+      } catch (error) {
+        console.error('Failed to upload CV to FTP:', error);
+        // Fallback to local storage
+        const fs = require('fs');
+        const path = require('path');
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+        const filename = `cv_${Date.now()}_${req.files.cv[0].originalname}`;
+        const filepath = path.join(uploadsDir, filename);
+        fs.writeFileSync(filepath, req.files.cv[0].buffer);
+        cv_url = `/uploads/${filename}`;
+        console.log('CV saved locally:', cv_url);
       }
-    });
-    
-    // Convert to array and sort by name
-    const salaryList = Object.values(userSalaries).sort((a, b) => 
-      (a.name || '').localeCompare(b.name || '')
-    );
-    
-    res.json(salaryList);
-  } catch (error) {
-    console.error('Error fetching user salaries:', error);
-    res.status(500).json({ error: 'Failed to fetch user salaries' });
-  }
-});
-
-// Pay salary (frontend expects this endpoint)
-app.post('/api/salaries/pay', authenticateToken, async (req, res) => {
-  try {
-    const { salary_id, month } = req.body;
-    
-    if (!salary_id) {
-      return res.status(400).json({ error: 'salary_id is required' });
     }
-    
+
+    if (req.files && req.files.photo && req.files.photo[0]) {
+      console.log('Processing photo file:', req.files.photo[0].originalname);
+      try {
+        const filename = `photo_${Date.now()}_${req.files.photo[0].originalname}`;
+        photo_url = await ftpService.uploadBuffer(req.files.photo[0].buffer, filename);
+        console.log('Photo uploaded to FTP:', photo_url);
+      } catch (error) {
+        console.error('Failed to upload photo to FTP:', error);
+        // Fallback to local storage
+        const fs = require('fs');
+        const path = require('path');
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+        const filename = `photo_${Date.now()}_${req.files.photo[0].originalname}`;
+        const filepath = path.join(uploadsDir, filename);
+        fs.writeFileSync(filepath, req.files.photo[0].buffer);
+        photo_url = `/uploads/${filename}`;
+        console.log('Photo saved locally:', photo_url);
+      }
+    }
+
+    console.log('File processing completed');
+
+    // Check if teacher application already exists for this user
+    console.log('Checking for existing teacher application');
+    const existingResult = await pool.query(
+      'SELECT * FROM teachers WHERE user_id = $1',
+      [userId]
+    );
+
+    if (existingResult.rows.length > 0) {
+      console.log('Teacher application already exists for user:', userId);
+      return res.status(400).json({ error: 'Teacher application already exists for this user' });
+    }
+
+    console.log('Creating new teacher application');
+    // Create new teacher application
     const result = await pool.query(
-      'UPDATE salaries SET paid = TRUE, paid_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *',
-      [salary_id]
+      `INSERT INTO teachers (user_id, full_name, sex, id_card, dob, pob, subjects, classes, contact, certificate_url, cv_url, photo_url, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending') RETURNING *`,
+      [userId, full_name, sex, id_card, dob, pob, subjects, classes, contact, certificate_url, cv_url, photo_url]
     );
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Salary record not found' });
-    }
-    
-    res.json(result.rows[0]);
+
+    console.log('Teacher application created successfully:', result.rows[0].id);
+    res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error paying salary:', error);
-    res.status(500).json({ error: 'Failed to pay salary' });
+    console.error('Error submitting teacher application:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ error: 'Failed to submit teacher application: ' + error.message });
   }
 });
 
-// Mark salary as paid
-app.post('/api/salaries/:id/pay', authenticateToken, async (req, res) => {
-  const id = parseInt(req.params.id);
-  
+// Edit teacher application
+app.put('/api/teacher-application/:id', authenticateToken, upload.fields([
+  { name: 'certificate', maxCount: 1 },
+  { name: 'cv', maxCount: 1 },
+  { name: 'photo', maxCount: 1 }
+]), async (req, res) => {
   try {
+    const userId = req.user.id;
+    const teacherId = parseInt(req.params.id);
+    const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
+    
+    // Validate required fields
+    if (!full_name || !sex || !id_card || !dob || !pob || !subjects || !classes || !contact) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+    
+    // Upload files to FTP and get URLs
+    let certificate_url = undefined;
+    let cv_url = undefined;
+    let photo_url = undefined;
+
+    if (req.files && req.files.certificate && req.files.certificate[0]) {
+      try {
+        const filename = `certificate_${Date.now()}_${req.files.certificate[0].originalname}`;
+        certificate_url = await ftpService.uploadBuffer(req.files.certificate[0].buffer, filename);
+        console.log('Certificate uploaded to FTP:', certificate_url);
+      } catch (error) {
+        console.error('Failed to upload certificate to FTP:', error);
+        // Fallback to local storage
+        const fs = require('fs');
+        const path = require('path');
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+        const filename = `certificate_${Date.now()}_${req.files.certificate[0].originalname}`;
+        const filepath = path.join(uploadsDir, filename);
+        fs.writeFileSync(filepath, req.files.certificate[0].buffer);
+        certificate_url = `/uploads/${filename}`;
+      }
+    }
+
+    if (req.files && req.files.cv && req.files.cv[0]) {
+      try {
+        const filename = `cv_${Date.now()}_${req.files.cv[0].originalname}`;
+        cv_url = await ftpService.uploadBuffer(req.files.cv[0].buffer, filename);
+        console.log('CV uploaded to FTP:', cv_url);
+      } catch (error) {
+        console.error('Failed to upload CV to FTP:', error);
+        // Fallback to local storage
+        const fs = require('fs');
+        const path = require('path');
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+        const filename = `cv_${Date.now()}_${req.files.cv[0].originalname}`;
+        const filepath = path.join(uploadsDir, filename);
+        fs.writeFileSync(filepath, req.files.cv[0].buffer);
+        cv_url = `/uploads/${filename}`;
+      }
+    }
+
+    if (req.files && req.files.photo && req.files.photo[0]) {
+      try {
+        const filename = `photo_${Date.now()}_${req.files.photo[0].originalname}`;
+        photo_url = await ftpService.uploadBuffer(req.files.photo[0].buffer, filename);
+        console.log('Photo uploaded to FTP:', photo_url);
+      } catch (error) {
+        console.error('Failed to upload photo to FTP:', error);
+        // Fallback to local storage
+        const fs = require('fs');
+        const path = require('path');
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+        const filename = `photo_${Date.now()}_${req.files.photo[0].originalname}`;
+        const filepath = path.join(uploadsDir, filename);
+        fs.writeFileSync(filepath, req.files.photo[0].buffer);
+        photo_url = `/uploads/${filename}`;
+      }
+    }
+
+    // Verify the teacher application belongs to the user
+    const existingResult = await pool.query(
+      'SELECT * FROM teachers WHERE id = $1 AND user_id = $2',
+      [teacherId, userId]
+    );
+
+    if (existingResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Teacher application not found' });
+    }
+
+    // Build update query dynamically
+    let updateFields = ['full_name = $1', 'sex = $2', 'id_card = $3', 'dob = $4', 'pob = $5', 'subjects = $6', 'classes = $7', 'contact = $8'];
+    let updateValues = [full_name, sex, id_card, dob, pob, subjects, classes, contact];
+    let paramIndex = 9;
+
+    if (certificate_url !== undefined) {
+      updateFields.push(`certificate_url = $${paramIndex}`);
+      updateValues.push(certificate_url);
+      paramIndex++;
+    }
+
+    if (cv_url !== undefined) {
+      updateFields.push(`cv_url = $${paramIndex}`);
+      updateValues.push(cv_url);
+      paramIndex++;
+    }
+
+    if (photo_url !== undefined) {
+      updateFields.push(`photo_url = $${paramIndex}`);
+      updateValues.push(photo_url);
+      paramIndex++;
+    }
+
+    updateValues.push(teacherId);
+
+    const updateQuery = `UPDATE teachers SET ${updateFields.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
+    const result = await pool.query(updateQuery, updateValues);
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating teacher application:', error);
+    res.status(500).json({ error: 'Failed to update teacher application: ' + error.message });
+  }
+});
+
+// Delete teacher application
+app.delete('/api/teacher-application/:id', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const teacherId = parseInt(req.params.id);
+
+    // Verify the teacher application belongs to the user
+    const existingResult = await pool.query(
+      'SELECT * FROM teachers WHERE id = $1 AND user_id = $2',
+      [teacherId, userId]
+    );
+
+    if (existingResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Teacher application not found' });
+    }
+
+    // Delete the teacher application
+    await pool.query(
+      'DELETE FROM teachers WHERE id = $1 AND user_id = $2',
+      [teacherId, userId]
+    );
+
+    res.json({ message: 'Teacher application deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting teacher application:', error);
+    res.status(500).json({ error: 'Failed to delete teacher application' });
+  }
+});
+
+// Get teacher application for current user
+app.get('/api/teacher-application', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
     const result = await pool.query(
-      'UPDATE salaries SET paid = TRUE, paid_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *',
-      [id]
+      'SELECT * FROM teachers WHERE user_id = $1',
+      [userId]
     );
-    
+
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Salary record not found' });
+      return res.status(404).json({ error: 'No teacher application found' });
     }
-    
+
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error marking salary as paid:', error);
-    res.status(500).json({ error: 'Failed to mark salary as paid' });
+    console.error('Error fetching teacher application:', error);
+    res.status(500).json({ error: 'Failed to fetch teacher application' });
   }
 });
 
-// Get salary by ID (specific salary record)
-app.get('/api/salaries/record/:id', authenticateToken, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-    
-    const result = await pool.query(`
-      SELECT s.*, u.name as user_name, u.username, u.role, u.contact
-      FROM salaries s
-      JOIN users u ON s.user_id = u.id
-      WHERE s.id = $1
-    `, [id]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Salary record not found' });
+// ===== END TEACHER APPLICATION ENDPOINTS =====
+
+// Error handling middleware for multer errors
+app.use((error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'File too large. Maximum file size is 10MB.' });
     }
-    
-    res.json(result.rows[0]);
+    if (error.code === 'LIMIT_FILE_COUNT') {
+      return res.status(400).json({ error: 'Too many files. Maximum 3 files allowed.' });
+    }
+    if (error.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({ error: 'Unexpected file field.' });
+    }
+    return res.status(400).json({ error: 'File upload error: ' + error.message });
+  }
+  if (error.message && error.message.includes('File type')) {
+    return res.status(400).json({ error: error.message });
+  }
+  next(error);
+});
+
+// Get departments for inventory
+app.get('/api/departments', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT DISTINCT department FROM inventory ORDER BY department');
+    res.json(result.rows.map(row => row.department));
   } catch (error) {
-    console.error('Error fetching salary by ID:', error);
-    res.status(500).json({ error: 'Failed to fetch salary' });
+    console.error('Error fetching departments:', error);
+    res.status(500).json({ error: 'Failed to fetch departments' });
   }
 });
 
-// Get salaries by user ID (for a specific teacher/user) - This should come before the generic :id route
-app.get('/api/salaries/:userId', authenticateToken, async (req, res) => {
-  try {
-    const userId = parseInt(req.params.userId);
-    
-    // Check if this is a valid user ID (not a salary ID)
-    const userCheck = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
-    if (userCheck.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
-    const result = await pool.query(`
-      SELECT s.*, u.name as user_name, u.username, u.role, u.contact
-      FROM salaries s
-      JOIN users u ON s.user_id = u.id
-      WHERE s.user_id = $1 
-      ORDER BY s.month DESC
-    `, [userId]);
-    
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching user salaries:', error);
-    res.status(500).json({ error: 'Failed to fetch user salaries' });
-  }
-});
+// === Lesson Plans API ===
+
+// ... existing code ...

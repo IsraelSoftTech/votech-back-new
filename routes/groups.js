@@ -1,7 +1,52 @@
-// === GROUP CHAT ENDPOINTS ===
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { Pool } = require('pg');
+const ftpService = require('../ftp-service');
+require('dotenv').config();
+
+const router = express.Router();
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL
+});
+
+// Authentication middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader) {
+    return res.status(401).json({ error: 'No authorization header' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  if (!token) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+
+  try {
+    const jwt = require('jsonwebtoken');
+    const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+    const user = jwt.verify(token, JWT_SECRET);
+    req.user = user;
+    next();
+  } catch (err) {
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expired' });
+    }
+    return res.status(403).json({ error: 'Invalid token' });
+  }
+};
+
+// Configure multer for file uploads
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit
+  }
+});
 
 // Create a new group
-app.post('/api/groups', authenticateToken, async (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   const creator_id = req.user.id;
   const { name, participant_ids } = req.body;
   
@@ -52,7 +97,7 @@ app.post('/api/groups', authenticateToken, async (req, res) => {
 });
 
 // Get all groups for the current user
-app.get('/api/groups', authenticateToken, async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   const user_id = req.user.id;
   try {
     const result = await pool.query(
@@ -73,7 +118,7 @@ app.get('/api/groups', authenticateToken, async (req, res) => {
 });
 
 // Get group messages
-app.get('/api/groups/:groupId/messages', authenticateToken, async (req, res) => {
+router.get('/:groupId/messages', authenticateToken, async (req, res) => {
   const group_id = parseInt(req.params.groupId);
   const user_id = req.user.id;
   
@@ -96,6 +141,7 @@ app.get('/api/groups/:groupId/messages', authenticateToken, async (req, res) => 
        ORDER BY m.created_at ASC`,
       [group_id]
     );
+    
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching group messages:', error);
@@ -104,12 +150,12 @@ app.get('/api/groups/:groupId/messages', authenticateToken, async (req, res) => 
 });
 
 // Send a message to a group
-app.post('/api/groups/:groupId/messages', authenticateToken, async (req, res) => {
+router.post('/:groupId/messages', authenticateToken, async (req, res) => {
   const group_id = parseInt(req.params.groupId);
   const sender_id = req.user.id;
   const { content } = req.body;
   
-  if (!content) {
+  if (!content || content.trim() === '') {
     return res.status(400).json({ error: 'Message content is required' });
   }
   
@@ -126,24 +172,33 @@ app.post('/api/groups/:groupId/messages', authenticateToken, async (req, res) =>
     
     const result = await pool.query(
       'INSERT INTO messages (sender_id, group_id, content) VALUES ($1, $2, $3) RETURNING *',
-      [sender_id, group_id, content]
+      [sender_id, group_id, content.trim()]
     );
-    res.status(201).json(result.rows[0]);
+    
+    // Get the message with sender info
+    const messageWithSender = await pool.query(
+      `SELECT m.*, u.username, u.name 
+       FROM messages m 
+       JOIN users u ON m.sender_id = u.id 
+       WHERE m.id = $1`,
+      [result.rows[0].id]
+    );
+    
+    res.status(201).json(messageWithSender.rows[0]);
   } catch (error) {
     console.error('Error sending group message:', error);
     res.status(500).json({ error: 'Failed to send message' });
   }
 });
 
-// Send a file message to a group
-app.post('/api/groups/:groupId/messages/with-file', authenticateToken, upload.single('file'), async (req, res) => {
+// Send a message with file to a group
+router.post('/:groupId/messages/with-file', authenticateToken, upload.single('file'), async (req, res) => {
   const group_id = parseInt(req.params.groupId);
   const sender_id = req.user.id;
   const { content } = req.body;
-  const file = req.file;
   
-  if (!content && !file) {
-    return res.status(400).json({ error: 'Message content or file is required' });
+  if (!req.file) {
+    return res.status(400).json({ error: 'File is required' });
   }
   
   try {
@@ -157,63 +212,94 @@ app.post('/api/groups/:groupId/messages/with-file', authenticateToken, upload.si
       return res.status(403).json({ error: 'You are not a member of this group' });
     }
     
-    let fileUrl = null;
-    let fileName = null;
-    let fileType = null;
-
-    if (file) {
-      // Validate file type
-      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'application/pdf'];
-      if (!allowedTypes.includes(file.mimetype)) {
-        return res.status(400).json({ error: 'Only images (JPEG, PNG, GIF) and PDF files are allowed' });
-      }
-
-      // Validate file size (5MB limit)
-      if (file.size > 5 * 1024 * 1024) {
-        return res.status(400).json({ error: 'File size must be less than 5MB' });
-      }
-
-      // Generate unique filename
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      const fileExtension = path.extname(file.originalname);
-      fileName = `group_message_${uniqueSuffix}${fileExtension}`;
-      
-      // Save file to uploads directory
-      const fs = require('fs');
-      const uploadPath = path.join(__dirname, 'uploads', fileName);
-      fs.writeFileSync(uploadPath, file.buffer);
-      
-      fileUrl = `/uploads/${fileName}`;
-      fileType = file.mimetype;
-    }
+    // Upload file to FTP
+    const fileName = `group_${group_id}_${Date.now()}_${req.file.originalname}`;
+    const fileUrl = await ftpService.uploadBuffer(req.file.buffer, fileName);
     
+    // Save message with file info
     const result = await pool.query(
-      'INSERT INTO messages (sender_id, group_id, content, file_url, file_name, file_type) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-      [sender_id, group_id, content || '', fileUrl, fileName, fileType]
+      `INSERT INTO messages (sender_id, group_id, content, file_url, file_name, file_type) 
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [sender_id, group_id, content || '', fileUrl, req.file.originalname, req.file.mimetype]
     );
-    res.status(201).json(result.rows[0]);
+    
+    // Get the message with sender info
+    const messageWithSender = await pool.query(
+      `SELECT m.*, u.username, u.name 
+       FROM messages m 
+       JOIN users u ON m.sender_id = u.id 
+       WHERE m.id = $1`,
+      [result.rows[0].id]
+    );
+    
+    res.status(201).json(messageWithSender.rows[0]);
   } catch (error) {
     console.error('Error sending group message with file:', error);
-    res.status(500).json({ error: 'Failed to send message' });
+    res.status(500).json({ error: 'Failed to send message with file' });
   }
 });
 
 // Get group participants
-app.get('/api/groups/:groupId/participants', authenticateToken, async (req, res) => {
+router.get('/:groupId/participants', authenticateToken, async (req, res) => {
   const group_id = parseInt(req.params.groupId);
+  const user_id = req.user.id;
   
   try {
+    // Check if user is a participant
+    const participantCheck = await pool.query(
+      'SELECT * FROM group_participants WHERE group_id = $1 AND user_id = $2',
+      [group_id, user_id]
+    );
+    
+    if (participantCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'You are not a member of this group' });
+    }
+    
     const result = await pool.query(
-      `SELECT u.id, u.username, u.name, gp.joined_at 
-       FROM group_participants gp 
-       JOIN users u ON gp.user_id = u.id 
-       WHERE gp.group_id = $1 
+      `SELECT u.id, u.username, u.name, u.email, gp.joined_at
+       FROM group_participants gp
+       JOIN users u ON gp.user_id = u.id
+       WHERE gp.group_id = $1
        ORDER BY gp.joined_at ASC`,
       [group_id]
     );
+    
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching group participants:', error);
     res.status(500).json({ error: 'Failed to fetch group participants' });
   }
-}); 
+});
+
+// Mark group messages as read
+router.post('/:groupId/read', authenticateToken, async (req, res) => {
+  const group_id = parseInt(req.params.groupId);
+  const user_id = req.user.id;
+  
+  try {
+    // Check if user is a participant
+    const participantCheck = await pool.query(
+      'SELECT * FROM group_participants WHERE group_id = $1 AND user_id = $2',
+      [group_id, user_id]
+    );
+    
+    if (participantCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'You are not a member of this group' });
+    }
+    
+    // Mark all unread messages in this group as read
+    await pool.query(
+      `UPDATE messages 
+       SET read = true 
+       WHERE group_id = $1 AND sender_id != $2 AND read = false`,
+      [group_id, user_id]
+    );
+    
+    res.json({ message: 'Messages marked as read' });
+  } catch (error) {
+    console.error('Error marking messages as read:', error);
+    res.status(500).json({ error: 'Failed to mark messages as read' });
+  }
+});
+
+module.exports = router; 
