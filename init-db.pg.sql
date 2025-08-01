@@ -163,3 +163,21 @@ CREATE TABLE IF NOT EXISTS marks (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(class_id, sequence_id) -- Ensure only one marks file per class per sequence
 );
+
+-- Applications
+CREATE TABLE IF NOT EXISTS applications (
+    id SERIAL PRIMARY KEY,
+    applicant_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    applicant_name VARCHAR(100) NOT NULL,
+    classes TEXT NOT NULL, -- Comma-separated class names
+    subjects TEXT NOT NULL, -- Comma-separated subject names
+    contact VARCHAR(50) NOT NULL,
+    certificate_url VARCHAR(500),
+    certificate_name VARCHAR(255),
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    admin_comment TEXT,
+    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at TIMESTAMP,
+    reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    UNIQUE(applicant_id) -- Ensure only one application per user
+);

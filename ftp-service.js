@@ -24,6 +24,20 @@ class FTPService {
 
       console.log(`[FTP] Connected successfully`);
 
+      // Create directory structure if it doesn't exist
+      const remotePathParts = remoteFileName.split('/');
+      if (remotePathParts.length > 1) {
+        const directoryPath = remotePathParts.slice(0, -1).join('/');
+        console.log(`[FTP] Creating directory: ${directoryPath}`);
+        try {
+          await this.client.ensureDir(directoryPath);
+          console.log(`[FTP] Directory created/verified: ${directoryPath}`);
+        } catch (dirError) {
+          console.log(`[FTP] Directory creation warning: ${dirError.message}`);
+          // Continue anyway, the directory might already exist
+        }
+      }
+
       // Upload the file
       await this.client.uploadFrom(localFilePath, remoteFileName);
       
@@ -51,7 +65,23 @@ class FTPService {
         fs.mkdirSync(tempDir, { recursive: true });
       }
       
-      const tempFilePath = path.join(tempDir, fileName);
+      // Handle nested directories in fileName
+      const fileNameParts = fileName.split('/');
+      const fileNameOnly = fileNameParts.pop(); // Get just the filename
+      const nestedDirs = fileNameParts.join('/'); // Get the directory path
+      
+      let tempFilePath;
+      if (nestedDirs) {
+        // Create nested directory structure in temp
+        const nestedTempDir = path.join(tempDir, nestedDirs);
+        if (!fs.existsSync(nestedTempDir)) {
+          fs.mkdirSync(nestedTempDir, { recursive: true });
+        }
+        tempFilePath = path.join(nestedTempDir, fileNameOnly);
+      } else {
+        tempFilePath = path.join(tempDir, fileNameOnly);
+      }
+      
       fs.writeFileSync(tempFilePath, buffer);
 
       // Upload to FTP

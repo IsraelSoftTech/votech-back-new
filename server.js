@@ -1516,6 +1516,35 @@ async function runMigrations() {
       console.log('photo_url column already exists in students table');
     }
     
+    // Check if applications table exists
+    const applicationsTable = await pool.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_name = 'applications'"
+    );
+    if (applicationsTable.rows.length === 0) {
+      console.log('Creating applications table...');
+      await pool.query(`
+        CREATE TABLE applications (
+          id SERIAL PRIMARY KEY,
+          applicant_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          applicant_name VARCHAR(100) NOT NULL,
+          classes TEXT NOT NULL, -- Comma-separated class names
+          subjects TEXT NOT NULL, -- Comma-separated subject names
+          contact VARCHAR(50) NOT NULL,
+          certificate_url VARCHAR(500),
+          certificate_name VARCHAR(255),
+          status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+          admin_comment TEXT,
+          submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          reviewed_at TIMESTAMP,
+          reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          UNIQUE(applicant_id) -- Ensure only one application per user
+        )
+      `);
+      console.log('Applications table created successfully');
+    } else {
+      console.log('Applications table already exists');
+    }
+    
     console.log('Messages table file attachment columns migration completed');
   } catch (error) {
     console.error('Error running migrations:', error);
@@ -3479,3 +3508,281 @@ app.get('/api/marks/statistics', authenticateToken, async (req, res) => {
 });
 
 // === Lesson Plans API ===
+
+// === Applications API ===
+
+// Get all applications (for Admin1 and Admin4)
+app.get('/api/applications', authenticateToken, async (req, res) => {
+  try {
+    const authUser = req.user;
+    
+    // Only Admin1 and Admin4 can view all applications
+    if (authUser.role !== 'Admin1' && authUser.role !== 'Admin4') {
+      return res.status(403).json({ error: 'Access denied. Only administrators can view all applications.' });
+    }
+
+    const result = await pool.query(`
+      SELECT 
+        a.*,
+        u.username as applicant_username,
+        u.name as applicant_full_name,
+        u.role as applicant_role
+      FROM applications a
+      JOIN users u ON a.applicant_id = u.id
+      ORDER BY a.submitted_at DESC
+    `);
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching applications:', error);
+    res.status(500).json({ error: 'Failed to fetch applications' });
+  }
+});
+
+// Get user's own application
+app.get('/api/applications/user/:userId', authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const authUser = req.user;
+
+    // Users can only view their own application
+    if (authUser.id !== parseInt(userId) && authUser.role !== 'Admin1' && authUser.role !== 'Admin4') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const result = await pool.query(`
+      SELECT * FROM applications 
+      WHERE applicant_id = $1
+    `, [userId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Application not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching user application:', error);
+    res.status(500).json({ error: 'Failed to fetch application' });
+  }
+});
+
+// Submit new application
+app.post('/api/applications', authenticateToken, upload.single('certificate'), async (req, res) => {
+  try {
+    const authUser = req.user;
+    
+    console.log('[DEBUG] Application submission - User:', authUser.username, 'Role:', authUser.role);
+    console.log('[DEBUG] Request body:', req.body);
+    console.log('[DEBUG] File:', req.file ? req.file.originalname : 'No file');
+    
+    // Check if user already has an application
+    const existingApp = await pool.query(`
+      SELECT id FROM applications WHERE applicant_id = $1
+    `, [authUser.id]);
+
+    if (existingApp.rows.length > 0) {
+      return res.status(400).json({ error: 'You have already submitted an application' });
+    }
+
+    // Check if user can submit applications (not Admin1 or Admin4)
+    if (authUser.role === 'Admin1' || authUser.role === 'Admin4') {
+      return res.status(403).json({ error: 'Administrators cannot submit applications' });
+    }
+
+    const { applicant_name, classes, subjects, contact } = req.body;
+
+    console.log('[DEBUG] Extracted data:', { applicant_name, classes, subjects, contact });
+
+    // Validate required fields
+    if (!applicant_name || !subjects || !contact) {
+      return res.status(400).json({ error: 'Name, subjects, and contact are required fields' });
+    }
+
+    // For non-Admin4 users, classes can be empty as they will be assigned by Admin4
+    if (authUser.role === 'Admin4' && !classes) {
+      return res.status(400).json({ error: 'Classes must be selected for Admin4 users' });
+    }
+
+    let certificateUrl = null;
+    let certificateName = null;
+
+    // Handle file upload if provided
+    if (req.file) {
+      try {
+        const ftpFileName = `${authUser.id}_${Date.now()}_${req.file.originalname}`;
+        certificateUrl = await ftpService.uploadBuffer(req.file.buffer, ftpFileName);
+        certificateName = req.file.originalname;
+        console.log('[DEBUG] Certificate uploaded to FTP:', certificateUrl);
+      } catch (ftpError) {
+        console.error('FTP upload failed:', ftpError);
+        return res.status(500).json({ error: 'Failed to upload certificate' });
+      }
+    }
+
+    const result = await pool.query(`
+      INSERT INTO applications (
+        applicant_id, applicant_name, classes, subjects, contact, 
+        certificate_url, certificate_name, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+      RETURNING *
+    `, [authUser.id, applicant_name, classes, subjects, contact, certificateUrl, certificateName]);
+
+    res.status(201).json({
+      message: 'Application submitted successfully',
+      application: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Error submitting application:', error);
+    res.status(500).json({ error: 'Failed to submit application' });
+  }
+});
+
+// Update application
+app.put('/api/applications/:id', authenticateToken, upload.single('certificate'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const authUser = req.user;
+    const { applicant_name, classes, subjects, contact } = req.body;
+
+    // Get the application
+    const appResult = await pool.query(`
+      SELECT * FROM applications WHERE id = $1
+    `, [id]);
+
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Application not found' });
+    }
+
+    const application = appResult.rows[0];
+
+    // Check permissions
+    const canEdit = authUser.role === 'Admin1' || 
+                   authUser.role === 'Admin4' || 
+                   (application.applicant_id === authUser.id && application.status === 'pending');
+
+    if (!canEdit) {
+      return res.status(403).json({ error: 'You cannot edit this application' });
+    }
+
+    // Validate required fields
+    if (!applicant_name || !subjects || !contact) {
+      return res.status(400).json({ error: 'Name, subjects, and contact are required fields' });
+    }
+
+    // For non-Admin4 users, classes can be empty as they will be assigned by Admin4
+    if (authUser.role === 'Admin4' && !classes) {
+      return res.status(400).json({ error: 'Classes must be selected for Admin4 users' });
+    }
+
+    let certificateUrl = application.certificate_url;
+    let certificateName = application.certificate_name;
+
+    // Handle file upload if provided
+    if (req.file) {
+      try {
+        const ftpFileName = `certificates/${application.applicant_id}_${Date.now()}_${req.file.originalname}`;
+        certificateUrl = await ftpService.uploadBuffer(req.file.buffer, ftpFileName);
+        certificateName = req.file.originalname;
+        console.log('[DEBUG] Updated certificate uploaded to FTP:', certificateUrl);
+      } catch (ftpError) {
+        console.error('FTP upload failed:', ftpError);
+        return res.status(500).json({ error: 'Failed to upload certificate' });
+      }
+    }
+
+    const result = await pool.query(`
+      UPDATE applications 
+      SET applicant_name = $1, classes = $2, subjects = $3, contact = $4,
+          certificate_url = $5, certificate_name = $6
+      WHERE id = $7
+      RETURNING *
+    `, [applicant_name, classes, subjects, contact, certificateUrl, certificateName, id]);
+
+    res.json({
+      message: 'Application updated successfully',
+      application: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Error updating application:', error);
+    res.status(500).json({ error: 'Failed to update application' });
+  }
+});
+
+// Update application status (approve/reject)
+app.put('/api/applications/:id/status', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const authUser = req.user;
+
+    // Only Admin1 and Admin4 can update status
+    if (authUser.role !== 'Admin1' && authUser.role !== 'Admin4') {
+      return res.status(403).json({ error: 'Access denied. Only administrators can update application status.' });
+    }
+
+    // Validate status
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+
+    const result = await pool.query(`
+      UPDATE applications 
+      SET status = $1, reviewed_at = NOW(), reviewed_by = $2
+      WHERE id = $3
+      RETURNING *
+    `, [status, authUser.id, id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Application not found' });
+    }
+
+    res.json({
+      message: 'Application status updated successfully',
+      application: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Error updating application status:', error);
+    res.status(500).json({ error: 'Failed to update application status' });
+  }
+});
+
+// Delete application
+app.delete('/api/applications/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const authUser = req.user;
+
+    // Get the application
+    const appResult = await pool.query(`
+      SELECT * FROM applications WHERE id = $1
+    `, [id]);
+
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Application not found' });
+    }
+
+    const application = appResult.rows[0];
+
+    // Check permissions
+    const canDelete = authUser.role === 'Admin1' || 
+                     authUser.role === 'Admin4' || 
+                     (application.applicant_id === authUser.id && application.status === 'pending');
+
+    if (!canDelete) {
+      return res.status(403).json({ error: 'You cannot delete this application' });
+    }
+
+    await pool.query('DELETE FROM applications WHERE id = $1', [id]);
+
+    res.json({ message: 'Application deleted successfully' });
+
+  } catch (error) {
+    console.error('Error deleting application:', error);
+    res.status(500).json({ error: 'Failed to delete application' });
+  }
+});
+
+// === End Applications API ===
