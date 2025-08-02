@@ -26,6 +26,7 @@ const pool = new Pool({
 // Import routes
 const lessonPlansRouter = require('./routes/lessonPlans');
 const groupsRouter = require('./routes/groups');
+const salaryRouter = require('./routes/salary');
 
 // Import FTP service at the top of the file
 const ftpService = require('./ftp-service');
@@ -169,6 +170,7 @@ app.options('*', cors(corsOptions));
 // Use routes
 app.use('/api/lesson-plans', lessonPlansRouter);
 app.use('/api/groups', groupsRouter);
+app.use('/api/salary', salaryRouter);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -3584,11 +3586,6 @@ app.post('/api/applications', authenticateToken, upload.single('certificate'), a
       return res.status(400).json({ error: 'You have already submitted an application' });
     }
 
-    // Check if user can submit applications (not Admin1 or Admin4)
-    if (authUser.role === 'Admin1' || authUser.role === 'Admin4') {
-      return res.status(403).json({ error: 'Administrators cannot submit applications' });
-    }
-
     const { applicant_name, classes, subjects, contact } = req.body;
 
     console.log('[DEBUG] Extracted data:', { applicant_name, classes, subjects, contact });
@@ -3786,3 +3783,6 @@ app.delete('/api/applications/:id', authenticateToken, async (req, res) => {
 });
 
 // === End Applications API ===
+
+// Export pool for use in other modules
+module.exports = { pool };

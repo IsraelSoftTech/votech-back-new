@@ -181,3 +181,28 @@ CREATE TABLE IF NOT EXISTS applications (
     reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     UNIQUE(applicant_id) -- Ensure only one application per user
 );
+
+-- Salary Management
+CREATE TABLE IF NOT EXISTS salaries (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    applicant_id INTEGER REFERENCES applications(id) ON DELETE CASCADE,
+    amount DECIMAL(10,2) NOT NULL,
+    month VARCHAR(20) NOT NULL CHECK (month IN ('January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December')),
+    year INTEGER NOT NULL,
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'paid')),
+    paid BOOLEAN DEFAULT FALSE,
+    paid_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, month, year) -- Ensure only one salary record per user per month
+);
+
+-- Salary Descriptions for Pay Slips
+CREATE TABLE IF NOT EXISTS salary_descriptions (
+    id SERIAL PRIMARY KEY,
+    description VARCHAR(100) NOT NULL,
+    percentage DECIMAL(5,2) NOT NULL CHECK (percentage >= 0 AND percentage <= 100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
