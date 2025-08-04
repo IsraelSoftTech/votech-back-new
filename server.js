@@ -3513,13 +3513,13 @@ app.get('/api/marks/statistics', authenticateToken, async (req, res) => {
 
 // === Applications API ===
 
-// Get all applications (for Admin1 and Admin4)
+// Get all applications (for all admins)
 app.get('/api/applications', authenticateToken, async (req, res) => {
   try {
     const authUser = req.user;
     
-    // Only Admin1 and Admin4 can view all applications
-    if (authUser.role !== 'Admin1' && authUser.role !== 'Admin4') {
+    // All admin roles can view all applications
+    if (!['Admin1', 'Admin2', 'Admin3', 'Admin4'].includes(authUser.role)) {
       return res.status(403).json({ error: 'Access denied. Only administrators can view all applications.' });
     }
 
