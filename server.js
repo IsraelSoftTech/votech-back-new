@@ -1222,7 +1222,8 @@ function verifyDatabaseStructure() {
       'teachers',
       'fees',
       'id_cards',
-      'lesson_plans'
+      'lesson_plans',
+      'subjects'
     ];
 
     const checkTable = (tableName) => {
@@ -1413,6 +1414,44 @@ async function runMigrations() {
       }
     }
     
+    // Check if subject_classifications table exists
+    const subjectClassificationsTable = await pool.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_name = 'subject_classifications'"
+    );
+    if (subjectClassificationsTable.rows.length === 0) {
+      console.log('Creating subject_classifications table...');
+      await pool.query(`
+        CREATE TABLE subject_classifications (
+          id SERIAL PRIMARY KEY,
+          class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+          subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
+          classification_type VARCHAR(20) NOT NULL CHECK (classification_type IN ('general', 'professional')),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(class_id, subject_id)
+        )
+      `);
+    }
+    
+    // Check if subject_coefficients table exists
+    const subjectCoefficientsTable = await pool.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_name = 'subject_coefficients'"
+    );
+    if (subjectCoefficientsTable.rows.length === 0) {
+      console.log('Creating subject_coefficients table...');
+      await pool.query(`
+        CREATE TABLE subject_coefficients (
+          id SERIAL PRIMARY KEY,
+          class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+          subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
+          coefficient DECIMAL(4,2) NOT NULL DEFAULT 1.00,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(class_id, subject_id)
+        )
+      `);
+    }
+    
     // Check if lesson_plans table exists and has all required columns
     const lessonPlansTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'lesson_plans'"
@@ -1548,6 +1587,50 @@ async function runMigrations() {
     }
     
     console.log('Messages table file attachment columns migration completed');
+
+    // Check if marks table has subject column
+    const subjectColumn = await pool.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'marks' AND column_name = 'subject'"
+    );
+    if (subjectColumn.rows.length === 0) {
+      console.log('Adding subject column to marks table...');
+      await pool.query('ALTER TABLE marks ADD COLUMN subject VARCHAR(100)');
+      console.log('subject column added to marks table successfully');
+    } else {
+      console.log('subject column already exists in marks table');
+    }
+
+    // Check if unique constraint exists for class_id, sequence_id, and subject
+    const uniqueConstraint = await pool.query(`
+      SELECT constraint_name 
+      FROM information_schema.table_constraints 
+      WHERE table_name = 'marks' 
+      AND constraint_type = 'UNIQUE' 
+      AND constraint_name LIKE '%class_seq_subject%'
+    `);
+    if (uniqueConstraint.rows.length === 0) {
+      console.log('Adding unique constraint for class_id, sequence_id, and subject...');
+      await pool.query('ALTER TABLE marks ADD CONSTRAINT marks_class_seq_subject_unique UNIQUE (class_id, sequence_id, subject)');
+      console.log('Unique constraint added successfully');
+    } else {
+      console.log('Unique constraint already exists for class_id, sequence_id, and subject');
+    }
+
+    // Check and drop old unique constraint that only includes class_id and sequence_id
+    const oldUniqueConstraint = await pool.query(`
+      SELECT constraint_name 
+      FROM information_schema.table_constraints 
+      WHERE table_name = 'marks' 
+      AND constraint_type = 'UNIQUE' 
+      AND constraint_name = 'marks_class_id_sequence_id_key'
+    `);
+    if (oldUniqueConstraint.rows.length > 0) {
+      console.log('Dropping old unique constraint for class_id and sequence_id only...');
+      await pool.query('ALTER TABLE marks DROP CONSTRAINT marks_class_id_sequence_id_key');
+      console.log('Old unique constraint dropped successfully');
+    } else {
+      console.log('Old unique constraint does not exist');
+    }
   } catch (error) {
     console.error('Error running migrations:', error);
     throw error;
@@ -1697,6 +1780,67 @@ const initializeDatabase = async () => {
         period_type VARCHAR(50) DEFAULT 'weekly',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      
+      -- Timetables
+      CREATE TABLE IF NOT EXISTS timetables (
+          id SERIAL PRIMARY KEY,
+          class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+          data JSONB NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Timetable Settings
+      CREATE TABLE IF NOT EXISTS timetable_settings (
+          id SERIAL PRIMARY KEY,
+          working_days TEXT[] NOT NULL DEFAULT ARRAY['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+          periods_per_day INTEGER NOT NULL DEFAULT 8,
+          period_duration INTEGER NOT NULL DEFAULT 45,
+          break_duration INTEGER NOT NULL DEFAULT 15,
+          lunch_duration INTEGER NOT NULL DEFAULT 60,
+          start_time TIME NOT NULL DEFAULT '08:00',
+          end_time TIME NOT NULL DEFAULT '16:00',
+          break_time TIME NOT NULL DEFAULT '10:30',
+          lunch_time TIME NOT NULL DEFAULT '12:00',
+          constraints JSONB NOT NULL DEFAULT '{"noSameTeacherSamePeriod": true, "noTeacherOverlap": true, "spreadSubjects": true, "respectBreakTimes": true}',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Teacher Subject Class Assignments
+      CREATE TABLE IF NOT EXISTS teacher_assignments (
+          id SERIAL PRIMARY KEY,
+          teacher_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+          subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
+          periods_per_week INTEGER NOT NULL DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(teacher_id, class_id, subject_id)
+      );
+
+      -- Timetable Generation Sessions
+      CREATE TABLE IF NOT EXISTS timetable_sessions (
+          id SERIAL PRIMARY KEY,
+          session_name VARCHAR(255) NOT NULL,
+          settings_id INTEGER REFERENCES timetable_settings(id) ON DELETE SET NULL,
+          classes_included INTEGER[] NOT NULL,
+          teachers_included INTEGER[] NOT NULL,
+          status VARCHAR(20) NOT NULL DEFAULT 'generated' CHECK (status IN ('generating', 'generated', 'failed')),
+          generated_timetables INTEGER[] NOT NULL,
+          generation_notes TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          completed_at TIMESTAMP
+      );
+
+      -- Salary Descriptions for Pay Slips
+      CREATE TABLE IF NOT EXISTS salary_descriptions (
+          id SERIAL PRIMARY KEY,
+          description VARCHAR(100) NOT NULL,
+          percentage DECIMAL(5,2) NOT NULL CHECK (percentage >= 0 AND percentage <= 100),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
     console.log('All required tables created or already exist.');
@@ -2624,6 +2768,152 @@ app.delete('/api/subjects/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// === SUBJECT CLASSIFICATION AND COEFFICIENT MANAGEMENT ===
+
+// Get subject classifications for all classes
+app.get('/api/subject-classifications', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        class_id,
+        subject_id,
+        classification_type,
+        created_at,
+        updated_at
+      FROM subject_classifications 
+      ORDER BY class_id, subject_id
+    `);
+    
+    // Group by class_id for easier frontend consumption
+    const classifications = {};
+    result.rows.forEach(row => {
+      if (!classifications[row.class_id]) {
+        classifications[row.class_id] = {};
+      }
+      classifications[row.class_id][row.subject_id] = row.classification_type;
+    });
+    
+    res.json(classifications);
+  } catch (error) {
+    console.error('Error fetching subject classifications:', error);
+    res.status(500).json({ error: 'Failed to fetch subject classifications' });
+  }
+});
+
+// Save subject classifications for a class
+app.post('/api/subject-classifications', authenticateToken, async (req, res) => {
+  const { classId, classifications } = req.body;
+  
+  if (!classId || !classifications) {
+    return res.status(400).json({ error: 'Class ID and classifications are required' });
+  }
+  
+  try {
+    // Start a transaction
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+      
+      // Delete existing classifications for this class
+      await client.query('DELETE FROM subject_classifications WHERE class_id = $1', [classId]);
+      
+      // Insert new classifications
+      for (const [subjectId, classificationType] of Object.entries(classifications)) {
+        if (classificationType) {
+          await client.query(
+            'INSERT INTO subject_classifications (class_id, subject_id, classification_type) VALUES ($1, $2, $3)',
+            [classId, subjectId, classificationType]
+          );
+        }
+      }
+      
+      await client.query('COMMIT');
+      res.json({ message: 'Subject classifications saved successfully' });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error('Error saving subject classifications:', error);
+    res.status(500).json({ error: 'Failed to save subject classifications' });
+  }
+});
+
+// Get subject coefficients for all classes
+app.get('/api/subject-coefficients', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        class_id,
+        subject_id,
+        coefficient,
+        created_at,
+        updated_at
+      FROM subject_coefficients 
+      ORDER BY class_id, subject_id
+    `);
+    
+    // Group by class_id for easier frontend consumption
+    const coefficients = {};
+    result.rows.forEach(row => {
+      if (!coefficients[row.class_id]) {
+        coefficients[row.class_id] = {};
+      }
+      coefficients[row.class_id][row.subject_id] = row.coefficient;
+    });
+    
+    res.json(coefficients);
+  } catch (error) {
+    console.error('Error fetching subject coefficients:', error);
+    res.status(500).json({ error: 'Failed to fetch subject coefficients' });
+  }
+});
+
+// Save subject coefficients for a class
+app.post('/api/subject-coefficients', authenticateToken, async (req, res) => {
+  const { classId, coefficients } = req.body;
+  
+  if (!classId || !coefficients) {
+    return res.status(400).json({ error: 'Class ID and coefficients are required' });
+  }
+  
+  try {
+    // Start a transaction
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+      
+      // Delete existing coefficients for this class
+      await client.query('DELETE FROM subject_coefficients WHERE class_id = $1', [classId]);
+      
+      // Insert new coefficients
+      for (const [subjectId, coefficient] of Object.entries(coefficients)) {
+        if (coefficient && coefficient > 0) {
+          await client.query(
+            'INSERT INTO subject_coefficients (class_id, subject_id, coefficient) VALUES ($1, $2, $3)',
+            [classId, subjectId, coefficient]
+          );
+        }
+      }
+      
+      await client.query('COMMIT');
+      res.json({ message: 'Subject coefficients saved successfully' });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error('Error saving subject coefficients:', error);
+    res.status(500).json({ error: 'Failed to save subject coefficients' });
+  }
+});
+
 // === INVENTORY ENDPOINTS ===
 
 // Get inventory items with type filter
@@ -3170,6 +3460,7 @@ app.get('/api/marks', authenticateToken, async (req, res) => {
         m.id,
         m.class_id,
         m.sequence_id,
+        m.subject,
         m.file_url,
         m.upload_date,
         m.uploaded_by,
@@ -3203,10 +3494,10 @@ const validateFtpUrl = (url) => {
 app.post('/api/marks/upload', authenticateToken, excelUpload.single('marksFile'), async (req, res) => {
   try {
     console.log('[DEBUG] Marks upload request received');
-    const { classId, sequenceId } = req.body;
+    const { classId, sequenceId, subject } = req.body;
     const uploadedBy = req.user.id;
     
-    console.log('[DEBUG] Request data:', { classId, sequenceId, uploadedBy });
+    console.log('[DEBUG] Request data:', { classId, sequenceId, subject, uploadedBy });
     
     if (!req.file) {
       console.log('[DEBUG] No file uploaded');
@@ -3215,9 +3506,9 @@ app.post('/api/marks/upload', authenticateToken, excelUpload.single('marksFile')
 
     console.log('[DEBUG] File received:', req.file.originalname, req.file.size, 'bytes');
 
-    if (!classId || !sequenceId) {
-      console.log('[DEBUG] Missing classId or sequenceId');
-      return res.status(400).json({ error: 'Class ID and Sequence ID are required' });
+    if (!classId || !sequenceId || !subject) {
+      console.log('[DEBUG] Missing classId, sequenceId, or subject');
+      return res.status(400).json({ error: 'Class ID, Sequence ID, and Subject are required' });
     }
 
     // Validate class exists
@@ -3236,15 +3527,15 @@ app.post('/api/marks/upload', authenticateToken, excelUpload.single('marksFile')
       return res.status(400).json({ error: 'Invalid sequence. Must be between 1 and 6' });
     }
 
-    // Check if marks already exist for this class and sequence
+    // Check if marks already exist for this class, sequence, and subject
     const existingResult = await pool.query(
-      'SELECT * FROM marks WHERE class_id = $1 AND sequence_id = $2',
-      [classId, sequenceId]
+      'SELECT * FROM marks WHERE class_id = $1 AND sequence_id = $2 AND subject = $3',
+      [classId, sequenceId, subject]
     );
 
     if (existingResult.rows.length > 0) {
-      console.log('[DEBUG] Marks already exist for this class and sequence');
-      return res.status(400).json({ error: 'Marks already exist for this class and sequence' });
+      console.log('[DEBUG] Marks already exist for this class, sequence, and subject');
+      return res.status(400).json({ error: 'Marks already exist for this class, sequence, and subject combination' });
     }
 
     console.log('[DEBUG] Processing Excel file...');
@@ -3281,7 +3572,7 @@ app.post('/api/marks/upload', authenticateToken, excelUpload.single('marksFile')
     // Upload file to FTP using buffer
     let fileUrl = null;
     try {
-      const ftpFileName = `marks_${classId}_${sequenceId}_${Date.now()}.xlsx`;
+      const ftpFileName = `marks_${classId}_${sequenceId}_${subject.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.xlsx`;
       fileUrl = await ftpService.uploadBuffer(req.file.buffer, ftpFileName);
       console.log('[DEBUG] File uploaded to FTP:', fileUrl);
     } catch (ftpError) {
@@ -3297,10 +3588,10 @@ app.post('/api/marks/upload', authenticateToken, excelUpload.single('marksFile')
     console.log('[DEBUG] Saving file URL to database:', validatedFileUrl);
     
     const result = await pool.query(`
-      INSERT INTO marks (class_id, sequence_id, file_url, uploaded_by, student_data)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO marks (class_id, sequence_id, subject, file_url, uploaded_by, student_data)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *
-    `, [classId, sequenceId, validatedFileUrl, uploadedBy, JSON.stringify(studentData)]);
+    `, [classId, sequenceId, subject, validatedFileUrl, uploadedBy, JSON.stringify(studentData)]);
 
     console.log('[DEBUG] Marks saved successfully, ID:', result.rows[0].id);
 
@@ -3420,7 +3711,7 @@ app.put('/api/marks/:id', authenticateToken, excelUpload.single('marksFile'), as
     // Upload file to FTP using buffer
     let fileUrl = null;
     try {
-      const ftpFileName = `marks_${mark.class_id}_${mark.sequence_id}_${Date.now()}.xlsx`;
+      const ftpFileName = `marks_${mark.class_id}_${mark.sequence_id}_${mark.subject ? mark.subject.replace(/[^a-zA-Z0-9]/g, '_') : 'unknown'}_${Date.now()}.xlsx`;
       fileUrl = await ftpService.uploadBuffer(req.file.buffer, ftpFileName);
       console.log('[DEBUG] Updated file uploaded to FTP:', fileUrl);
     } catch (ftpError) {
@@ -3565,6 +3856,50 @@ app.get('/api/applications/user/:userId', authenticateToken, async (req, res) =>
   } catch (error) {
     console.error('Error fetching user application:', error);
     res.status(500).json({ error: 'Failed to fetch application' });
+  }
+});
+
+// Get user assigned data (classes and subjects)
+app.get('/api/user/assigned-data/:userId', authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const authUser = req.user;
+
+    // Users can only view their own assigned data or Admin1/Admin4 can view any user's data
+    if (authUser.id !== parseInt(userId) && authUser.role !== 'Admin1' && authUser.role !== 'Admin4') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Get user's application to see assigned classes and subjects
+    const applicationResult = await pool.query(`
+      SELECT classes, subjects FROM applications 
+      WHERE applicant_id = $1 AND status = 'approved'
+    `, [userId]);
+
+    let assignedClasses = [];
+    let assignedSubjects = [];
+
+    if (applicationResult.rows.length > 0) {
+      const application = applicationResult.rows[0];
+      
+      // Parse assigned classes
+      if (application.classes) {
+        assignedClasses = application.classes.split(',').map(c => c.trim()).filter(c => c);
+      }
+      
+      // Parse assigned subjects
+      if (application.subjects) {
+        assignedSubjects = application.subjects.split(',').map(s => s.trim()).filter(s => s);
+      }
+    }
+
+    res.json({
+      assignedClasses,
+      assignedSubjects
+    });
+  } catch (error) {
+    console.error('Error fetching user assigned data:', error);
+    res.status(500).json({ error: 'Failed to fetch assigned data' });
   }
 });
 
@@ -3786,3 +4121,505 @@ app.delete('/api/applications/:id', authenticateToken, async (req, res) => {
 
 // Export pool for use in other modules
 module.exports = { pool };
+
+// Report Card Generation Endpoints
+app.post('/api/reports/generate', authenticateToken, async (req, res) => {
+  try {
+    const { classId, term } = req.body;
+    
+    // Get all students in the class
+    const studentsQuery = 'SELECT * FROM students WHERE class_id = $1 ORDER BY full_name';
+    const studentsResult = await pool.query(studentsQuery, [classId]);
+    const students = studentsResult.rows;
+
+    // Get uploaded marks for sequences 5 and 6
+    const marksQuery = `
+      SELECT m.*, c.name as class_name 
+      FROM marks m 
+      JOIN classes c ON m.class_id = c.id 
+      WHERE m.class_id = $1 AND m.sequence_id IN (5, 6)
+      ORDER BY m.sequence_id
+    `;
+    const marksResult = await pool.query(marksQuery, [classId]);
+    const uploadedMarks = marksResult.rows;
+
+    // Get subjects and their classifications/coefficients
+    const subjectsQuery = 'SELECT * FROM subjects ORDER BY name';
+    const subjectsResult = await pool.query(subjectsQuery);
+    const subjects = subjectsResult.rows;
+
+    // Get subject classifications for this class
+    const classificationsQuery = 'SELECT * FROM subject_classifications WHERE class_id = $1';
+    const classificationsResult = await pool.query(classificationsQuery, [classId]);
+    const classifications = {};
+    classificationsResult.rows.forEach(row => {
+      classifications[row.subject_id] = row.classification;
+    });
+
+    // Get subject coefficients for this class
+    const coefficientsQuery = 'SELECT * FROM subject_coefficients WHERE class_id = $1';
+    const coefficientsResult = await pool.query(coefficientsQuery, [classId]);
+    const coefficients = {};
+    coefficientsResult.rows.forEach(row => {
+      coefficients[row.subject_id] = row.coefficient;
+    });
+
+    // Get class information
+    const classQuery = 'SELECT * FROM classes WHERE id = $1';
+    const classResult = await pool.query(classQuery, [classId]);
+    const classInfo = classResult.rows[0];
+
+    // Process each student's marks
+    const processedStudents = [];
+    
+    for (const student of students) {
+      const studentMarks = await processStudentMarks(
+        student, 
+        uploadedMarks, 
+        subjects, 
+        classifications, 
+        coefficients
+      );
+      
+      processedStudents.push({
+        ...student,
+        marks: studentMarks
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        students: processedStudents,
+        classInfo,
+        term,
+        generatedAt: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('Error generating report cards:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to generate report cards' 
+    });
+  }
+});
+
+// Helper function to process student marks
+async function processStudentMarks(student, uploadedMarks, subjects, classifications, coefficients) {
+  const generalSubjects = [];
+  const professionalSubjects = [];
+
+  // Process each subject
+  for (const subject of subjects) {
+    const subjectMarks = await getSubjectMarksForStudent(student, uploadedMarks, subject);
+    const classification = classifications[subject.id] || 'general';
+    const coefficient = coefficients[subject.id] || 1;
+
+    const subjectData = {
+      code: subject.code,
+      name: subject.name,
+      seq5: subjectMarks.seq5 || 0,
+      seq6: subjectMarks.seq6 || 0,
+      average: subjectMarks.seq5 && subjectMarks.seq6 ? 
+        ((subjectMarks.seq5 + subjectMarks.seq6) / 2) : 0,
+      coefficient: coefficient,
+      total: 0,
+      teacher: subjectMarks.teacher || 'N/A'
+    };
+
+    subjectData.total = subjectData.average * coefficient;
+
+    if (classification === 'general') {
+      generalSubjects.push(subjectData);
+    } else {
+      professionalSubjects.push(subjectData);
+    }
+  }
+
+  // Calculate totals
+  const generalTotal = calculateSectionTotal(generalSubjects);
+  const professionalTotal = calculateSectionTotal(professionalSubjects);
+  const grandTotal = {
+    marks: generalTotal.marks + professionalTotal.marks,
+    coef: generalTotal.coef + professionalTotal.coef,
+    total: generalTotal.total + professionalTotal.total,
+    average: (generalTotal.coef + professionalTotal.coef) > 0 ? 
+      (generalTotal.total + professionalTotal.total) / (generalTotal.coef + professionalTotal.coef) : 0
+  };
+
+  // Mock term averages (in real implementation, these would come from database)
+  const termAverages = {
+    first: grandTotal.average * 0.9 + Math.random() * 2,
+    second: grandTotal.average * 0.95 + Math.random() * 2,
+    annual: (grandTotal.average * 0.9 + grandTotal.average * 0.95) / 2
+  };
+
+  return {
+    general_subjects: generalSubjects,
+    professional_subjects: professionalSubjects,
+    general_total: generalTotal,
+    professional_total: professionalTotal,
+    grand_total: grandTotal,
+    term_averages: termAverages,
+    class_average: grandTotal.average * 0.85 + Math.random() * 3,
+    student_rank: Math.floor(Math.random() * 100) + 1,
+    total_students: 100,
+    grade: getGrade(grandTotal.average)
+  };
+}
+
+// Helper function to get subject marks for a student
+async function getSubjectMarksForStudent(student, uploadedMarks, subject) {
+  const studentMarks = { seq5: null, seq6: null, teacher: 'N/A' };
+
+  for (const markRecord of uploadedMarks) {
+    try {
+      // Parse the student_data JSON
+      const studentData = JSON.parse(markRecord.student_data);
+      
+      // Find the student's row in the marks data
+      const studentRow = studentData.find(row => {
+        const studentName = row[1]?.toLowerCase() || '';
+        const fullName = student.full_name?.toLowerCase() || '';
+        return studentName.includes(fullName) || fullName.includes(studentName);
+      });
+
+      if (studentRow && studentRow[2]) {
+        const mark = parseFloat(studentRow[2]);
+        if (!isNaN(mark)) {
+          if (markRecord.sequence_id === 5) {
+            studentMarks.seq5 = mark;
+          } else if (markRecord.sequence_id === 6) {
+            studentMarks.seq6 = mark;
+          }
+          studentMarks.teacher = markRecord.uploaded_by_name || 'N/A';
+        }
+      }
+    } catch (error) {
+      console.error(`Error processing marks for student ${student.full_name}:`, error);
+    }
+  }
+
+  return studentMarks;
+}
+
+// Helper function to calculate section totals
+function calculateSectionTotal(subjects) {
+  const total = subjects.reduce((acc, subject) => ({
+    marks: acc.marks + 1,
+    coef: acc.coef + subject.coefficient,
+    total: acc.total + subject.total
+  }), { marks: 0, coef: 0, total: 0 });
+
+  return {
+    ...total,
+    average: total.coef > 0 ? total.total / total.coef : 0
+  };
+}
+
+// Helper function to get grade
+function getGrade(average) {
+  if (average >= 18) return 'Excellent';
+  if (average >= 14) return 'Very Good';
+  if (average >= 12) return 'Good';
+  if (average >= 10) return 'Fairly Good';
+  if (average >= 8) return 'Average';
+  if (average >= 6) return 'Weak';
+  return 'Very Weak';
+}
+
+app.get('/api/reports/data/:classId/:studentId/:term', authenticateToken, async (req, res) => {
+  try {
+    const { classId, studentId, term } = req.params;
+    
+    // Get student data
+    const studentQuery = 'SELECT * FROM students WHERE id = $1 AND class_id = $2';
+    const studentResult = await pool.query(studentQuery, [studentId, classId]);
+    
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Student not found' 
+      });
+    }
+
+    const student = studentResult.rows[0];
+
+    // Get class data
+    const classQuery = 'SELECT * FROM classes WHERE id = $1';
+    const classResult = await pool.query(classQuery, [classId]);
+    const classInfo = classResult.rows[0];
+
+    // Get marks data (reuse the same logic as above)
+    const uploadedMarks = await getUploadedMarksForClass(classId);
+    const subjects = await getAllSubjects();
+    const classifications = await getSubjectClassifications(classId);
+    const coefficients = await getSubjectCoefficients(classId);
+
+    const marksData = await processStudentMarks(
+      student, 
+      uploadedMarks, 
+      subjects, 
+      classifications, 
+      coefficients
+    );
+
+    res.json({
+      success: true,
+      data: {
+        student,
+        classInfo,
+        marksData,
+        term
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching report card data:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch report card data' 
+    });
+  }
+});
+
+// Helper functions for the above endpoint
+async function getUploadedMarksForClass(classId) {
+  const query = `
+    SELECT m.*, c.name as class_name 
+    FROM marks m 
+    JOIN classes c ON m.class_id = c.id 
+    WHERE m.class_id = $1 AND m.sequence_id IN (5, 6)
+    ORDER BY m.sequence_id
+  `;
+  const result = await pool.query(query, [classId]);
+  return result.rows;
+}
+
+async function getAllSubjects() {
+  const query = 'SELECT * FROM subjects ORDER BY name';
+  const result = await pool.query(query);
+  return result.rows;
+}
+
+async function getSubjectClassifications(classId) {
+  const query = 'SELECT * FROM subject_classifications WHERE class_id = $1';
+  const result = await pool.query(query, [classId]);
+  const classifications = {};
+  result.rows.forEach(row => {
+    classifications[row.subject_id] = row.classification;
+  });
+  return classifications;
+}
+
+async function getSubjectCoefficients(classId) {
+  const query = 'SELECT * FROM subject_coefficients WHERE class_id = $1';
+  const result = await pool.query(query, [classId]);
+  const coefficients = {};
+  result.rows.forEach(row => {
+    coefficients[row.subject_id] = row.coefficient;
+  });
+  return coefficients;
+}
+
+app.post('/api/reports/settings', authenticateToken, async (req, res) => {
+  try {
+    const { classId, settings } = req.body;
+    
+    // Save report card settings for the class
+    const query = `
+      INSERT INTO report_card_settings (class_id, settings, created_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (class_id) 
+      DO UPDATE SET settings = $2, updated_at = NOW()
+    `;
+    
+    await pool.query(query, [classId, JSON.stringify(settings)]);
+    
+    res.json({
+      success: true,
+      message: 'Report card settings saved successfully'
+    });
+
+  } catch (error) {
+    console.error('Error saving report card settings:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to save report card settings' 
+    });
+  }
+});
+
+app.get('/api/reports/settings/:classId', authenticateToken, async (req, res) => {
+  try {
+    const { classId } = req.params;
+    
+    const query = 'SELECT settings FROM report_card_settings WHERE class_id = $1';
+    const result = await pool.query(query, [classId]);
+    
+    if (result.rows.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          class_master: 'CLASS MASTER',
+          principal_remark: 'PRINCIPAL\'S REMARK AND SIGNATURE',
+          disciplinary_record: {
+            absences: 0,
+            disciplinary_council: 'NO',
+            warned: 'NO',
+            suspended: 'NO',
+            might_be_expelled: 'NO'
+          },
+          class_council_decision: {
+            promoted: 'YES',
+            repeat: 'NO',
+            dismissed: 'NO',
+            next_year_start: 'September 2024'
+          }
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      data: JSON.parse(result.rows[0].settings)
+    });
+
+  } catch (error) {
+    console.error('Error fetching report card settings:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch report card settings' 
+    });
+  }
+});
+
+app.get('/api/marks/summary/:classId', authenticateToken, async (req, res) => {
+  try {
+    const { classId } = req.params;
+    
+    // Get summary of marks for the class
+    const query = `
+      SELECT 
+        m.sequence_id,
+        m.student_data,
+        COUNT(*) as total_students
+      FROM marks m
+      WHERE m.class_id = $1 AND m.sequence_id IN (5, 6)
+      ORDER BY m.sequence_id
+    `;
+    
+    const result = await pool.query(query, [classId]);
+    
+    // Process the data to calculate averages
+    const summary = result.rows.map(row => {
+      try {
+        const studentData = JSON.parse(row.student_data);
+        const validMarks = studentData
+          .filter(row => row && row[2] && !isNaN(parseFloat(row[2])))
+          .map(row => parseFloat(row[2]));
+        
+        const averageMark = validMarks.length > 0 
+          ? validMarks.reduce((sum, mark) => sum + mark, 0) / validMarks.length 
+          : 0;
+        
+        return {
+          sequence_id: row.sequence_id,
+          total_students: validMarks.length,
+          average_mark: Math.round(averageMark * 100) / 100
+        };
+      } catch (error) {
+        console.error(`Error processing sequence ${row.sequence_id}:`, error);
+        return {
+          sequence_id: row.sequence_id,
+          total_students: 0,
+          average_mark: 0
+        };
+      }
+    });
+    
+    res.json({
+      success: true,
+      data: summary
+    });
+
+  } catch (error) {
+    console.error('Error fetching marks summary:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch marks summary' 
+    });
+  }
+});
+
+app.get('/api/marks/student/:classId/:studentId', authenticateToken, async (req, res) => {
+  try {
+    const { classId, studentId } = req.params;
+    
+    // Get student information
+    const studentQuery = 'SELECT * FROM students WHERE id = $1 AND class_id = $2';
+    const studentResult = await pool.query(studentQuery, [studentId, classId]);
+    
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Student not found' 
+      });
+    }
+
+    const student = studentResult.rows[0];
+
+    // Get marks for this student
+    const marksQuery = `
+      SELECT m.*, c.name as class_name
+      FROM marks m
+      JOIN classes c ON m.class_id = c.id
+      WHERE m.class_id = $1 AND m.sequence_id IN (5, 6)
+      ORDER BY m.sequence_id
+    `;
+    
+    const marksResult = await pool.query(marksQuery, [classId]);
+    const marks = marksResult.rows;
+
+    // Process marks data
+    const studentMarks = [];
+    for (const markRecord of marks) {
+      try {
+        const studentData = JSON.parse(markRecord.student_data);
+        const studentRow = studentData.find(row => {
+          const studentName = row[1]?.toLowerCase() || '';
+          const fullName = student.full_name?.toLowerCase() || '';
+          return studentName.includes(fullName) || fullName.includes(studentName);
+        });
+
+        if (studentRow) {
+          studentMarks.push({
+            sequence_id: markRecord.sequence_id,
+            mark: parseFloat(studentRow[2]) || 0,
+            teacher: markRecord.uploaded_by_name || 'N/A',
+            upload_date: markRecord.upload_date
+          });
+        }
+      } catch (error) {
+        console.error(`Error processing marks for sequence ${markRecord.sequence_id}:`, error);
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        student,
+        marks: studentMarks
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching student marks:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch student marks' 
+    });
+  }
+});

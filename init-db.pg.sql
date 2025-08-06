@@ -206,3 +206,20 @@ CREATE TABLE IF NOT EXISTS salary_descriptions (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Report Card Settings Table
+CREATE TABLE IF NOT EXISTS report_card_settings (
+    id SERIAL PRIMARY KEY,
+    class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    settings JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(class_id)
+);
+
+-- Create index for faster lookups
+CREATE INDEX IF NOT EXISTS idx_report_card_settings_class_id ON report_card_settings(class_id);
+
+-- Add comments for documentation
+COMMENT ON TABLE report_card_settings IS 'Stores report card generation settings for each class';
+COMMENT ON COLUMN report_card_settings.settings IS 'JSON object containing report card settings like class master, principal remarks, etc.';
