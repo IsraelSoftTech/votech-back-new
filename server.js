@@ -4,7 +4,6 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection:', reason);
 });
-
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -22,25 +21,20 @@ console.log('DATABASE_URL:', process.env.DATABASE_URL);
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 });
-
 // Import routes
 const lessonPlansRouter = require('./routes/lessonPlans');
 const groupsRouter = require('./routes/groups');
 const salaryRouter = require('./routes/salary');
-
 // Import FTP service at the top of the file
 const ftpService = require('./ftp-service');
-
 const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const PORT = 5000;
-
 // Log every incoming request
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
   next();
 });
-
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -51,9 +45,8 @@ const storage = multer.diskStorage({
     cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
   }
 });
-
 // Use memory storage for student uploads
-const upload = multer({ 
+const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit for all files
@@ -63,14 +56,13 @@ const upload = multer({
     // Allow images, PDFs, and common document formats
     const allowedTypes = [
       'image/jpeg',
-      'image/jpg', 
+      'image/jpg',
       'image/png',
       'image/gif',
       'application/pdf',
       'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     ];
-    
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
@@ -78,16 +70,15 @@ const upload = multer({
     }
   }
 });
-
 // Configure multer for Excel file uploads
-const excelUpload = multer({ 
+const excelUpload = multer({
   storage: multer.memoryStorage(), // Use memory storage instead of disk storage
   limits: {
     fileSize: 10 * 1024 * 1024 // 10MB limit for Excel files
   },
   fileFilter: function (req, file, cb) {
     // Accept Excel files
-    if (file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || 
+    if (file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
         file.mimetype === 'application/vnd.ms-excel') {
       cb(null, true);
     } else {
@@ -95,13 +86,11 @@ const excelUpload = multer({
     }
   }
 });
-
 // Create uploads directory if it doesn't exist (for non-Excel files)
 const fs = require('fs');
 if (!fs.existsSync('uploads')) {
   fs.mkdirSync('uploads');
 }
-
 // Function to find an available port
 const findAvailablePort = (startPort) => {
   return new Promise((resolve, reject) => {
@@ -116,7 +105,6 @@ const findAvailablePort = (startPort) => {
         reject(err);
       }
     });
-
     server.listen(startPort, () => {
       const { port } = server.address();
       server.close(() => {
@@ -125,25 +113,21 @@ const findAvailablePort = (startPort) => {
     });
   });
 };
-
 // CORS configuration with dynamic origin
 const corsOptions = {
   origin: function (origin, callback) {
     console.log('CORS request from origin:', origin);
-    
     const allowedOrigins = [
       'https://votechs7academygroup.com', // Production frontend
       'https://votech-latest-front.onrender.com', // Keep for backup
       'http://localhost:3000',             // local development
       'http://localhost:3004'              // local development (alternate port)
     ];
-    
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) {
       console.log('No origin provided, allowing request');
       return callback(null, true);
     }
-    
     if (allowedOrigins.indexOf(origin) !== -1) {
       console.log('Origin allowed:', origin);
       callback(null, true);
@@ -158,42 +142,34 @@ const corsOptions = {
   credentials: true,
   maxAge: 86400
 };
-
 // Middleware
 app.use(cors(corsOptions));
-
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static('uploads')); // Serve uploaded files
 app.options('*', cors(corsOptions));
-
 // Use routes
 app.use('/api/lesson-plans', lessonPlansRouter);
 app.use('/api/groups', groupsRouter);
 app.use('/api/salary', salaryRouter);
-
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(500).json({ error: 'Internal server error', details: err.message });
 });
-
 // Authentication middleware
 const authenticateToken = (req, res, next) => {
   console.log('Authenticating request...');
-  
   const authHeader = req.headers['authorization'];
   if (!authHeader) {
     console.log('No authorization header');
     return res.status(401).json({ error: 'No authorization header' });
   }
-
   const token = authHeader.split(' ')[1];
   if (!token) {
     console.log('No token in authorization header');
     return res.status(401).json({ error: 'No token provided' });
   }
-
   try {
     const user = jwt.verify(token, JWT_SECRET);
     console.log('Token verified for user:', user.username);
@@ -207,17 +183,14 @@ const authenticateToken = (req, res, next) => {
     return res.status(403).json({ error: 'Invalid token' });
   }
 };
-
 // Public endpoints (no authentication required)
 app.get('/api/test', (req, res) => {
   res.json({ message: 'Server is running' });
 });
-
 // Test lesson plans endpoint
 app.get('/api/lesson-plans/test', (req, res) => {
   res.json({ message: 'Lesson plans endpoint is working' });
 });
-
 // Temporary endpoint to create admin user (remove in production)
 app.post('/api/setup-admin', async (req, res) => {
   try {
@@ -241,7 +214,7 @@ app.post('/api/setup-admin', async (req, res) => {
       );
       console.log('Admin user created');
     }
-    res.json({ 
+    res.json({
       message: 'Admin user setup complete',
       username: 'admin1234',
       password: 'admin1234'
@@ -251,11 +224,9 @@ app.post('/api/setup-admin', async (req, res) => {
     res.status(500).json({ error: 'Failed to setup admin user' });
   }
 });
-
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   console.log('Login attempt for:', username);
-
   try {
     const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
     const users = result.rows;
@@ -294,7 +265,7 @@ app.post('/api/login', async (req, res) => {
       requireAcademicYear = count === 0; // or set to true to always require
     }
     console.log('Login successful for:', username);
-    res.json({ 
+    res.json({
       token,
       user: userData,
       requireAcademicYear
@@ -304,7 +275,6 @@ app.post('/api/login', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-
 app.post('/api/register', async (req, res) => {
   console.log('Received registration request:', {
     body: req.body,
@@ -347,14 +317,11 @@ app.post('/api/register', async (req, res) => {
     res.status(500).json({ error: `Failed to create account: ${error.message}` });
   }
 });
-
 app.post('/api/check-user', async (req, res) => {
   const { username } = req.body;
   console.log('Checking if user exists:', username);
-
   try {
     const [users] = await pool.query('SELECT username FROM users WHERE username = $1', [username]);
-    
     if (users.length > 0) {
       console.log('User exists:', username);
       res.json({ exists: true });
@@ -367,11 +334,9 @@ app.post('/api/check-user', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-
 app.post('/api/reset-password', async (req, res) => {
   const { username, newPassword } = req.body;
   console.log('Password reset request for:', username);
-
   try {
     // Check if user exists
     const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
@@ -380,16 +345,13 @@ app.post('/api/reset-password', async (req, res) => {
       console.log('User not found for password reset:', username);
       return res.status(404).json({ error: 'User not found' });
     }
-
     // Hash the new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    
     // Update the password
     await pool.query(
       'UPDATE users SET password = $1 WHERE username = $2',
       [hashedPassword, username]
     );
-    
     console.log('Password reset successful for:', username);
     res.json({ message: 'Password reset successfully' });
   } catch (error) {
@@ -397,48 +359,38 @@ app.post('/api/reset-password', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-
 app.post('/api/change-password', authenticateToken, async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   const userId = req.user.id;
-
   try {
     // Get current user
     const [users] = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
-    
     if (users.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
-
     const user = users[0];
-    
     // Verify current password
     const validPassword = await bcrypt.compare(currentPassword, user.password);
     if (!validPassword) {
       return res.status(400).json({ error: 'Current password is incorrect' });
     }
-
     // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    
     // Update password
     await pool.query(
       'UPDATE users SET password = $1 WHERE id = $2',
       [hashedPassword, userId]
     );
-    
     res.json({ message: 'Password changed successfully' });
   } catch (error) {
     console.error('Error changing password:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
-
 // Users endpoints
 app.get('/api/users', authenticateToken, async (req, res) => {
   try {
     const [users] = await pool.query('SELECT id, username, email, contact, created_at FROM users WHERE id = $1', [req.user.id]);
-    
     console.log('Successfully fetched users:', users);
     res.json(users);
   } catch (error) {
@@ -446,15 +398,12 @@ app.get('/api/users', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Error fetching users' });
   }
 });
-
 // Excel upload endpoint for bulk student registration
 app.post('/api/students/upload', authenticateToken, excelUpload.single('file'), async (req, res) => {
   const userId = req.user.id;
-  
   if (!req.file) {
     return res.status(400).json({ error: 'No Excel file uploaded' });
   }
-
   function parseExcelDate(dateStr) {
     if (!dateStr) return '';
     // If it's a number, treat as Excel serial date
@@ -491,23 +440,19 @@ app.post('/api/students/upload', authenticateToken, excelUpload.single('file'), 
     // Fallback: return as is
     return dateStr;
   }
-
   function normalizeSex(sex) {
     if (!sex) return 'Male';
     const s = sex.toString().trim().toLowerCase();
     if (s === 'f' || s === 'female') return 'Female';
     return 'Male';
   }
-
   try {
     // Read the Excel file from memory
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
-    
     // Convert to JSON
     const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-    
     // Skip the header row and process data
     const students = [];
     for (let i = 1; i < data.length; i++) {
@@ -529,11 +474,9 @@ app.post('/api/students/upload', authenticateToken, excelUpload.single('file'), 
         });
       }
     }
-
     if (students.length === 0) {
       return res.status(400).json({ error: 'No valid student data found in the Excel file' });
     }
-
     // Insert students into database
     const insertPromises = students.map(student => {
       return pool.query(
@@ -545,20 +488,16 @@ app.post('/api/students/upload', authenticateToken, excelUpload.single('file'), 
         throw err;
       });
     });
-
     const results = await Promise.all(insertPromises);
-
     // Clean up the uploaded file
     const fs = require('fs');
     fs.unlinkSync(req.file.path);
-
-    res.json({ 
+    res.json({
       message: `${results.length} students uploaded successfully`,
       count: results.length
     });
   } catch (error) {
     console.error('Error uploading students:', error);
-    
     // Clean up the uploaded file in case of error
     if (req.file) {
       const fs = require('fs');
@@ -568,11 +507,9 @@ app.post('/api/students/upload', authenticateToken, excelUpload.single('file'), 
         console.error('Error deleting uploaded file:', unlinkError);
       }
     }
-    
     res.status(500).json({ error: 'Error uploading students from Excel file', details: error.message });
   }
 });
-
 // Student analytics endpoint: students added per day for all time
 app.get('/api/students/analytics/daily', async (req, res) => {
   try {
@@ -588,7 +525,6 @@ app.get('/api/students/analytics/daily', async (req, res) => {
     res.status(500).json({ error: 'Error fetching student analytics', details: error.message });
   }
 });
-
 // Student analytics endpoint: students added per month (all time)
 app.get('/api/students/analytics/monthly', async (req, res) => {
   try {
@@ -604,7 +540,6 @@ app.get('/api/students/analytics/monthly', async (req, res) => {
     res.status(500).json({ error: 'Error fetching student monthly analytics', details: error.message });
   }
 });
-
 // CLASSES ENDPOINTS
 app.get('/api/classes', authenticateToken, async (req, res) => {
   try {
@@ -615,7 +550,6 @@ app.get('/api/classes', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Error fetching classes', details: error.message });
   }
 });
-
 // Remove authentication for class creation
 app.post('/api/classes', async (req, res) => {
   console.log('POST /api/classes called', req.body);
@@ -632,7 +566,6 @@ app.post('/api/classes', async (req, res) => {
     res.status(500).json({ error: 'Error creating class', details: error.message });
   }
 });
-
 app.put('/api/classes/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { name, registration_fee, bus_fee, internship_fee, remedial_fee, tuition_fee, pta_fee, total_fee, suspended } = req.body;
@@ -648,7 +581,6 @@ app.put('/api/classes/:id', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Error updating class', details: error.message });
   }
 });
-
 app.delete('/api/classes/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
@@ -659,7 +591,6 @@ app.delete('/api/classes/:id', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Error deleting class', details: error.message });
   }
 });
-
 // Vocational endpoints
 app.post('/api/vocational', authenticateToken, upload.fields([
   { name: 'picture1', maxCount: 1 },
@@ -669,27 +600,23 @@ app.post('/api/vocational', authenticateToken, upload.fields([
 ]), async (req, res) => {
   const { title, description, year } = req.body;
   const userId = req.user.id;
-  
   // Get file paths from uploaded files
   const picture1 = req.files.picture1 ? `/uploads/${req.files.picture1[0].filename}` : null;
   const picture2 = req.files.picture2 ? `/uploads/${req.files.picture2[0].filename}` : null;
   const picture3 = req.files.picture3 ? `/uploads/${req.files.picture3[0].filename}` : null;
   const picture4 = req.files.picture4 ? `/uploads/${req.files.picture4[0].filename}` : null;
-
   try {
     const result = await pool.query(
       `INSERT INTO vocational (user_id, name, description, picture1, picture2, picture3, picture4, year)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       [userId, title, description, picture1, picture2, picture3, picture4, year]
     );
-    
     res.status(201).json({ id: result.rows[0].id });
   } catch (error) {
     console.error('Error creating vocational department:', error);
     res.status(500).json({ error: 'Error creating vocational department' });
   }
 });
-
 app.get('/api/vocational', authenticateToken, async (req, res) => {
   const year = req.query.year ? parseInt(req.query.year) : null;
   try {
@@ -707,7 +634,6 @@ app.get('/api/vocational', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Error fetching vocational departments' });
   }
 });
-
 app.put('/api/vocational/:id', authenticateToken, upload.fields([
   { name: 'picture1', maxCount: 1 },
   { name: 'picture2', maxCount: 1 },
@@ -717,13 +643,11 @@ app.put('/api/vocational/:id', authenticateToken, upload.fields([
   const { title, description, year } = req.body;
   const userId = req.user.id;
   const vocationalId = req.params.id;
-  
   // Get file paths from uploaded files
   const picture1 = req.files.picture1 ? `/uploads/${req.files.picture1[0].filename}` : undefined;
   const picture2 = req.files.picture2 ? `/uploads/${req.files.picture2[0].filename}` : undefined;
   const picture3 = req.files.picture3 ? `/uploads/${req.files.picture3[0].filename}` : undefined;
   const picture4 = req.files.picture4 ? `/uploads/${req.files.picture4[0].filename}` : undefined;
-
   try {
     // First verify the vocational department belongs to the user
     const resultVocPut = await pool.query(
@@ -733,7 +657,6 @@ app.put('/api/vocational/:id', authenticateToken, upload.fields([
     if (resultVocPut.rows.length === 0) {
       return res.status(404).json({ error: 'Vocational department not found' });
     }
-
     // Build update query and values dynamically
     let updateFields = ['name = $1', 'description = $2', 'year = $3'];
     let updateValues = [title, description, year];
@@ -762,7 +685,6 @@ app.put('/api/vocational/:id', authenticateToken, upload.fields([
     updateFields = updateFields.join(', ');
     updateValues.push(vocationalId, userId);
     const updateQuery = `UPDATE vocational SET ${updateFields} WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}`;
-
     // Update the vocational department
     await pool.query(updateQuery, updateValues);
     res.json({ message: 'Vocational department updated successfully' });
@@ -771,11 +693,9 @@ app.put('/api/vocational/:id', authenticateToken, upload.fields([
     res.status(500).json({ error: 'Error updating vocational department' });
   }
 });
-
 app.delete('/api/vocational/:id', authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const vocationalId = req.params.id;
-
   try {
     // First verify the vocational department belongs to the user
     const resultVocDel = await pool.query(
@@ -785,20 +705,17 @@ app.delete('/api/vocational/:id', authenticateToken, async (req, res) => {
     if (resultVocDel.rows.length === 0) {
       return res.status(404).json({ error: 'Vocational department not found' });
     }
-
     // Delete the vocational department
     await pool.query(
       'DELETE FROM vocational WHERE id = $1 AND user_id = $2',
       [vocationalId, userId]
     );
-    
     res.json({ message: 'Vocational department deleted successfully' });
   } catch (error) {
     console.error('Error deleting vocational department:', error);
     res.status(500).json({ error: 'Error deleting vocational department' });
   }
 });
-
 // Teachers endpoints (Admin: full CRUD, others: only their own if needed)
 app.post('/api/teachers', authenticateToken, async (req, res) => {
   const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
@@ -818,7 +735,6 @@ app.post('/api/teachers', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Error creating teacher' });
   }
 });
-
 // Get all teachers (admin) or only own (if needed)
 app.get('/api/teachers', authenticateToken, async (req, res) => {
   try {
@@ -835,7 +751,6 @@ app.get('/api/teachers', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Error fetching teachers' });
   }
 });
-
 app.put('/api/teachers/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
@@ -854,7 +769,6 @@ app.put('/api/teachers/:id', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Error updating teacher' });
   }
 });
-
 app.delete('/api/teachers/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   if (!['admin', 'Admin1', 'Admin2', 'Admin3', 'Admin4'].includes(req.user.role)) {
@@ -869,7 +783,6 @@ app.delete('/api/teachers/:id', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Error deleting teacher' });
   }
 });
-
 // New endpoint for admin to approve/reject teachers
 app.put('/api/teachers/:id/status', authenticateToken, async (req, res) => {
   console.log('User object for approval:', req.user);
@@ -879,32 +792,27 @@ app.put('/api/teachers/:id/status', authenticateToken, async (req, res) => {
   const { status } = req.body;
   const userId = req.user.id;
   const teacherId = req.params.id;
-
   try {
     // Validate status
     if (!['approved', 'pending', 'rejected'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status. Must be "approved", "pending", or "rejected"' });
     }
-
     // Update the teacher status
     const result = await pool.query(
-      `UPDATE teachers 
+      `UPDATE teachers
        SET status = $1
        WHERE id = $2 RETURNING *`,
       [status, teacherId]
     );
-    
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Teacher not found' });
     }
-    
     res.json({ message: `Teacher ${status} successfully` });
   } catch (error) {
     console.error('Error updating teacher status:', error);
     res.status(500).json({ error: 'Error updating teacher status' });
   }
 });
-
 // Teacher analytics endpoint: teachers added per day for the last 30 days
 app.get('/api/teachers/analytics/daily', authenticateToken, async (req, res) => {
   const userId = req.user.id;
@@ -960,9 +868,7 @@ app.get('/api/teachers/analytics/daily', authenticateToken, async (req, res) => 
     res.status(500).json({ error: 'Error fetching teacher analytics', details: error.message });
   }
 });
-
 // FEES & ID CARDS ENDPOINTS
-
 // 1. Search students for auto-suggest
 app.get('/api/students/search', authenticateToken, async (req, res) => {
   const query = req.query.query || '';
@@ -981,7 +887,6 @@ app.get('/api/students/search', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Error searching students' });
   }
 });
-
 // Add this before startServer or before catch-all
 app.get('/api/fees/total/yearly', authenticateToken, async (req, res) => {
   const userId = req.user.id;
@@ -1032,7 +937,6 @@ app.get('/api/fees/total/yearly', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Error fetching yearly total fees', details: error.message });
   }
 });
-
 app.get('/api/student/:id/fees', authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const userRole = req.user.role;
@@ -1090,7 +994,6 @@ app.get('/api/student/:id/fees', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Error fetching student fees', details: error.message });
   }
 });
-
 app.post('/api/fees', authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const { student_id, class_id, fee_type, amount, paid_at } = req.body;
@@ -1112,13 +1015,11 @@ app.post('/api/fees', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Error recording fee payment' });
   }
 });
-
 app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const userRole = req.user.role;
   const classId = req.params.classId;
   const year = req.query.year ? parseInt(req.query.year) : null;
-  
   try {
     // First, check if the class exists
     const classCheck = await pool.query(
@@ -1211,7 +1112,6 @@ app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Error fetching class fee stats', details: error.message });
   }
 });
-
 function verifyDatabaseStructure() {
   return new Promise((resolve, reject) => {
     const requiredTables = [
@@ -1225,7 +1125,6 @@ function verifyDatabaseStructure() {
       'lesson_plans',
       'subjects'
     ];
-
     const checkTable = (tableName) => {
       return new Promise((resolveTable, rejectTable) => {
         pool.query(`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)`, [tableName], (err, result) => {
@@ -1244,7 +1143,6 @@ function verifyDatabaseStructure() {
         });
       });
     };
-
     Promise.all(requiredTables.map(checkTable))
       .then((results) => {
         const allTablesExist = results.every(exists => exists);
@@ -1259,7 +1157,6 @@ function verifyDatabaseStructure() {
       .catch(reject);
   });
 }
-
 async function runMigrations() {
   try {
     console.log('Running migrations...');
@@ -1287,13 +1184,11 @@ async function runMigrations() {
       const updateResult = await pool.query('UPDATE students SET class_id = $1 WHERE class_id IS NULL', [classId]);
       console.log(`Assigned class_id=${classId} to ${updateResult.rowCount} students with NULL class_id.`);
     }
-
     // Check if messages table has file attachment columns
     const messagesColumns = await pool.query(
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'messages' AND column_name IN ('file_url', 'file_name', 'file_type')"
     );
     const existingFileColumns = messagesColumns.rows.map(row => row.column_name);
-    
     if (!existingFileColumns.includes('file_url')) {
       console.log('Adding file_url column to messages table...');
       await pool.query('ALTER TABLE messages ADD COLUMN file_url VARCHAR(255)');
@@ -1306,7 +1201,6 @@ async function runMigrations() {
       console.log('Adding file_type column to messages table...');
       await pool.query('ALTER TABLE messages ADD COLUMN file_type VARCHAR(50)');
     }
-    
     // Check if messages table has group_id column
     const groupIdColumn = await pool.query(
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'messages' AND column_name = 'group_id'"
@@ -1315,7 +1209,6 @@ async function runMigrations() {
       console.log('Adding group_id column to messages table...');
       await pool.query('ALTER TABLE messages ADD COLUMN group_id INTEGER');
     }
-    
     // Check if groups table exists
     const groupsTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'groups'"
@@ -1331,7 +1224,6 @@ async function runMigrations() {
         )
       `);
     }
-    
     // Check if group_participants table exists
     const groupParticipantsTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'group_participants'"
@@ -1348,7 +1240,6 @@ async function runMigrations() {
         )
       `);
     }
-    
     // Check if inventory table exists
     const inventoryTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'inventory'"
@@ -1370,7 +1261,6 @@ async function runMigrations() {
         )
       `);
     }
-    
     // Check if subjects table exists and has all required columns
     const subjectsTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'subjects'"
@@ -1395,7 +1285,6 @@ async function runMigrations() {
         "SELECT column_name FROM information_schema.columns WHERE table_name = 'subjects' AND column_name IN ('description', 'credits', 'department', 'updated_at')"
       );
       const existingSubjectsColumns = subjectsColumns.rows.map(row => row.column_name);
-      
       if (!existingSubjectsColumns.includes('description')) {
         console.log('Adding description column to subjects table...');
         await pool.query('ALTER TABLE subjects ADD COLUMN description TEXT');
@@ -1413,7 +1302,6 @@ async function runMigrations() {
         await pool.query('ALTER TABLE subjects ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
       }
     }
-    
     // Check if subject_classifications table exists
     const subjectClassificationsTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'subject_classifications'"
@@ -1432,7 +1320,6 @@ async function runMigrations() {
         )
       `);
     }
-    
     // Check if subject_coefficients table exists
     const subjectCoefficientsTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'subject_coefficients'"
@@ -1451,7 +1338,6 @@ async function runMigrations() {
         )
       `);
     }
-    
     // Check if lesson_plans table exists and has all required columns
     const lessonPlansTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'lesson_plans'"
@@ -1486,7 +1372,6 @@ async function runMigrations() {
         "SELECT column_name FROM information_schema.columns WHERE table_name = 'lesson_plans' AND column_name IN ('subject', 'class_name', 'week', 'objectives', 'content', 'activities', 'assessment', 'resources', 'file_url', 'file_name', 'status', 'admin_comment', 'updated_at', 'period_type')"
       );
       const existingLessonPlansColumns = lessonPlansColumns.rows.map(row => row.column_name);
-      
       if (!existingLessonPlansColumns.includes('subject')) {
         console.log('Adding subject column to lesson_plans table...');
         await pool.query('ALTER TABLE lesson_plans ADD COLUMN subject VARCHAR(100)');
@@ -1544,7 +1429,6 @@ async function runMigrations() {
         await pool.query('ALTER TABLE lesson_plans ADD COLUMN period_type VARCHAR(50) DEFAULT \'weekly\'');
       }
     }
-    
     // Check if students table has photo_url column
     const photoUrlColumn = await pool.query(
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'students' AND column_name = 'photo_url'"
@@ -1556,7 +1440,6 @@ async function runMigrations() {
     } else {
       console.log('photo_url column already exists in students table');
     }
-    
     // Check if applications table exists
     const applicationsTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'applications'"
@@ -1585,58 +1468,14 @@ async function runMigrations() {
     } else {
       console.log('Applications table already exists');
     }
-    
     console.log('Messages table file attachment columns migration completed');
-
-    // Check if marks table has subject column
-    const subjectColumn = await pool.query(
-      "SELECT column_name FROM information_schema.columns WHERE table_name = 'marks' AND column_name = 'subject'"
     );
-    if (subjectColumn.rows.length === 0) {
-      console.log('Adding subject column to marks table...');
-      await pool.query('ALTER TABLE marks ADD COLUMN subject VARCHAR(100)');
-      console.log('subject column added to marks table successfully');
-    } else {
-      console.log('subject column already exists in marks table');
-    }
-
-    // Check if unique constraint exists for class_id, sequence_id, and subject
-    const uniqueConstraint = await pool.query(`
-      SELECT constraint_name 
-      FROM information_schema.table_constraints 
-      WHERE table_name = 'marks' 
-      AND constraint_type = 'UNIQUE' 
-      AND constraint_name LIKE '%class_seq_subject%'
-    `);
-    if (uniqueConstraint.rows.length === 0) {
-      console.log('Adding unique constraint for class_id, sequence_id, and subject...');
-      await pool.query('ALTER TABLE marks ADD CONSTRAINT marks_class_seq_subject_unique UNIQUE (class_id, sequence_id, subject)');
-      console.log('Unique constraint added successfully');
-    } else {
-      console.log('Unique constraint already exists for class_id, sequence_id, and subject');
-    }
-
-    // Check and drop old unique constraint that only includes class_id and sequence_id
-    const oldUniqueConstraint = await pool.query(`
-      SELECT constraint_name 
-      FROM information_schema.table_constraints 
-      WHERE table_name = 'marks' 
-      AND constraint_type = 'UNIQUE' 
-      AND constraint_name = 'marks_class_id_sequence_id_key'
-    `);
-    if (oldUniqueConstraint.rows.length > 0) {
-      console.log('Dropping old unique constraint for class_id and sequence_id only...');
-      await pool.query('ALTER TABLE marks DROP CONSTRAINT marks_class_id_sequence_id_key');
-      console.log('Old unique constraint dropped successfully');
-    } else {
-      console.log('Old unique constraint does not exist');
     }
   } catch (error) {
     console.error('Error running migrations:', error);
     throw error;
   }
 }
-
 // Add this before startServer
 const initializeDatabase = async () => {
   try {
@@ -1781,7 +1620,6 @@ const initializeDatabase = async () => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-      
       -- Timetables
       CREATE TABLE IF NOT EXISTS timetables (
           id SERIAL PRIMARY KEY,
@@ -1790,7 +1628,6 @@ const initializeDatabase = async () => {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-
       -- Timetable Settings
       CREATE TABLE IF NOT EXISTS timetable_settings (
           id SERIAL PRIMARY KEY,
@@ -1807,7 +1644,6 @@ const initializeDatabase = async () => {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-
       -- Teacher Subject Class Assignments
       CREATE TABLE IF NOT EXISTS teacher_assignments (
           id SERIAL PRIMARY KEY,
@@ -1819,7 +1655,6 @@ const initializeDatabase = async () => {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           UNIQUE(teacher_id, class_id, subject_id)
       );
-
       -- Timetable Generation Sessions
       CREATE TABLE IF NOT EXISTS timetable_sessions (
           id SERIAL PRIMARY KEY,
@@ -1833,7 +1668,6 @@ const initializeDatabase = async () => {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           completed_at TIMESTAMP
       );
-
       -- Salary Descriptions for Pay Slips
       CREATE TABLE IF NOT EXISTS salary_descriptions (
           id SERIAL PRIMARY KEY,
@@ -1850,7 +1684,6 @@ const initializeDatabase = async () => {
     return false;
   }
 };
-
 console.log('--- server.js loaded ---');
 const startServer = async () => {
   try {
@@ -1872,7 +1705,6 @@ const startServer = async () => {
         // No process was found on port 5000, which is fine
       }
     }
-
     console.log('Connecting to database...');
     await pool.connect();
     console.log('Connected to database');
@@ -1903,11 +1735,8 @@ const startServer = async () => {
     process.exit(1);
   }
 };
-
 startServer();
-
 // === Specialties endpoints ===
-
 // Create a new specialty
 app.post('/api/specialties', async (req, res) => {
   const { name, abbreviation } = req.body;
@@ -1925,7 +1754,6 @@ app.post('/api/specialties', async (req, res) => {
     res.status(500).json({ error: 'Error creating specialty' });
   }
 });
-
 // Get all specialties (with assigned class_ids)
 app.get('/api/specialties', async (req, res) => {
   try {
@@ -1952,7 +1780,6 @@ app.get('/api/specialties', async (req, res) => {
     res.status(500).json({ error: 'Error fetching specialties' });
   }
 });
-
 // Update a specialty
 app.put('/api/specialties/:id', async (req, res) => {
   const { id } = req.params;
@@ -1974,7 +1801,6 @@ app.put('/api/specialties/:id', async (req, res) => {
     res.status(500).json({ error: 'Error updating specialty' });
   }
 });
-
 // Delete a specialty
 app.delete('/api/specialties/:id', async (req, res) => {
   const { id } = req.params;
@@ -1989,9 +1815,7 @@ app.delete('/api/specialties/:id', async (req, res) => {
     res.status(500).json({ error: 'Error deleting specialty' });
   }
 });
-
 // === Specialty-Class assignment endpoints ===
-
 // Assign one or more classes to a specialty
 app.post('/api/specialties/:specialty_id/classes', async (req, res) => {
   const { specialty_id } = req.params;
@@ -2019,7 +1843,6 @@ app.post('/api/specialties/:specialty_id/classes', async (req, res) => {
     res.status(500).json({ error: 'Error assigning classes to specialty' });
   }
 });
-
 // List all classes assigned to a specialty
 app.get('/api/specialties/:specialty_id/classes', async (req, res) => {
   const { specialty_id } = req.params;
@@ -2037,7 +1860,6 @@ app.get('/api/specialties/:specialty_id/classes', async (req, res) => {
     res.status(500).json({ error: 'Error fetching classes for specialty' });
   }
 });
-
 // Remove a class from a specialty
 app.delete('/api/specialties/:specialty_id/classes/:class_id', async (req, res) => {
   const { specialty_id, class_id } = req.params;
@@ -2055,7 +1877,6 @@ app.delete('/api/specialties/:specialty_id/classes/:class_id', async (req, res) 
     res.status(500).json({ error: 'Error removing class from specialty' });
   }
 });
-
 // Assign classes to a specialty
 app.put('/api/specialties/:id/classes', async (req, res) => {
   const specialtyId = req.params.id;
@@ -2076,7 +1897,6 @@ app.put('/api/specialties/:id/classes', async (req, res) => {
     res.status(500).json({ error: 'Error assigning classes to specialty', details: error.message });
   }
 });
-
 // Get assigned classes for a specialty
 app.get('/api/specialties/:id/classes', async (req, res) => {
   const specialtyId = req.params.id;
@@ -2089,7 +1909,6 @@ app.get('/api/specialties/:id/classes', async (req, res) => {
     res.status(500).json({ error: 'Error fetching assigned classes for specialty', details: error.message });
   }
 });
-
 // Serve student image from DB
 app.get('/api/students/:id/picture', async (req, res) => {
   const studentId = req.params.id;
@@ -2099,9 +1918,7 @@ app.get('/api/students/:id/picture', async (req, res) => {
       console.warn(`[IMAGE] No student found for ID: ${studentId}`);
       return res.status(404).send('No student found');
     }
-    
     const student = result.rows[0];
-    
     // First try photo_url (new schema)
     if (student.photo_url) {
       console.log(`[IMAGE] Serving photo_url for student ID: ${studentId}`);
@@ -2117,14 +1934,12 @@ app.get('/api/students/:id/picture', async (req, res) => {
         return res.sendFile(filePath);
       }
     }
-    
     // Fallback to student_picture (old schema - BYTEA)
     if (student.student_picture) {
       console.log(`[IMAGE] Serving student_picture for student ID: ${studentId}`);
       res.set('Content-Type', 'image/jpeg');
       return res.send(student.student_picture);
     }
-    
     console.warn(`[IMAGE] No image found for student ID: ${studentId}`);
     return res.status(404).send('No image');
   } catch (error) {
@@ -2132,7 +1947,6 @@ app.get('/api/students/:id/picture', async (req, res) => {
     res.status(500).send('Error retrieving image');
   }
 });
-
 // Check user by username and phone number
 app.post('/api/check-user-details', async (req, res) => {
   const { username, contact } = req.body;
@@ -2151,7 +1965,6 @@ app.post('/api/check-user-details', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-
 // User management endpoints for Admin3
 app.get('/api/users/all', authenticateToken, async (req, res) => {
   if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
@@ -2162,7 +1975,6 @@ app.get('/api/users/all', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
-
 app.put('/api/users/:id', authenticateToken, async (req, res) => {
   if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
   const { id } = req.params;
@@ -2185,7 +1997,6 @@ app.put('/api/users/:id', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to update user' });
   }
 });
-
 app.delete('/api/users/:id', authenticateToken, async (req, res) => {
   if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
   const { id } = req.params;
@@ -2204,7 +2015,6 @@ app.delete('/api/users/:id', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to delete user' });
   }
 });
-
 app.post('/api/users/:id/suspend', authenticateToken, async (req, res) => {
   if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
   const { id } = req.params;
@@ -2217,7 +2027,6 @@ app.post('/api/users/:id/suspend', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to suspend user' });
   }
 });
-
 // Chat endpoints
 app.get('/api/users/all-chat', authenticateToken, async (req, res) => {
   try {
@@ -2232,7 +2041,6 @@ app.get('/api/users/all-chat', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch users for chat' });
   }
 });
-
 app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
   try {
     // First get all users except current user
@@ -2240,47 +2048,42 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
       'SELECT id, name, username, role, contact FROM users WHERE id != $1 AND suspended = false ORDER BY name',
       [req.user.id]
     );
-    
     // Then get the last message for each conversation
     const lastMessagesResult = await pool.query(`
-      SELECT 
-        CASE 
-          WHEN sender_id = $1 THEN receiver_id 
-          ELSE sender_id 
+      SELECT
+        CASE
+          WHEN sender_id = $1 THEN receiver_id
+          ELSE sender_id
         END as other_user_id,
         content as last_message,
         created_at as last_message_time,
         sender_id
-      FROM messages 
+      FROM messages
       WHERE sender_id = $1 OR receiver_id = $1
       ORDER BY created_at DESC
     `, [req.user.id]);
-    
     // Get unread message counts for individual chats
     const unreadCountsResult = await pool.query(`
-      SELECT 
+      SELECT
         sender_id,
         COUNT(*) as unread_count
-      FROM messages 
+      FROM messages
       WHERE receiver_id = $1 AND sender_id != $1 AND read = false
       GROUP BY sender_id
     `, [req.user.id]);
-    
     // Create a map of unread counts by user
     const unreadCountsMap = {};
     unreadCountsResult.rows.forEach(row => {
       unreadCountsMap[row.sender_id] = parseInt(row.unread_count);
     });
-    
     // Create a map of last messages by user
     const lastMessagesMap = {};
     lastMessagesResult.rows.forEach(msg => {
-      if (!lastMessagesMap[msg.other_user_id] || 
+      if (!lastMessagesMap[msg.other_user_id] ||
           new Date(msg.last_message_time) > new Date(lastMessagesMap[msg.other_user_id].last_message_time)) {
         lastMessagesMap[msg.other_user_id] = msg;
       }
     });
-    
     // Combine user data with last message data
     const userChatList = usersResult.rows.map(user => ({
       id: user.id,
@@ -2296,7 +2099,6 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
       unread: unreadCountsMap[user.id] || 0,
       type: 'user'
     }));
-
     // Get groups that the current user is a member of
     const groupsResult = await pool.query(`
       SELECT g.*, u.username as creator_name
@@ -2307,48 +2109,43 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
       )
       ORDER BY g.created_at DESC
     `, [req.user.id]);
-
     // Get last message for each group
     const groupMessagesResult = await pool.query(`
-      SELECT 
+      SELECT
         group_id,
         content as last_message,
         created_at as last_message_time,
         sender_id
-      FROM messages 
+      FROM messages
       WHERE group_id IN (
         SELECT group_id FROM group_participants WHERE user_id = $1
       )
       ORDER BY created_at DESC
     `, [req.user.id]);
-
     // Get unread message counts for group chats
     const groupUnreadCountsResult = await pool.query(`
-      SELECT 
+      SELECT
         group_id,
         COUNT(*) as unread_count
-      FROM messages 
+      FROM messages
       WHERE group_id IN (
         SELECT group_id FROM group_participants WHERE user_id = $1
       ) AND sender_id != $1 AND read = false
       GROUP BY group_id
     `, [req.user.id]);
-    
     // Create a map of unread counts by group
     const groupUnreadCountsMap = {};
     groupUnreadCountsResult.rows.forEach(row => {
       groupUnreadCountsMap[row.group_id] = parseInt(row.unread_count);
     });
-
     // Create a map of last messages by group
     const groupMessagesMap = {};
     groupMessagesResult.rows.forEach(msg => {
-      if (!groupMessagesMap[msg.group_id] || 
+      if (!groupMessagesMap[msg.group_id] ||
           new Date(msg.last_message_time) > new Date(groupMessagesMap[msg.group_id].last_message_time)) {
         groupMessagesMap[msg.group_id] = msg;
       }
     });
-
     // Combine group data with last message data
     const groupChatList = groupsResult.rows.map(group => ({
       id: group.id,
@@ -2363,10 +2160,8 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
       unread: groupUnreadCountsMap[group.id] || 0,
       type: 'group'
     }));
-
     // Combine user and group chats
     const allChats = [...userChatList, ...groupChatList];
-    
     // Sort by last message time (most recent first), then by name
     allChats.sort((a, b) => {
       if (!a.lastMessage?.time && !b.lastMessage?.time) {
@@ -2379,14 +2174,12 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
       if (!b.lastMessage?.time) return -1;
       return new Date(b.lastMessage.time) - new Date(a.lastMessage.time);
     });
-    
     res.json(allChats);
   } catch (error) {
     console.error('Error fetching chat list:', error);
     res.status(500).json({ error: 'Failed to fetch chat list' });
   }
 });
-
 // Student registration endpoint
 app.post('/api/students', upload.single('photo'), async (req, res) => {
   console.log('BODY:', req.body);
@@ -2396,18 +2189,15 @@ app.post('/api/students', upload.single('photo'), async (req, res) => {
       studentId, regDate, fullName, sex, dob, pob,
       father, mother, class: className, dept: specialtyName, contact
     } = req.body;
-
     // Validate required fields
     if (!studentId || !regDate || !fullName || !sex || !dob || !pob || !className || !specialtyName || !contact) {
       return res.status(400).json({ error: 'All fields except photo are required.' });
     }
-
     // Find class_id and specialty_id
     const classResult = await pool.query('SELECT id FROM classes WHERE name = $1', [className]);
     const specialtyResult = await pool.query('SELECT id FROM specialties WHERE name = $1', [specialtyName]);
     const class_id = classResult.rows[0] ? classResult.rows[0].id : null;
     const specialty_id = specialtyResult.rows[0] ? specialtyResult.rows[0].id : null;
-
     // Handle photo upload
     let photo_url = null;
     if (req.file) {
@@ -2430,7 +2220,6 @@ app.post('/api/students', upload.single('photo'), async (req, res) => {
         console.log('Photo saved locally as fallback:', photo_url);
       }
     }
-
     // Insert student into DB
     const insertResult = await pool.query(
       `INSERT INTO students (student_id, registration_date, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, class_id, specialty_id, guardian_contact, photo_url)
@@ -2444,7 +2233,6 @@ app.post('/api/students', upload.single('photo'), async (req, res) => {
     res.status(500).json({ error: 'Failed to register student', details: error.message });
   }
 });
-
 // GET /api/students - List all students with class/specialty names
 app.get('/api/students', async (req, res) => {
   try {
@@ -2460,7 +2248,6 @@ app.get('/api/students', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch students' });
   }
 });
-
 // Add Multer error handler at the end, before app.listen or module.exports
 app.use(function (err, req, res, next) {
   if (err instanceof require('multer').MulterError) {
@@ -2468,7 +2255,6 @@ app.use(function (err, req, res, next) {
   }
   next(err);
 });
-
 // Permanently delete a student by id
 app.delete('/api/students/:id', async (req, res) => {
   const { id } = req.params;
@@ -2483,9 +2269,7 @@ app.delete('/api/students/:id', async (req, res) => {
     res.status(500).json({ error: 'Failed to delete student' });
   }
 });
-
 const uploadMany = multer({ storage: storage });
-
 // Helper to parse Excel serial date or string to yyyy-mm-dd
 function parseExcelDate(excelDate) {
   if (!excelDate) return null;
@@ -2503,7 +2287,6 @@ function parseExcelDate(excelDate) {
   if (!isNaN(d)) return d.toISOString().slice(0, 10);
   return null;
 }
-
 // Bulk student registration from Excel (Upload Many)
 app.post('/api/students/upload-many', uploadMany.single('file'), async (req, res) => {
   try {
@@ -2554,7 +2337,6 @@ app.post('/api/students/upload-many', uploadMany.single('file'), async (req, res
     res.status(500).json({ error: 'Error uploading students from Excel', details: error.message });
   }
 });
-
 // === MESSAGES ENDPOINTS ===
 // Send a message
 app.post('/api/messages', authenticateToken, async (req, res) => {
@@ -2574,39 +2356,32 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to send message' });
   }
 });
-
 // Send a message with file attachment
 app.post('/api/messages/with-file', authenticateToken, upload.single('file'), async (req, res) => {
   const sender_id = req.user.id;
   const { receiver_id, content } = req.body;
   const file = req.file;
-  
   if (!receiver_id || (!content && !file)) {
     return res.status(400).json({ error: 'receiver_id and either content or file are required' });
   }
-
   try {
     let fileUrl = null;
     let fileName = null;
     let fileType = null;
-
     if (file) {
       // Validate file type
       const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'application/pdf'];
       if (!allowedTypes.includes(file.mimetype)) {
         return res.status(400).json({ error: 'Only images (JPEG, PNG, GIF) and PDF files are allowed' });
       }
-
       // Validate file size (5MB limit)
       if (file.size > 5 * 1024 * 1024) {
         return res.status(400).json({ error: 'File size must be less than 5MB' });
       }
-
       // Generate unique filename
       const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
       const fileExtension = path.extname(file.originalname);
       fileName = `message_${uniqueSuffix}${fileExtension}`;
-      
       // Upload file to FTP
       try {
         fileUrl = await ftpService.uploadBuffer(file.buffer, fileName);
@@ -2619,10 +2394,8 @@ app.post('/api/messages/with-file', authenticateToken, upload.single('file'), as
         fs.writeFileSync(uploadPath, file.buffer);
         fileUrl = `/uploads/${fileName}`;
       }
-      
       fileType = file.mimetype;
     }
-
     const result = await pool.query(
       'INSERT INTO messages (sender_id, receiver_id, content, file_url, file_name, file_type) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
       [sender_id, receiver_id, content || '', fileUrl, fileName, fileType]
@@ -2633,20 +2406,19 @@ app.post('/api/messages/with-file', authenticateToken, upload.single('file'), as
     res.status(500).json({ error: 'Failed to send message' });
   }
 });
-
 // Get all messages between logged-in user and another user
 app.get('/api/messages/:userId', authenticateToken, async (req, res) => {
   const user1 = req.user.id;
   const user2 = parseInt(req.params.userId);
   try {
     const result = await pool.query(
-      `SELECT m.*, 
+      `SELECT m.*,
                u1.username as sender_username, u1.name as sender_name,
                u2.username as receiver_username, u2.name as receiver_name
         FROM messages m
         JOIN users u1 ON m.sender_id = u1.id
         JOIN users u2 ON m.receiver_id = u2.id
-        WHERE (m.sender_id = $1 AND m.receiver_id = $2) 
+        WHERE (m.sender_id = $1 AND m.receiver_id = $2)
            OR (m.sender_id = $2 AND m.receiver_id = $1)
         ORDER BY m.created_at ASC`,
       [user1, user2]
@@ -2657,7 +2429,6 @@ app.get('/api/messages/:userId', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch messages' });
   }
 });
-
 // Mark messages as read
 app.post('/api/messages/:userId/read', authenticateToken, async (req, res) => {
   const user1 = req.user.id;
@@ -2665,11 +2436,10 @@ app.post('/api/messages/:userId/read', authenticateToken, async (req, res) => {
   try {
     // Check if 'read' column exists, if not, skip this operation
     const columnCheck = await pool.query(`
-      SELECT column_name 
-      FROM information_schema.columns 
+      SELECT column_name
+      FROM information_schema.columns
       WHERE table_name = 'messages' AND column_name = 'read'
     `);
-    
     if (columnCheck.rows.length > 0) {
       await pool.query(
         'UPDATE messages SET read = TRUE WHERE sender_id = $1 AND receiver_id = $2 AND read = FALSE',
@@ -2682,9 +2452,7 @@ app.post('/api/messages/:userId/read', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to mark messages as read' });
   }
 });
-
 // === SUBJECTS ENDPOINTS ===
-
 // Get all subjects
 app.get('/api/subjects', authenticateToken, async (req, res) => {
   try {
@@ -2695,15 +2463,12 @@ app.get('/api/subjects', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch subjects' });
   }
 });
-
 // Create a new subject
 app.post('/api/subjects', authenticateToken, async (req, res) => {
   const { name, code, description, credits, department } = req.body;
-  
   if (!name) {
     return res.status(400).json({ error: 'Subject name is required' });
   }
-  
   try {
     const result = await pool.query(
       'INSERT INTO subjects (name, code, description, credits, department) VALUES ($1, $2, $3, $4, $5) RETURNING *',
@@ -2719,26 +2484,21 @@ app.post('/api/subjects', authenticateToken, async (req, res) => {
     }
   }
 });
-
 // Update a subject
 app.put('/api/subjects/:id', authenticateToken, async (req, res) => {
   const id = parseInt(req.params.id);
   const { name, code, description, credits, department } = req.body;
-  
   if (!name) {
     return res.status(400).json({ error: 'Subject name is required' });
   }
-  
   try {
     const result = await pool.query(
       'UPDATE subjects SET name = $1, code = $2, description = $3, credits = $4, department = $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6 RETURNING *',
       [name, code || null, description || null, credits || 0, department || null, id]
     );
-    
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Subject not found' });
     }
-    
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating subject:', error);
@@ -2749,41 +2509,34 @@ app.put('/api/subjects/:id', authenticateToken, async (req, res) => {
     }
   }
 });
-
 // Delete a subject
 app.delete('/api/subjects/:id', authenticateToken, async (req, res) => {
   const id = parseInt(req.params.id);
-  
   try {
     const result = await pool.query('DELETE FROM subjects WHERE id = $1 RETURNING *', [id]);
-    
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Subject not found' });
     }
-    
     res.json({ message: 'Subject deleted successfully' });
   } catch (error) {
     console.error('Error deleting subject:', error);
     res.status(500).json({ error: 'Failed to delete subject' });
   }
 });
-
 // === SUBJECT CLASSIFICATION AND COEFFICIENT MANAGEMENT ===
-
 // Get subject classifications for all classes
 app.get('/api/subject-classifications', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT 
+      SELECT
         class_id,
         subject_id,
         classification_type,
         created_at,
         updated_at
-      FROM subject_classifications 
+      FROM subject_classifications
       ORDER BY class_id, subject_id
     `);
-    
     // Group by class_id for easier frontend consumption
     const classifications = {};
     result.rows.forEach(row => {
@@ -2792,32 +2545,25 @@ app.get('/api/subject-classifications', authenticateToken, async (req, res) => {
       }
       classifications[row.class_id][row.subject_id] = row.classification_type;
     });
-    
     res.json(classifications);
   } catch (error) {
     console.error('Error fetching subject classifications:', error);
     res.status(500).json({ error: 'Failed to fetch subject classifications' });
   }
 });
-
 // Save subject classifications for a class
 app.post('/api/subject-classifications', authenticateToken, async (req, res) => {
   const { classId, classifications } = req.body;
-  
   if (!classId || !classifications) {
     return res.status(400).json({ error: 'Class ID and classifications are required' });
   }
-  
   try {
     // Start a transaction
     const client = await pool.connect();
-    
     try {
       await client.query('BEGIN');
-      
       // Delete existing classifications for this class
       await client.query('DELETE FROM subject_classifications WHERE class_id = $1', [classId]);
-      
       // Insert new classifications
       for (const [subjectId, classificationType] of Object.entries(classifications)) {
         if (classificationType) {
@@ -2827,7 +2573,6 @@ app.post('/api/subject-classifications', authenticateToken, async (req, res) => 
           );
         }
       }
-      
       await client.query('COMMIT');
       res.json({ message: 'Subject classifications saved successfully' });
     } catch (error) {
@@ -2841,21 +2586,19 @@ app.post('/api/subject-classifications', authenticateToken, async (req, res) => 
     res.status(500).json({ error: 'Failed to save subject classifications' });
   }
 });
-
 // Get subject coefficients for all classes
 app.get('/api/subject-coefficients', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT 
+      SELECT
         class_id,
         subject_id,
         coefficient,
         created_at,
         updated_at
-      FROM subject_coefficients 
+      FROM subject_coefficients
       ORDER BY class_id, subject_id
     `);
-    
     // Group by class_id for easier frontend consumption
     const coefficients = {};
     result.rows.forEach(row => {
@@ -2864,32 +2607,25 @@ app.get('/api/subject-coefficients', authenticateToken, async (req, res) => {
       }
       coefficients[row.class_id][row.subject_id] = row.coefficient;
     });
-    
     res.json(coefficients);
   } catch (error) {
     console.error('Error fetching subject coefficients:', error);
     res.status(500).json({ error: 'Failed to fetch subject coefficients' });
   }
 });
-
 // Save subject coefficients for a class
 app.post('/api/subject-coefficients', authenticateToken, async (req, res) => {
   const { classId, coefficients } = req.body;
-  
   if (!classId || !coefficients) {
     return res.status(400).json({ error: 'Class ID and coefficients are required' });
   }
-  
   try {
     // Start a transaction
     const client = await pool.connect();
-    
     try {
       await client.query('BEGIN');
-      
       // Delete existing coefficients for this class
       await client.query('DELETE FROM subject_coefficients WHERE class_id = $1', [classId]);
-      
       // Insert new coefficients
       for (const [subjectId, coefficient] of Object.entries(coefficients)) {
         if (coefficient && coefficient > 0) {
@@ -2899,7 +2635,6 @@ app.post('/api/subject-coefficients', authenticateToken, async (req, res) => {
           );
         }
       }
-      
       await client.query('COMMIT');
       res.json({ message: 'Subject coefficients saved successfully' });
     } catch (error) {
@@ -2913,23 +2648,18 @@ app.post('/api/subject-coefficients', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to save subject coefficients' });
   }
 });
-
 // === INVENTORY ENDPOINTS ===
-
 // Get inventory items with type filter
 app.get('/api/inventory', authenticateToken, async (req, res) => {
   try {
     const { type } = req.query;
     let query = 'SELECT * FROM inventory';
     let params = [];
-    
     if (type) {
       query += ' WHERE type = $1';
       params.push(type);
     }
-    
     query += ' ORDER BY created_at DESC';
-    
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (error) {
@@ -2937,100 +2667,79 @@ app.get('/api/inventory', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch inventory' });
   }
 });
-
 // Register new inventory item
 app.post('/api/inventory', authenticateToken, async (req, res) => {
   try {
     const { date, item_name, department, quantity, estimated_cost, type, depreciation_rate } = req.body;
-    
     if (!date || !item_name || !department || !quantity || !estimated_cost || !type) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
-    
     const result = await pool.query(
       `INSERT INTO inventory (date, item_name, department, quantity, estimated_cost, type, depreciation_rate)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
       [date, item_name, department, quantity, estimated_cost, type, depreciation_rate || null]
     );
-    
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error registering inventory item:', error);
     res.status(500).json({ error: 'Failed to register inventory item' });
   }
 });
-
 // Update inventory item
 app.put('/api/inventory/:id', authenticateToken, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { date, item_name, department, quantity, estimated_cost, type, depreciation_rate } = req.body;
-    
     const result = await pool.query(
-      `UPDATE inventory SET 
-        date = $1, item_name = $2, department = $3, quantity = $4, 
+      `UPDATE inventory SET
+        date = $1, item_name = $2, department = $3, quantity = $4,
         estimated_cost = $5, type = $6, depreciation_rate = $7, updated_at = CURRENT_TIMESTAMP
        WHERE id = $8 RETURNING *`,
       [date, item_name, department, quantity, estimated_cost, type, depreciation_rate || null, id]
     );
-    
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Inventory item not found' });
     }
-    
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating inventory item:', error);
     res.status(500).json({ error: 'Failed to update inventory item' });
   }
 });
-
 // Delete inventory item
 app.delete('/api/inventory/:id', authenticateToken, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    
     const result = await pool.query('DELETE FROM inventory WHERE id = $1 RETURNING *', [id]);
-    
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Inventory item not found' });
     }
-    
     res.json({ message: 'Inventory item deleted successfully' });
   } catch (error) {
     console.error('Error deleting inventory item:', error);
     res.status(500).json({ error: 'Failed to delete inventory item' });
   }
 });
-
 // === DEPARTMENTS ENDPOINTS ===
-
 // Get all departments
 app.get('/api/departments', authenticateToken, async (req, res) => {
   try {
     // Get departments from specialties table (since that's where departments are stored)
     const result = await pool.query('SELECT DISTINCT name as department FROM specialties ORDER BY name');
-    
     // Also include any departments from inventory table
     const inventoryDepartments = await pool.query('SELECT DISTINCT department FROM inventory WHERE department IS NOT NULL ORDER BY department');
-    
     // Combine and deduplicate departments
     const allDepartments = new Set();
-    
     result.rows.forEach(row => allDepartments.add(row.department));
     inventoryDepartments.rows.forEach(row => allDepartments.add(row.department));
-    
     const departments = Array.from(allDepartments).sort();
-    
     res.json(departments.map(dept => ({ name: dept })));
   } catch (error) {
     console.error('Error fetching departments:', error);
     res.status(500).json({ error: 'Failed to fetch departments' });
   }
 });
-
 // ===== TEACHER APPLICATION ENDPOINTS =====
-
 // Submit teacher application
 app.post('/api/teacher-application', authenticateToken, upload.fields([
   { name: 'certificate', maxCount: 1 },
@@ -3042,23 +2751,18 @@ app.post('/api/teacher-application', authenticateToken, upload.fields([
     console.log('User ID:', req.user.id);
     console.log('Request body:', req.body);
     console.log('Request files:', req.files ? Object.keys(req.files) : 'No files');
-    
     const userId = req.user.id;
     const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
-    
     // Validate required fields
     if (!full_name || !sex || !id_card || !dob || !pob || !subjects || !classes || !contact) {
       console.log('Missing required fields:', { full_name, sex, id_card, dob, pob, subjects, classes, contact });
       return res.status(400).json({ error: 'All fields are required' });
     }
-    
     console.log('All required fields present');
-    
     // Upload files to FTP and get URLs
     let certificate_url = null;
     let cv_url = null;
     let photo_url = null;
-
     if (req.files && req.files.certificate && req.files.certificate[0]) {
       console.log('Processing certificate file:', req.files.certificate[0].originalname);
       try {
@@ -3079,7 +2783,6 @@ app.post('/api/teacher-application', authenticateToken, upload.fields([
         console.log('Certificate saved locally:', certificate_url);
       }
     }
-
     if (req.files && req.files.cv && req.files.cv[0]) {
       console.log('Processing CV file:', req.files.cv[0].originalname);
       try {
@@ -3100,7 +2803,6 @@ app.post('/api/teacher-application', authenticateToken, upload.fields([
         console.log('CV saved locally:', cv_url);
       }
     }
-
     if (req.files && req.files.photo && req.files.photo[0]) {
       console.log('Processing photo file:', req.files.photo[0].originalname);
       try {
@@ -3121,21 +2823,17 @@ app.post('/api/teacher-application', authenticateToken, upload.fields([
         console.log('Photo saved locally:', photo_url);
       }
     }
-
     console.log('File processing completed');
-
     // Check if teacher application already exists for this user
     console.log('Checking for existing teacher application');
     const existingResult = await pool.query(
       'SELECT * FROM teachers WHERE user_id = $1',
       [userId]
     );
-
     if (existingResult.rows.length > 0) {
       console.log('Teacher application already exists for user:', userId);
       return res.status(400).json({ error: 'Teacher application already exists for this user' });
     }
-
     console.log('Creating new teacher application');
     // Create new teacher application
     const result = await pool.query(
@@ -3143,7 +2841,6 @@ app.post('/api/teacher-application', authenticateToken, upload.fields([
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending') RETURNING *`,
       [userId, full_name, sex, id_card, dob, pob, subjects, classes, contact, certificate_url, cv_url, photo_url]
     );
-
     console.log('Teacher application created successfully:', result.rows[0].id);
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -3152,7 +2849,6 @@ app.post('/api/teacher-application', authenticateToken, upload.fields([
     res.status(500).json({ error: 'Failed to submit teacher application: ' + error.message });
   }
 });
-
 // Edit teacher application
 app.put('/api/teacher-application/:id', authenticateToken, upload.fields([
   { name: 'certificate', maxCount: 1 },
@@ -3163,17 +2859,14 @@ app.put('/api/teacher-application/:id', authenticateToken, upload.fields([
     const userId = req.user.id;
     const teacherId = parseInt(req.params.id);
     const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
-    
     // Validate required fields
     if (!full_name || !sex || !id_card || !dob || !pob || !subjects || !classes || !contact) {
       return res.status(400).json({ error: 'All fields are required' });
     }
-    
     // Upload files to FTP and get URLs
     let certificate_url = undefined;
     let cv_url = undefined;
     let photo_url = undefined;
-
     if (req.files && req.files.certificate && req.files.certificate[0]) {
       try {
         const filename = `certificate_${Date.now()}_${req.files.certificate[0].originalname}`;
@@ -3192,7 +2885,6 @@ app.put('/api/teacher-application/:id', authenticateToken, upload.fields([
         certificate_url = `/uploads/${filename}`;
       }
     }
-
     if (req.files && req.files.cv && req.files.cv[0]) {
       try {
         const filename = `cv_${Date.now()}_${req.files.cv[0].originalname}`;
@@ -3211,7 +2903,6 @@ app.put('/api/teacher-application/:id', authenticateToken, upload.fields([
         cv_url = `/uploads/${filename}`;
       }
     }
-
     if (req.files && req.files.photo && req.files.photo[0]) {
       try {
         const filename = `photo_${Date.now()}_${req.files.photo[0].originalname}`;
@@ -3230,104 +2921,84 @@ app.put('/api/teacher-application/:id', authenticateToken, upload.fields([
         photo_url = `/uploads/${filename}`;
       }
     }
-
     // Verify the teacher application belongs to the user
     const existingResult = await pool.query(
       'SELECT * FROM teachers WHERE id = $1 AND user_id = $2',
       [teacherId, userId]
     );
-
     if (existingResult.rows.length === 0) {
       return res.status(404).json({ error: 'Teacher application not found' });
     }
-
     // Build update query dynamically
     let updateFields = ['full_name = $1', 'sex = $2', 'id_card = $3', 'dob = $4', 'pob = $5', 'subjects = $6', 'classes = $7', 'contact = $8'];
     let updateValues = [full_name, sex, id_card, dob, pob, subjects, classes, contact];
     let paramIndex = 9;
-
     if (certificate_url !== undefined) {
       updateFields.push(`certificate_url = $${paramIndex}`);
       updateValues.push(certificate_url);
       paramIndex++;
     }
-
     if (cv_url !== undefined) {
       updateFields.push(`cv_url = $${paramIndex}`);
       updateValues.push(cv_url);
       paramIndex++;
     }
-
     if (photo_url !== undefined) {
       updateFields.push(`photo_url = $${paramIndex}`);
       updateValues.push(photo_url);
       paramIndex++;
     }
-
     updateValues.push(teacherId);
-
     const updateQuery = `UPDATE teachers SET ${updateFields.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
     const result = await pool.query(updateQuery, updateValues);
-
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating teacher application:', error);
     res.status(500).json({ error: 'Failed to update teacher application: ' + error.message });
   }
 });
-
 // Delete teacher application
 app.delete('/api/teacher-application/:id', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
     const teacherId = parseInt(req.params.id);
-
     // Verify the teacher application belongs to the user
     const existingResult = await pool.query(
       'SELECT * FROM teachers WHERE id = $1 AND user_id = $2',
       [teacherId, userId]
     );
-
     if (existingResult.rows.length === 0) {
       return res.status(404).json({ error: 'Teacher application not found' });
     }
-
     // Delete the teacher application
     await pool.query(
       'DELETE FROM teachers WHERE id = $1 AND user_id = $2',
       [teacherId, userId]
     );
-
     res.json({ message: 'Teacher application deleted successfully' });
   } catch (error) {
     console.error('Error deleting teacher application:', error);
     res.status(500).json({ error: 'Failed to delete teacher application' });
   }
 });
-
 // Get teacher application for current user
 app.get('/api/teacher-application', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-
     const result = await pool.query(
       'SELECT * FROM teachers WHERE user_id = $1',
       [userId]
     );
-
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'No teacher application found' });
     }
-
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error fetching teacher application:', error);
     res.status(500).json({ error: 'Failed to fetch teacher application' });
   }
 });
-
 // ===== END TEACHER APPLICATION ENDPOINTS =====
-
 // Error handling middleware for multer errors
 app.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
@@ -3347,7 +3018,6 @@ app.use((error, req, res, next) => {
   }
   next(error);
 });
-
 // Get departments for inventory
 app.get('/api/departments', authenticateToken, async (req, res) => {
   try {
@@ -3358,34 +3028,29 @@ app.get('/api/departments', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch departments' });
   }
 });
-
 // Get students by class
 app.get('/api/students/class/:classId', authenticateToken, async (req, res) => {
   try {
     const { classId } = req.params;
     console.log(`[DEBUG] Fetching students for class ID: ${classId}`);
-    
     // Validate class exists
     const classResult = await pool.query('SELECT * FROM classes WHERE id = $1', [classId]);
     if (classResult.rows.length === 0) {
       console.log(`[DEBUG] Class not found with ID: ${classId}`);
       return res.status(404).json({ error: 'Class not found' });
     }
-
     console.log(`[DEBUG] Class found: ${classResult.rows[0].name}`);
-
     // Get students for the class
     const result = await pool.query(`
-      SELECT 
+      SELECT
         id,
         full_name,
         student_id,
         class_id
-      FROM students 
-      WHERE class_id = $1 
+      FROM students
+      WHERE class_id = $1
       ORDER BY full_name
     `, [classId]);
-
     console.log(`[DEBUG] Found ${result.rows.length} students for class ${classId}`);
     res.json(result.rows);
   } catch (error) {
@@ -3393,7 +3058,6 @@ app.get('/api/students/class/:classId', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch students for class', details: error.message });
   }
 });
-
 // Test endpoint to check students table
 app.get('/api/students/test', authenticateToken, async (req, res) => {
   try {
@@ -3406,416 +3070,18 @@ app.get('/api/students/test', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Students table test failed', details: error.message });
   }
 });
-
-// Test endpoint to check marks table
-app.get('/api/marks/test', authenticateToken, async (req, res) => {
-  try {
-    console.log('[DEBUG] Testing marks table access');
-    const result = await pool.query('SELECT COUNT(*) as count FROM marks');
-    console.log(`[DEBUG] Marks table has ${result.rows[0].count} records`);
-    res.json({ message: 'Marks table accessible', count: result.rows[0].count });
-  } catch (error) {
-    console.error('Error testing marks table:', error);
-    res.status(500).json({ error: 'Marks table test failed', details: error.message });
-  }
-});
-
-// Test endpoint to check specific marks record
-app.get('/api/marks/test/:id', authenticateToken, async (req, res) => {
-  try {
-    const marksId = req.params.id;
-    console.log('[DEBUG] Testing marks record access for ID:', marksId);
-    
-    const result = await pool.query(`
-      SELECT 
-        m.*,
-        c.name as class_name,
-        u.username as uploaded_by_name
-      FROM marks m
-      JOIN classes c ON m.class_id = c.id
-      JOIN users u ON m.uploaded_by = u.id
-      WHERE m.id = $1
-    `, [marksId]);
-    
-    if (result.rows.length === 0) {
-      console.log('[DEBUG] Marks record not found:', marksId);
-      res.json({ message: 'Marks record not found', exists: false });
-    } else {
-      console.log('[DEBUG] Marks record found:', result.rows[0]);
-      res.json({ message: 'Marks record accessible', exists: true, data: result.rows[0] });
-    }
-  } catch (error) {
-    console.error('Error testing marks record:', error);
-    res.status(500).json({ error: 'Marks record test failed', details: error.message });
-  }
-});
-
-// === Marks Management API ===
-
-// Get all uploaded marks
-app.get('/api/marks', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT 
-        m.id,
-        m.class_id,
-        m.sequence_id,
-        m.subject,
-        m.file_url,
-        m.upload_date,
-        m.uploaded_by,
-        c.name as class_name,
-        CONCAT('Sequence ', m.sequence_id) as sequence_name,
-        u.username as uploaded_by_name
-      FROM marks m
-      JOIN classes c ON m.class_id = c.id
-      JOIN users u ON m.uploaded_by = u.id
-      ORDER BY m.upload_date DESC
-    `);
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching marks:', error);
-    res.status(500).json({ error: 'Failed to fetch marks' });
-  }
-});
-
-// Helper function to validate FTP URL
-const validateFtpUrl = (url) => {
-  if (!url) {
-    throw new Error('File URL is required');
-  }
-  if (url && url.startsWith('https://st60307.ispot.cc/votechs7academygroup/')) {
-    return url;
-  }
-  return url; // Return as is if not FTP URL
-};
-
-// Upload marks file
-app.post('/api/marks/upload', authenticateToken, excelUpload.single('marksFile'), async (req, res) => {
-  try {
-    console.log('[DEBUG] Marks upload request received');
-    const { classId, sequenceId, subject } = req.body;
-    const uploadedBy = req.user.id;
-    
-    console.log('[DEBUG] Request data:', { classId, sequenceId, subject, uploadedBy });
-    
-    if (!req.file) {
-      console.log('[DEBUG] No file uploaded');
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    console.log('[DEBUG] File received:', req.file.originalname, req.file.size, 'bytes');
-
-    if (!classId || !sequenceId || !subject) {
-      console.log('[DEBUG] Missing classId, sequenceId, or subject');
-      return res.status(400).json({ error: 'Class ID, Sequence ID, and Subject are required' });
-    }
-
-    // Validate class exists
-    const classResult = await pool.query('SELECT * FROM classes WHERE id = $1', [classId]);
-    if (classResult.rows.length === 0) {
-      console.log('[DEBUG] Class not found:', classId);
-      return res.status(400).json({ error: 'Class not found' });
-    }
-
-    console.log('[DEBUG] Class found:', classResult.rows[0].name);
-
-    // Validate sequence (1-6)
-    const sequence = parseInt(sequenceId);
-    if (sequence < 1 || sequence > 6) {
-      console.log('[DEBUG] Invalid sequence:', sequence);
-      return res.status(400).json({ error: 'Invalid sequence. Must be between 1 and 6' });
-    }
-
-    // Check if marks already exist for this class, sequence, and subject
-    const existingResult = await pool.query(
-      'SELECT * FROM marks WHERE class_id = $1 AND sequence_id = $2 AND subject = $3',
-      [classId, sequenceId, subject]
-    );
-
-    if (existingResult.rows.length > 0) {
-      console.log('[DEBUG] Marks already exist for this class, sequence, and subject');
-      return res.status(400).json({ error: 'Marks already exist for this class, sequence, and subject combination' });
-    }
-
-    console.log('[DEBUG] Processing Excel file...');
-
-    // Process the Excel file from memory
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
-    console.log('[DEBUG] Excel data rows:', data.length);
-
-    // Validate Excel format
-    if (data.length < 2) {
-      console.log('[DEBUG] Invalid Excel format - insufficient rows');
-      return res.status(400).json({ error: 'Invalid Excel file format' });
-    }
-
-    const headers = data[0];
-    console.log('[DEBUG] Excel headers:', headers);
-    
-    if (!headers || headers.length < 3 || 
-        headers[0] !== 'S/N' || 
-        headers[1] !== 'FULL NAMES' || 
-        headers[2] !== 'Marks/20') {
-      console.log('[DEBUG] Invalid Excel format - wrong headers');
-      return res.status(400).json({ error: 'Invalid Excel format. Expected columns: S/N, FULL NAMES, Marks/20' });
-    }
-
-    // Extract student data (skip header row)
-    const studentData = data.slice(1).filter(row => row[0] && row[1]); // Only rows with S/N and names
-    console.log('[DEBUG] Student data rows:', studentData.length);
-
-    // Upload file to FTP using buffer
-    let fileUrl = null;
-    try {
-      const ftpFileName = `marks_${classId}_${sequenceId}_${subject.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.xlsx`;
-      fileUrl = await ftpService.uploadBuffer(req.file.buffer, ftpFileName);
-      console.log('[DEBUG] File uploaded to FTP:', fileUrl);
-    } catch (ftpError) {
-      console.error('FTP upload failed:', ftpError);
-      // If FTP fails, we can't proceed since we don't have a local file
-      return res.status(500).json({ error: 'Failed to upload file to FTP server' });
-    }
-
-    console.log('[DEBUG] Saving to database...');
-
-    // Validate and save to database
-    const validatedFileUrl = validateFtpUrl(fileUrl);
-    console.log('[DEBUG] Saving file URL to database:', validatedFileUrl);
-    
-    const result = await pool.query(`
-      INSERT INTO marks (class_id, sequence_id, subject, file_url, uploaded_by, student_data)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING *
-    `, [classId, sequenceId, subject, validatedFileUrl, uploadedBy, JSON.stringify(studentData)]);
-
-    console.log('[DEBUG] Marks saved successfully, ID:', result.rows[0].id);
-
-    res.status(201).json({
-      message: 'Marks uploaded successfully',
-      marks: result.rows[0]
-    });
-
-  } catch (error) {
-    console.error('Error uploading marks:', error);
-    res.status(500).json({ error: 'Failed to upload marks: ' + error.message });
-  }
-});
-
-// Delete marks
-app.delete('/api/marks/:id', authenticateToken, async (req, res) => {
-  try {
-    const marksId = req.params.id;
-    const userId = req.user.id;
-    const userRole = req.user.role;
-
-    // Check if marks exist
-    const marksResult = await pool.query(
-      'SELECT * FROM marks WHERE id = $1',
-      [marksId]
-    );
-
-    if (marksResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Marks not found' });
-    }
-
-    const mark = marksResult.rows[0];
-
-    // Check if user has permission to delete (uploader or Admin3)
-    const canDelete = userRole === 'Admin3' || mark.uploaded_by === userId;
-    if (!canDelete) {
-      return res.status(403).json({ error: 'You do not have permission to delete these marks' });
-    }
-
-    // Delete marks
-    await pool.query('DELETE FROM marks WHERE id = $1', [marksId]);
-
-    res.json({ message: 'Marks deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting marks:', error);
-    res.status(500).json({ error: 'Failed to delete marks' });
-  }
-});
-
-// Update marks
-app.put('/api/marks/:id', authenticateToken, excelUpload.single('marksFile'), async (req, res) => {
-  try {
-    console.log('[DEBUG] Update marks request received');
-    const marksId = req.params.id;
-    const userId = req.user.id;
-    const userRole = req.user.role;
-
-    console.log('[DEBUG] Update request:', { marksId, userId, userRole });
-
-    // Check if marks exist
-    const marksResult = await pool.query(
-      'SELECT * FROM marks WHERE id = $1',
-      [marksId]
-    );
-
-    if (marksResult.rows.length === 0) {
-      console.log('[DEBUG] Marks not found:', marksId);
-      return res.status(404).json({ error: 'Marks not found' });
-    }
-
-    const mark = marksResult.rows[0];
-    console.log('[DEBUG] Found marks:', mark);
-
-    // Check if user has permission to edit (uploader or Admin3)
-    const canEdit = userRole === 'Admin3' || mark.uploaded_by === userId;
-    if (!canEdit) {
-      console.log('[DEBUG] Permission denied for user:', userId);
-      return res.status(403).json({ error: 'You do not have permission to edit these marks' });
-    }
-
-    if (!req.file) {
-      console.log('[DEBUG] No file uploaded for update');
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    console.log('[DEBUG] File received for update:', req.file.originalname, req.file.size, 'bytes');
-
-    // Process the Excel file from memory
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
-    console.log('[DEBUG] Excel data rows for update:', data.length);
-
-    // Validate Excel format
-    if (data.length < 2) {
-      console.log('[DEBUG] Invalid Excel format - insufficient rows');
-      return res.status(400).json({ error: 'Invalid Excel file format' });
-    }
-
-    const headers = data[0];
-    console.log('[DEBUG] Excel headers for update:', headers);
-    
-    if (!headers || headers.length < 3 || 
-        headers[0] !== 'S/N' || 
-        headers[1] !== 'FULL NAMES' || 
-        headers[2] !== 'Marks/20') {
-      console.log('[DEBUG] Invalid Excel format - wrong headers');
-      return res.status(400).json({ error: 'Invalid Excel format. Expected columns: S/N, FULL NAMES, Marks/20' });
-    }
-
-    // Extract student data (skip header row)
-    const studentData = data.slice(1).filter(row => row[0] && row[1]);
-    console.log('[DEBUG] Student data rows for update:', studentData.length);
-
-    // Upload file to FTP using buffer
-    let fileUrl = null;
-    try {
-      const ftpFileName = `marks_${mark.class_id}_${mark.sequence_id}_${mark.subject ? mark.subject.replace(/[^a-zA-Z0-9]/g, '_') : 'unknown'}_${Date.now()}.xlsx`;
-      fileUrl = await ftpService.uploadBuffer(req.file.buffer, ftpFileName);
-      console.log('[DEBUG] Updated file uploaded to FTP:', fileUrl);
-    } catch (ftpError) {
-      console.error('FTP upload failed:', ftpError);
-      // If FTP fails, we can't proceed since we don't have a local file
-      return res.status(500).json({ error: 'Failed to upload file to FTP server' });
-    }
-
-    console.log('[DEBUG] Updating database...');
-
-    // Validate and update marks
-    const validatedFileUrl = validateFtpUrl(fileUrl);
-    console.log('[DEBUG] Updating file URL in database:', validatedFileUrl);
-    
-    const result = await pool.query(`
-      UPDATE marks 
-      SET file_url = $1, student_data = $2, updated_at = NOW()
-      WHERE id = $3
-      RETURNING *
-    `, [validatedFileUrl, JSON.stringify(studentData), marksId]);
-
-    console.log('[DEBUG] Marks updated successfully, ID:', result.rows[0].id);
-
-    res.json({
-      message: 'Marks updated successfully',
-      marks: result.rows[0]
-    });
-
-  } catch (error) {
-    console.error('Error updating marks:', error);
-    res.status(500).json({ error: 'Failed to update marks: ' + error.message });
-  }
-});
-
-// Get marks by class and sequence
-app.get('/api/marks/:classId/:sequenceId', authenticateToken, async (req, res) => {
-  try {
-    const { classId, sequenceId } = req.params;
-
-    const result = await pool.query(`
-      SELECT 
-        m.*,
-        c.name as class_name,
-        CONCAT('Sequence ', m.sequence_id) as sequence_name,
-        u.username as uploaded_by_name
-      FROM marks m
-      JOIN classes c ON m.class_id = c.id
-      JOIN users u ON m.uploaded_by = u.id
-      WHERE m.class_id = $1 AND m.sequence_id = $2
-    `, [classId, sequenceId]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Marks not found' });
-    }
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error fetching marks:', error);
-    res.status(500).json({ error: 'Failed to fetch marks' });
-  }
-});
-
-// Get marks statistics
-app.get('/api/marks/statistics', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT 
-        COUNT(*) as total_marks,
-        COUNT(DISTINCT class_id) as classes_with_marks,
-        COUNT(DISTINCT uploaded_by) as users_uploaded
-      FROM marks
-    `);
-
-    const classResult = await pool.query('SELECT COUNT(*) as total_classes FROM classes');
-    
-    const stats = {
-      ...result.rows[0],
-      total_classes: parseInt(classResult.rows[0].total_classes),
-      classes_without_marks: parseInt(classResult.rows[0].total_classes) - parseInt(result.rows[0].classes_with_marks)
-    };
-
-    res.json(stats);
-  } catch (error) {
-    console.error('Error fetching marks statistics:', error);
-    res.status(500).json({ error: 'Failed to fetch marks statistics' });
-  }
-});
-
 // === Lesson Plans API ===
-
 // === Applications API ===
-
 // Get all applications (for all admins)
 app.get('/api/applications', authenticateToken, async (req, res) => {
   try {
     const authUser = req.user;
-    
     // All admin roles can view all applications
     if (!['Admin1', 'Admin2', 'Admin3', 'Admin4'].includes(authUser.role)) {
       return res.status(403).json({ error: 'Access denied. Only administrators can view all applications.' });
     }
-
     const result = await pool.query(`
-      SELECT 
+      SELECT
         a.*,
         u.username as applicant_username,
         u.name as applicant_full_name,
@@ -3824,75 +3090,61 @@ app.get('/api/applications', authenticateToken, async (req, res) => {
       JOIN users u ON a.applicant_id = u.id
       ORDER BY a.submitted_at DESC
     `);
-
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching applications:', error);
     res.status(500).json({ error: 'Failed to fetch applications' });
   }
 });
-
 // Get user's own application
 app.get('/api/applications/user/:userId', authenticateToken, async (req, res) => {
   try {
     const { userId } = req.params;
     const authUser = req.user;
-
     // Users can only view their own application
     if (authUser.id !== parseInt(userId) && authUser.role !== 'Admin1' && authUser.role !== 'Admin4') {
       return res.status(403).json({ error: 'Access denied' });
     }
-
     const result = await pool.query(`
-      SELECT * FROM applications 
+      SELECT * FROM applications
       WHERE applicant_id = $1
     `, [userId]);
-
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Application not found' });
     }
-
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error fetching user application:', error);
     res.status(500).json({ error: 'Failed to fetch application' });
   }
 });
-
 // Get user assigned data (classes and subjects)
 app.get('/api/user/assigned-data/:userId', authenticateToken, async (req, res) => {
   try {
     const { userId } = req.params;
     const authUser = req.user;
-
     // Users can only view their own assigned data or Admin1/Admin4 can view any user's data
     if (authUser.id !== parseInt(userId) && authUser.role !== 'Admin1' && authUser.role !== 'Admin4') {
       return res.status(403).json({ error: 'Access denied' });
     }
-
     // Get user's application to see assigned classes and subjects
     const applicationResult = await pool.query(`
-      SELECT classes, subjects FROM applications 
+      SELECT classes, subjects FROM applications
       WHERE applicant_id = $1 AND status = 'approved'
     `, [userId]);
-
     let assignedClasses = [];
     let assignedSubjects = [];
-
     if (applicationResult.rows.length > 0) {
       const application = applicationResult.rows[0];
-      
       // Parse assigned classes
       if (application.classes) {
         assignedClasses = application.classes.split(',').map(c => c.trim()).filter(c => c);
       }
-      
       // Parse assigned subjects
       if (application.subjects) {
         assignedSubjects = application.subjects.split(',').map(s => s.trim()).filter(s => s);
       }
     }
-
     res.json({
       assignedClasses,
       assignedSubjects
@@ -3902,42 +3154,32 @@ app.get('/api/user/assigned-data/:userId', authenticateToken, async (req, res) =
     res.status(500).json({ error: 'Failed to fetch assigned data' });
   }
 });
-
 // Submit new application
 app.post('/api/applications', authenticateToken, upload.single('certificate'), async (req, res) => {
   try {
     const authUser = req.user;
-    
     console.log('[DEBUG] Application submission - User:', authUser.username, 'Role:', authUser.role);
     console.log('[DEBUG] Request body:', req.body);
     console.log('[DEBUG] File:', req.file ? req.file.originalname : 'No file');
-    
     // Check if user already has an application
     const existingApp = await pool.query(`
       SELECT id FROM applications WHERE applicant_id = $1
     `, [authUser.id]);
-
     if (existingApp.rows.length > 0) {
       return res.status(400).json({ error: 'You have already submitted an application' });
     }
-
     const { applicant_name, classes, subjects, contact } = req.body;
-
     console.log('[DEBUG] Extracted data:', { applicant_name, classes, subjects, contact });
-
     // Validate required fields
     if (!applicant_name || !subjects || !contact) {
       return res.status(400).json({ error: 'Name, subjects, and contact are required fields' });
     }
-
     // For non-Admin4 users, classes can be empty as they will be assigned by Admin4
     if (authUser.role === 'Admin4' && !classes) {
       return res.status(400).json({ error: 'Classes must be selected for Admin4 users' });
     }
-
     let certificateUrl = null;
     let certificateName = null;
-
     // Handle file upload if provided
     if (req.file) {
       try {
@@ -3950,66 +3192,53 @@ app.post('/api/applications', authenticateToken, upload.single('certificate'), a
         return res.status(500).json({ error: 'Failed to upload certificate' });
       }
     }
-
     const result = await pool.query(`
       INSERT INTO applications (
-        applicant_id, applicant_name, classes, subjects, contact, 
+        applicant_id, applicant_name, classes, subjects, contact,
         certificate_url, certificate_name, status
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
       RETURNING *
     `, [authUser.id, applicant_name, classes, subjects, contact, certificateUrl, certificateName]);
-
     res.status(201).json({
       message: 'Application submitted successfully',
       application: result.rows[0]
     });
-
   } catch (error) {
     console.error('Error submitting application:', error);
     res.status(500).json({ error: 'Failed to submit application' });
   }
 });
-
 // Update application
 app.put('/api/applications/:id', authenticateToken, upload.single('certificate'), async (req, res) => {
   try {
     const { id } = req.params;
     const authUser = req.user;
     const { applicant_name, classes, subjects, contact } = req.body;
-
     // Get the application
     const appResult = await pool.query(`
       SELECT * FROM applications WHERE id = $1
     `, [id]);
-
     if (appResult.rows.length === 0) {
       return res.status(404).json({ error: 'Application not found' });
     }
-
     const application = appResult.rows[0];
-
     // Check permissions
-    const canEdit = authUser.role === 'Admin1' || 
-                   authUser.role === 'Admin4' || 
+    const canEdit = authUser.role === 'Admin1' ||
+                   authUser.role === 'Admin4' ||
                    (application.applicant_id === authUser.id && application.status === 'pending');
-
     if (!canEdit) {
       return res.status(403).json({ error: 'You cannot edit this application' });
     }
-
     // Validate required fields
     if (!applicant_name || !subjects || !contact) {
       return res.status(400).json({ error: 'Name, subjects, and contact are required fields' });
     }
-
     // For non-Admin4 users, classes can be empty as they will be assigned by Admin4
     if (authUser.role === 'Admin4' && !classes) {
       return res.status(400).json({ error: 'Classes must be selected for Admin4 users' });
     }
-
     let certificateUrl = application.certificate_url;
     let certificateName = application.certificate_name;
-
     // Handle file upload if provided
     if (req.file) {
       try {
@@ -4022,512 +3251,106 @@ app.put('/api/applications/:id', authenticateToken, upload.single('certificate')
         return res.status(500).json({ error: 'Failed to upload certificate' });
       }
     }
-
     const result = await pool.query(`
-      UPDATE applications 
+      UPDATE applications
       SET applicant_name = $1, classes = $2, subjects = $3, contact = $4,
           certificate_url = $5, certificate_name = $6
       WHERE id = $7
       RETURNING *
     `, [applicant_name, classes, subjects, contact, certificateUrl, certificateName, id]);
-
     res.json({
       message: 'Application updated successfully',
       application: result.rows[0]
     });
-
   } catch (error) {
     console.error('Error updating application:', error);
     res.status(500).json({ error: 'Failed to update application' });
   }
 });
-
 // Update application status (approve/reject)
 app.put('/api/applications/:id/status', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
     const authUser = req.user;
-
     // Only Admin1 and Admin4 can update status
     if (authUser.role !== 'Admin1' && authUser.role !== 'Admin4') {
       return res.status(403).json({ error: 'Access denied. Only administrators can update application status.' });
     }
-
     // Validate status
     if (!['pending', 'approved', 'rejected'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
     }
-
     const result = await pool.query(`
-      UPDATE applications 
+      UPDATE applications
       SET status = $1, reviewed_at = NOW(), reviewed_by = $2
       WHERE id = $3
       RETURNING *
     `, [status, authUser.id, id]);
-
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Application not found' });
     }
-
     res.json({
       message: 'Application status updated successfully',
       application: result.rows[0]
     });
-
   } catch (error) {
     console.error('Error updating application status:', error);
     res.status(500).json({ error: 'Failed to update application status' });
   }
 });
-
 // Delete application
 app.delete('/api/applications/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const authUser = req.user;
-
     // Get the application
     const appResult = await pool.query(`
       SELECT * FROM applications WHERE id = $1
     `, [id]);
-
     if (appResult.rows.length === 0) {
       return res.status(404).json({ error: 'Application not found' });
     }
-
     const application = appResult.rows[0];
-
     // Check permissions
-    const canDelete = authUser.role === 'Admin1' || 
-                     authUser.role === 'Admin4' || 
+    const canDelete = authUser.role === 'Admin1' ||
+                     authUser.role === 'Admin4' ||
                      (application.applicant_id === authUser.id && application.status === 'pending');
-
     if (!canDelete) {
       return res.status(403).json({ error: 'You cannot delete this application' });
     }
-
     await pool.query('DELETE FROM applications WHERE id = $1', [id]);
-
     res.json({ message: 'Application deleted successfully' });
-
   } catch (error) {
     console.error('Error deleting application:', error);
     res.status(500).json({ error: 'Failed to delete application' });
   }
 });
-
 // === End Applications API ===
-
 // Export pool for use in other modules
 module.exports = { pool };
-
-// Report Card Generation Endpoints
-app.post('/api/reports/generate', authenticateToken, async (req, res) => {
-  try {
-    const { classId, term } = req.body;
-    
-    // Get all students in the class
-    const studentsQuery = 'SELECT * FROM students WHERE class_id = $1 ORDER BY full_name';
-    const studentsResult = await pool.query(studentsQuery, [classId]);
-    const students = studentsResult.rows;
-
-    // Get uploaded marks for sequences 5 and 6
-    const marksQuery = `
-      SELECT m.*, c.name as class_name 
-      FROM marks m 
-      JOIN classes c ON m.class_id = c.id 
-      WHERE m.class_id = $1 AND m.sequence_id IN (5, 6)
-      ORDER BY m.sequence_id
-    `;
-    const marksResult = await pool.query(marksQuery, [classId]);
-    const uploadedMarks = marksResult.rows;
-
-    // Get subjects and their classifications/coefficients
-    const subjectsQuery = 'SELECT * FROM subjects ORDER BY name';
-    const subjectsResult = await pool.query(subjectsQuery);
-    const subjects = subjectsResult.rows;
-
-    // Get subject classifications for this class
-    const classificationsQuery = 'SELECT * FROM subject_classifications WHERE class_id = $1';
-    const classificationsResult = await pool.query(classificationsQuery, [classId]);
-    const classifications = {};
-    classificationsResult.rows.forEach(row => {
-      classifications[row.subject_id] = row.classification;
-    });
-
-    // Get subject coefficients for this class
-    const coefficientsQuery = 'SELECT * FROM subject_coefficients WHERE class_id = $1';
-    const coefficientsResult = await pool.query(coefficientsQuery, [classId]);
-    const coefficients = {};
-    coefficientsResult.rows.forEach(row => {
-      coefficients[row.subject_id] = row.coefficient;
-    });
-
-    // Get class information
-    const classQuery = 'SELECT * FROM classes WHERE id = $1';
-    const classResult = await pool.query(classQuery, [classId]);
-    const classInfo = classResult.rows[0];
-
-    // Process each student's marks
-    const processedStudents = [];
-    
-    for (const student of students) {
-      const studentMarks = await processStudentMarks(
-        student, 
-        uploadedMarks, 
-        subjects, 
-        classifications, 
-        coefficients
-      );
-      
-      processedStudents.push({
-        ...student,
-        marks: studentMarks
-      });
-    }
-
-    res.json({
-      success: true,
-      data: {
-        students: processedStudents,
-        classInfo,
-        term,
-        generatedAt: new Date().toISOString()
-      }
-    });
-
-  } catch (error) {
-    console.error('Error generating report cards:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to generate report cards' 
-    });
-  }
-});
-
-// Helper function to process student marks
-async function processStudentMarks(student, uploadedMarks, subjects, classifications, coefficients) {
-  const generalSubjects = [];
-  const professionalSubjects = [];
-
-  // Process each subject
-  for (const subject of subjects) {
-    const subjectMarks = await getSubjectMarksForStudent(student, uploadedMarks, subject);
-    const classification = classifications[subject.id] || 'general';
-    const coefficient = coefficients[subject.id] || 1;
-
-    const subjectData = {
-      code: subject.code,
-      name: subject.name,
-      seq5: subjectMarks.seq5 || 0,
-      seq6: subjectMarks.seq6 || 0,
-      average: subjectMarks.seq5 && subjectMarks.seq6 ? 
-        ((subjectMarks.seq5 + subjectMarks.seq6) / 2) : 0,
-      coefficient: coefficient,
-      total: 0,
-      teacher: subjectMarks.teacher || 'N/A'
-    };
-
-    subjectData.total = subjectData.average * coefficient;
-
-    if (classification === 'general') {
-      generalSubjects.push(subjectData);
-    } else {
-      professionalSubjects.push(subjectData);
-    }
-  }
-
-  // Calculate totals
-  const generalTotal = calculateSectionTotal(generalSubjects);
-  const professionalTotal = calculateSectionTotal(professionalSubjects);
-  const grandTotal = {
-    marks: generalTotal.marks + professionalTotal.marks,
-    coef: generalTotal.coef + professionalTotal.coef,
-    total: generalTotal.total + professionalTotal.total,
-    average: (generalTotal.coef + professionalTotal.coef) > 0 ? 
-      (generalTotal.total + professionalTotal.total) / (generalTotal.coef + professionalTotal.coef) : 0
-  };
-
-  // Mock term averages (in real implementation, these would come from database)
-  const termAverages = {
-    first: grandTotal.average * 0.9 + Math.random() * 2,
-    second: grandTotal.average * 0.95 + Math.random() * 2,
-    annual: (grandTotal.average * 0.9 + grandTotal.average * 0.95) / 2
-  };
-
-  return {
-    general_subjects: generalSubjects,
-    professional_subjects: professionalSubjects,
-    general_total: generalTotal,
-    professional_total: professionalTotal,
-    grand_total: grandTotal,
-    term_averages: termAverages,
-    class_average: grandTotal.average * 0.85 + Math.random() * 3,
-    student_rank: Math.floor(Math.random() * 100) + 1,
-    total_students: 100,
-    grade: getGrade(grandTotal.average)
-  };
-}
-
-// Helper function to get subject marks for a student
-async function getSubjectMarksForStudent(student, uploadedMarks, subject) {
-  const studentMarks = { seq5: null, seq6: null, teacher: 'N/A' };
-
-  for (const markRecord of uploadedMarks) {
-    try {
-      // Parse the student_data JSON
-      const studentData = JSON.parse(markRecord.student_data);
-      
-      // Find the student's row in the marks data
-      const studentRow = studentData.find(row => {
-        const studentName = row[1]?.toLowerCase() || '';
-        const fullName = student.full_name?.toLowerCase() || '';
-        return studentName.includes(fullName) || fullName.includes(studentName);
-      });
-
-      if (studentRow && studentRow[2]) {
-        const mark = parseFloat(studentRow[2]);
-        if (!isNaN(mark)) {
-          if (markRecord.sequence_id === 5) {
-            studentMarks.seq5 = mark;
-          } else if (markRecord.sequence_id === 6) {
-            studentMarks.seq6 = mark;
-          }
-          studentMarks.teacher = markRecord.uploaded_by_name || 'N/A';
-        }
-      }
-    } catch (error) {
-      console.error(`Error processing marks for student ${student.full_name}:`, error);
-    }
-  }
-
-  return studentMarks;
-}
-
-// Helper function to calculate section totals
-function calculateSectionTotal(subjects) {
-  const total = subjects.reduce((acc, subject) => ({
-    marks: acc.marks + 1,
-    coef: acc.coef + subject.coefficient,
-    total: acc.total + subject.total
-  }), { marks: 0, coef: 0, total: 0 });
-
-  return {
-    ...total,
-    average: total.coef > 0 ? total.total / total.coef : 0
-  };
-}
-
-// Helper function to get grade
-function getGrade(average) {
-  if (average >= 18) return 'Excellent';
-  if (average >= 14) return 'Very Good';
-  if (average >= 12) return 'Good';
-  if (average >= 10) return 'Fairly Good';
-  if (average >= 8) return 'Average';
-  if (average >= 6) return 'Weak';
-  return 'Very Weak';
-}
-
-app.get('/api/reports/data/:classId/:studentId/:term', authenticateToken, async (req, res) => {
-  try {
-    const { classId, studentId, term } = req.params;
-    
-    // Get student data
-    const studentQuery = 'SELECT * FROM students WHERE id = $1 AND class_id = $2';
-    const studentResult = await pool.query(studentQuery, [studentId, classId]);
-    
-    if (studentResult.rows.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Student not found' 
-      });
-    }
-
-    const student = studentResult.rows[0];
-
-    // Get class data
-    const classQuery = 'SELECT * FROM classes WHERE id = $1';
-    const classResult = await pool.query(classQuery, [classId]);
-    const classInfo = classResult.rows[0];
-
-    // Get marks data (reuse the same logic as above)
-    const uploadedMarks = await getUploadedMarksForClass(classId);
-    const subjects = await getAllSubjects();
-    const classifications = await getSubjectClassifications(classId);
-    const coefficients = await getSubjectCoefficients(classId);
-
-    const marksData = await processStudentMarks(
-      student, 
-      uploadedMarks, 
-      subjects, 
-      classifications, 
-      coefficients
-    );
-
-    res.json({
-      success: true,
-      data: {
-        student,
-        classInfo,
-        marksData,
-        term
-      }
-    });
-
-  } catch (error) {
-    console.error('Error fetching report card data:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to fetch report card data' 
-    });
-  }
-});
-
-// Helper functions for the above endpoint
-async function getUploadedMarksForClass(classId) {
-  const query = `
-    SELECT m.*, c.name as class_name 
-    FROM marks m 
-    JOIN classes c ON m.class_id = c.id 
-    WHERE m.class_id = $1 AND m.sequence_id IN (5, 6)
-    ORDER BY m.sequence_id
-  `;
-  const result = await pool.query(query, [classId]);
-  return result.rows;
-}
-
-async function getAllSubjects() {
-  const query = 'SELECT * FROM subjects ORDER BY name';
-  const result = await pool.query(query);
-  return result.rows;
-}
-
-async function getSubjectClassifications(classId) {
-  const query = 'SELECT * FROM subject_classifications WHERE class_id = $1';
-  const result = await pool.query(query, [classId]);
-  const classifications = {};
-  result.rows.forEach(row => {
-    classifications[row.subject_id] = row.classification;
-  });
-  return classifications;
-}
-
-async function getSubjectCoefficients(classId) {
-  const query = 'SELECT * FROM subject_coefficients WHERE class_id = $1';
-  const result = await pool.query(query, [classId]);
-  const coefficients = {};
-  result.rows.forEach(row => {
-    coefficients[row.subject_id] = row.coefficient;
-  });
-  return coefficients;
-}
-
-app.post('/api/reports/settings', authenticateToken, async (req, res) => {
-  try {
-    const { classId, settings } = req.body;
-    
-    // Save report card settings for the class
+oints
+r use in other modules
+module.exports = { pool };
+q.params;
     const query = `
-      INSERT INTO report_card_settings (class_id, settings, created_at)
-      VALUES ($1, $2, NOW())
-      ON CONFLICT (class_id) 
-      DO UPDATE SET settings = $2, updated_at = NOW()
-    `;
-    
-    await pool.query(query, [classId, JSON.stringify(settings)]);
-    
-    res.json({
-      success: true,
-      message: 'Report card settings saved successfully'
-    });
-
-  } catch (error) {
-    console.error('Error saving report card settings:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to save report card settings' 
-    });
-  }
-});
-
-app.get('/api/reports/settings/:classId', authenticateToken, async (req, res) => {
-  try {
-    const { classId } = req.params;
-    
-    const query = 'SELECT settings FROM report_card_settings WHERE class_id = $1';
-    const result = await pool.query(query, [classId]);
-    
-    if (result.rows.length === 0) {
-      return res.json({
-        success: true,
-        data: {
-          class_master: 'CLASS MASTER',
-          principal_remark: 'PRINCIPAL\'S REMARK AND SIGNATURE',
-          disciplinary_record: {
-            absences: 0,
-            disciplinary_council: 'NO',
-            warned: 'NO',
-            suspended: 'NO',
-            might_be_expelled: 'NO'
-          },
-          class_council_decision: {
-            promoted: 'YES',
-            repeat: 'NO',
-            dismissed: 'NO',
-            next_year_start: 'September 2024'
-          }
-        }
-      });
-    }
-
-    res.json({
-      success: true,
-      data: JSON.parse(result.rows[0].settings)
-    });
-
-  } catch (error) {
-    console.error('Error fetching report card settings:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to fetch report card settings' 
-    });
-  }
-});
-
-app.get('/api/marks/summary/:classId', authenticateToken, async (req, res) => {
-  try {
-    const { classId } = req.params;
-    
-    // Get summary of marks for the class
-    const query = `
-      SELECT 
+      SELECT
         m.sequence_id,
         m.student_data,
         COUNT(*) as total_students
-      FROM marks m
       WHERE m.class_id = $1 AND m.sequence_id IN (5, 6)
       ORDER BY m.sequence_id
     `;
-    
     const result = await pool.query(query, [classId]);
-    
     // Process the data to calculate averages
     const summary = result.rows.map(row => {
       try {
         const studentData = JSON.parse(row.student_data);
-        const validMarks = studentData
           .filter(row => row && row[2] && !isNaN(parseFloat(row[2])))
           .map(row => parseFloat(row[2]));
-        
-        const averageMark = validMarks.length > 0 
-          ? validMarks.reduce((sum, mark) => sum + mark, 0) / validMarks.length 
           : 0;
-        
         return {
           sequence_id: row.sequence_id,
-          total_students: validMarks.length,
           average_mark: Math.round(averageMark * 100) / 100
         };
       } catch (error) {
@@ -4539,87 +3362,59 @@ app.get('/api/marks/summary/:classId', authenticateToken, async (req, res) => {
         };
       }
     });
-    
     res.json({
       success: true,
       data: summary
     });
-
   } catch (error) {
-    console.error('Error fetching marks summary:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to fetch marks summary' 
+    res.status(500).json({
+      success: false,
     });
   }
 });
-
-app.get('/api/marks/student/:classId/:studentId', authenticateToken, async (req, res) => {
+ug/user/:userId', authenticateToken, async (req, res) => {
   try {
-    const { classId, studentId } = req.params;
-    
-    // Get student information
-    const studentQuery = 'SELECT * FROM students WHERE id = $1 AND class_id = $2';
-    const studentResult = await pool.query(studentQuery, [studentId, classId]);
-    
-    if (studentResult.rows.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Student not found' 
-      });
+    const { userId } = req.params;
+    const authUser = req.user;
+    // Only allow users to check their own data or admins to check any user
+    if (authUser.id !== parseInt(userId) && !['Admin1', 'Admin2', 'Admin3', 'Admin4'].includes(authUser.role)) {
+      return res.status(403).json({ error: 'Access denied' });
     }
-
-    const student = studentResult.rows[0];
-
-    // Get marks for this student
-    const marksQuery = `
-      SELECT m.*, c.name as class_name
-      FROM marks m
-      JOIN classes c ON m.class_id = c.id
-      WHERE m.class_id = $1 AND m.sequence_id IN (5, 6)
-      ORDER BY m.sequence_id
-    `;
-    
-    const marksResult = await pool.query(marksQuery, [classId]);
-    const marks = marksResult.rows;
-
-    // Process marks data
-    const studentMarks = [];
-    for (const markRecord of marks) {
-      try {
-        const studentData = JSON.parse(markRecord.student_data);
-        const studentRow = studentData.find(row => {
-          const studentName = row[1]?.toLowerCase() || '';
-          const fullName = student.full_name?.toLowerCase() || '';
-          return studentName.includes(fullName) || fullName.includes(studentName);
-        });
-
-        if (studentRow) {
-          studentMarks.push({
-            sequence_id: markRecord.sequence_id,
-            mark: parseFloat(studentRow[2]) || 0,
-            teacher: markRecord.uploaded_by_name || 'N/A',
-            upload_date: markRecord.upload_date
-          });
-        }
-      } catch (error) {
-        console.error(`Error processing marks for sequence ${markRecord.sequence_id}:`, error);
+    // Get user's application
+    const applicationResult = await pool.query(`
+      SELECT * FROM applications
+      WHERE applicant_id = $1
+    `, [userId]);
+    // Get user's assigned data
+    const assignedDataResult = await pool.query(`
+      SELECT classes, subjects FROM applications
+      WHERE applicant_id = $1 AND status = 'approved'
+    `, [userId]);
+    const debugInfo = {
+      userId: parseInt(userId),
+      userRole: authUser.role,
+      hasApplication: applicationResult.rows.length > 0,
+      application: applicationResult.rows[0] || null,
+      hasApprovedApplication: assignedDataResult.rows.length > 0,
+      assignedData: assignedDataResult.rows[0] || null,
+      assignedClasses: [],
+      assignedSubjects: []
+    };
+    if (assignedDataResult.rows.length > 0) {
+      const application = assignedDataResult.rows[0];
+      if (application.classes) {
+        debugInfo.assignedClasses = application.classes.split(',').map(c => c.trim()).filter(c => c);
+      }
+      if (application.subjects) {
+        debugInfo.assignedSubjects = application.subjects.split(',').map(s => s.trim()).filter(s => s);
       }
     }
-
-    res.json({
-      success: true,
-      data: {
-        student,
-        marks: studentMarks
-      }
-    });
-
+    res.json(debugInfo);
   } catch (error) {
-    console.error('Error fetching student marks:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to fetch student marks' 
-    });
+    console.error('Error in debug endpoint:', error);
+    res.status(500).json({ error: 'Failed to get debug info' });
   }
 });
+ody;
+    // Get sequences for the selected term
+    

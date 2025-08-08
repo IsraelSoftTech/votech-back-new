@@ -151,19 +151,6 @@ CREATE TABLE IF NOT EXISTS lesson_plans (
     reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 
--- Marks Management
-CREATE TABLE IF NOT EXISTS marks (
-    id SERIAL PRIMARY KEY,
-    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
-    sequence_id INTEGER NOT NULL CHECK (sequence_id BETWEEN 1 AND 6),
-    file_url VARCHAR(500) NOT NULL,
-    student_data JSONB, -- Store the parsed Excel data
-    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(class_id, sequence_id) -- Ensure only one marks file per class per sequence
-);
-
 -- Applications
 CREATE TABLE IF NOT EXISTS applications (
     id SERIAL PRIMARY KEY,
@@ -207,19 +194,67 @@ CREATE TABLE IF NOT EXISTS salary_descriptions (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Report Card Settings Table
+-- Report Card Settings (per class, per year)
 CREATE TABLE IF NOT EXISTS report_card_settings (
     id SERIAL PRIMARY KEY,
-    class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-    settings JSONB NOT NULL DEFAULT '{}',
+    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+    academic_year VARCHAR(20) NOT NULL,
+    class_master_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    principal_remark TEXT,
+    disciplinary_record JSONB, -- { absences, disciplinary_council, warned, suspended, might_be_expelled }
+    class_council_decision JSONB, -- { promoted, repeat, dismissed, next_year_start }
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(class_id)
+    UNIQUE(class_id, academic_year)
 );
 
--- Create index for faster lookups
-CREATE INDEX IF NOT EXISTS idx_report_card_settings_class_id ON report_card_settings(class_id);
+-- Subject Classifications (per class, per subject)
+CREATE TABLE IF NOT EXISTS subject_classifications (
+    id SERIAL PRIMARY KEY,
+    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+    subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
+    classification_type VARCHAR(20) NOT NULL CHECK (classification_type IN ('general', 'professional')),
+    UNIQUE(class_id, subject_id)
+);
 
--- Add comments for documentation
-COMMENT ON TABLE report_card_settings IS 'Stores report card generation settings for each class';
-COMMENT ON COLUMN report_card_settings.settings IS 'JSON object containing report card settings like class master, principal remarks, etc.';
+-- Subject Coefficients (per class, per subject)
+CREATE TABLE IF NOT EXISTS subject_coefficients (
+    id SERIAL PRIMARY KEY,
+    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+    subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
+    coefficient NUMERIC(4,2) NOT NULL DEFAULT 1,
+    UNIQUE(class_id, subject_id)
+);
+
+-- Academic Appreciation Bands (per class, per year)
+CREATE TABLE IF NOT EXISTS academic_appreciation_bands (
+    id SERIAL PRIMARY KEY,
+    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+    academic_year VARCHAR(20) NOT NULL,
+    label VARCHAR(50) NOT NULL,
+    min NUMERIC(5,2) NOT NULL,
+    max NUMERIC(5,2) NOT NULL,
+    UNIQUE(class_id, academic_year, label)
+);
+
+-- Generated Report Cards (per student, per term)
+CREATE TABLE IF NOT EXISTS generated_report_cards (
+    id SERIAL PRIMARY KEY,
+    student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+    academic_year VARCHAR(20) NOT NULL,
+    term VARCHAR(20) NOT NULL,
+    data JSONB NOT NULL, -- All calculated data for the report card
+    generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(student_id, class_id, academic_year, term)
+);
+
+CREATE TABLE IF NOT EXISTS masters (
+    id SERIAL PRIMARY KEY,
+    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+    academic_year VARCHAR(20) NOT NULL,
+    master_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(class_id, academic_year)
+);
