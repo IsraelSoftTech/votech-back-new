@@ -194,67 +194,38 @@ CREATE TABLE IF NOT EXISTS salary_descriptions (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Report Card Settings (per class, per year)
-CREATE TABLE IF NOT EXISTS report_card_settings (
+-- Timetable Configs (global settings)
+CREATE TABLE IF NOT EXISTS timetable_configs (
+    id SERIAL PRIMARY KEY,
+    config JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Class Timetables
+CREATE TABLE IF NOT EXISTS timetables (
     id SERIAL PRIMARY KEY,
     class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
-    academic_year VARCHAR(20) NOT NULL,
-    class_master_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    principal_remark TEXT,
-    disciplinary_record JSONB, -- { absences, disciplinary_council, warned, suspended, might_be_expelled }
-    class_council_decision JSONB, -- { promoted, repeat, dismissed, next_year_start }
+    data JSONB NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(class_id, academic_year)
+    UNIQUE(class_id)
 );
 
--- Subject Classifications (per class, per subject)
-CREATE TABLE IF NOT EXISTS subject_classifications (
+-- Teacher Assignments (teacher to class+subject)
+CREATE TABLE IF NOT EXISTS teacher_assignments (
     id SERIAL PRIMARY KEY,
+    teacher_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
     subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
-    classification_type VARCHAR(20) NOT NULL CHECK (classification_type IN ('general', 'professional')),
-    UNIQUE(class_id, subject_id)
-);
-
--- Subject Coefficients (per class, per subject)
-CREATE TABLE IF NOT EXISTS subject_coefficients (
-    id SERIAL PRIMARY KEY,
-    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
-    subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
-    coefficient NUMERIC(4,2) NOT NULL DEFAULT 1,
-    UNIQUE(class_id, subject_id)
-);
-
--- Academic Appreciation Bands (per class, per year)
-CREATE TABLE IF NOT EXISTS academic_appreciation_bands (
-    id SERIAL PRIMARY KEY,
-    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
-    academic_year VARCHAR(20) NOT NULL,
-    label VARCHAR(50) NOT NULL,
-    min NUMERIC(5,2) NOT NULL,
-    max NUMERIC(5,2) NOT NULL,
-    UNIQUE(class_id, academic_year, label)
-);
-
--- Generated Report Cards (per student, per term)
-CREATE TABLE IF NOT EXISTS generated_report_cards (
-    id SERIAL PRIMARY KEY,
-    student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
-    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
-    academic_year VARCHAR(20) NOT NULL,
-    term VARCHAR(20) NOT NULL,
-    data JSONB NOT NULL, -- All calculated data for the report card
-    generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(student_id, class_id, academic_year, term)
-);
-
-CREATE TABLE IF NOT EXISTS masters (
-    id SERIAL PRIMARY KEY,
-    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
-    academic_year VARCHAR(20) NOT NULL,
-    master_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    periods_per_week INTEGER NOT NULL DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(class_id, academic_year)
+    UNIQUE(teacher_id, class_id, subject_id)
 );
+
+
+
+
+
+

@@ -25,6 +25,7 @@ const pool = new Pool({
 const lessonPlansRouter = require('./routes/lessonPlans');
 const groupsRouter = require('./routes/groups');
 const salaryRouter = require('./routes/salary');
+const timetablesRouter = require('./routes/timetables');
 // Import FTP service at the top of the file
 const ftpService = require('./ftp-service');
 const app = express();
@@ -152,6 +153,7 @@ app.options('*', cors(corsOptions));
 app.use('/api/lesson-plans', lessonPlansRouter);
 app.use('/api/groups', groupsRouter);
 app.use('/api/salary', salaryRouter);
+app.use('/api/timetables', timetablesRouter);
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err);
@@ -1469,8 +1471,6 @@ async function runMigrations() {
       console.log('Applications table already exists');
     }
     console.log('Messages table file attachment columns migration completed');
-    );
-    }
   } catch (error) {
     console.error('Error running migrations:', error);
     throw error;
@@ -3329,92 +3329,3 @@ app.delete('/api/applications/:id', authenticateToken, async (req, res) => {
 // === End Applications API ===
 // Export pool for use in other modules
 module.exports = { pool };
-oints
-r use in other modules
-module.exports = { pool };
-q.params;
-    const query = `
-      SELECT
-        m.sequence_id,
-        m.student_data,
-        COUNT(*) as total_students
-      WHERE m.class_id = $1 AND m.sequence_id IN (5, 6)
-      ORDER BY m.sequence_id
-    `;
-    const result = await pool.query(query, [classId]);
-    // Process the data to calculate averages
-    const summary = result.rows.map(row => {
-      try {
-        const studentData = JSON.parse(row.student_data);
-          .filter(row => row && row[2] && !isNaN(parseFloat(row[2])))
-          .map(row => parseFloat(row[2]));
-          : 0;
-        return {
-          sequence_id: row.sequence_id,
-          average_mark: Math.round(averageMark * 100) / 100
-        };
-      } catch (error) {
-        console.error(`Error processing sequence ${row.sequence_id}:`, error);
-        return {
-          sequence_id: row.sequence_id,
-          total_students: 0,
-          average_mark: 0
-        };
-      }
-    });
-    res.json({
-      success: true,
-      data: summary
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-    });
-  }
-});
-ug/user/:userId', authenticateToken, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const authUser = req.user;
-    // Only allow users to check their own data or admins to check any user
-    if (authUser.id !== parseInt(userId) && !['Admin1', 'Admin2', 'Admin3', 'Admin4'].includes(authUser.role)) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-    // Get user's application
-    const applicationResult = await pool.query(`
-      SELECT * FROM applications
-      WHERE applicant_id = $1
-    `, [userId]);
-    // Get user's assigned data
-    const assignedDataResult = await pool.query(`
-      SELECT classes, subjects FROM applications
-      WHERE applicant_id = $1 AND status = 'approved'
-    `, [userId]);
-    const debugInfo = {
-      userId: parseInt(userId),
-      userRole: authUser.role,
-      hasApplication: applicationResult.rows.length > 0,
-      application: applicationResult.rows[0] || null,
-      hasApprovedApplication: assignedDataResult.rows.length > 0,
-      assignedData: assignedDataResult.rows[0] || null,
-      assignedClasses: [],
-      assignedSubjects: []
-    };
-    if (assignedDataResult.rows.length > 0) {
-      const application = assignedDataResult.rows[0];
-      if (application.classes) {
-        debugInfo.assignedClasses = application.classes.split(',').map(c => c.trim()).filter(c => c);
-      }
-      if (application.subjects) {
-        debugInfo.assignedSubjects = application.subjects.split(',').map(s => s.trim()).filter(s => s);
-      }
-    }
-    res.json(debugInfo);
-  } catch (error) {
-    console.error('Error in debug endpoint:', error);
-    res.status(500).json({ error: 'Failed to get debug info' });
-  }
-});
-ody;
-    // Get sequences for the selected term
-    
