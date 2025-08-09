@@ -61,12 +61,9 @@ const upload = multer({
 // Create lesson plans table if it doesn't exist
 const initializeLessonPlansTable = async () => {
   try {
-    // Drop the existing table if it exists to fix schema issues
-    await pool.query('DROP TABLE IF EXISTS lesson_plans CASCADE');
-    
-    // Create the table with the correct schema
+    // First create the table with basic schema if it doesn't exist
     await pool.query(`
-      CREATE TABLE lesson_plans (
+      CREATE TABLE IF NOT EXISTS lesson_plans (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
         title VARCHAR(255) NOT NULL,
@@ -79,7 +76,23 @@ const initializeLessonPlansTable = async () => {
         reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
       )
     `);
-    console.log('Lesson plans table recreated with correct schema');
+
+    // Check if submitted_at column exists, if not add it
+    const hasSubmittedAt = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'lesson_plans' AND column_name = 'submitted_at'
+    `);
+    
+    if (hasSubmittedAt.rows.length === 0) {
+      await pool.query(`
+        ALTER TABLE lesson_plans 
+        ADD COLUMN submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      `);
+      console.log('Added submitted_at column to lesson_plans table');
+    }
+
+    console.log('Lesson plans table initialized with correct schema');
   } catch (error) {
     console.error('Error initializing lesson plans table:', error);
   }
@@ -152,8 +165,8 @@ router.get('/all', authenticateToken, async (req, res) => {
   try {
     console.log('Get all lesson plans request from user:', req.user.id, 'Role:', req.user.role);
     
-    // Check if user is admin
-    if (!['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin'].includes(req.user.role)) {
+    // Check if user is admin or dean
+    if (!['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin', 'Dean'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -296,8 +309,8 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 // Review lesson plan (admin only)
 router.put('/:id/review', authenticateToken, async (req, res) => {
   try {
-    // Check if user is admin
-    if (!['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin'].includes(req.user.role)) {
+    // Check if user is admin or dean
+    if (!['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin', 'Dean'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -329,8 +342,8 @@ router.put('/:id/review', authenticateToken, async (req, res) => {
 // Delete lesson plan (admin only)
 router.delete('/:id/admin', authenticateToken, async (req, res) => {
   try {
-    // Check if user is admin
-    if (!['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin'].includes(req.user.role)) {
+    // Check if user is admin or dean
+    if (!['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin', 'Dean'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -366,8 +379,8 @@ router.delete('/:id/admin', authenticateToken, async (req, res) => {
 // Test endpoint to check if everything is working
 router.get('/test', authenticateToken, async (req, res) => {
   try {
-    // Check if user is admin
-    if (!['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin'].includes(req.user.role)) {
+    // Check if user is admin or dean
+    if (!['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin', 'Dean'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Access denied' });
     }
 

@@ -23,6 +23,7 @@ const pool = new Pool({
 });
 // Import routes
 const lessonPlansRouter = require('./routes/lessonPlans');
+const lessonsRouter = require('./routes/lessons');
 const groupsRouter = require('./routes/groups');
 const salaryRouter = require('./routes/salary');
 const timetablesRouter = require('./routes/timetables');
@@ -151,6 +152,7 @@ app.use('/uploads', express.static('uploads')); // Serve uploaded files
 app.options('*', cors(corsOptions));
 // Use routes
 app.use('/api/lesson-plans', lessonPlansRouter);
+app.use('/api/lessons', lessonsRouter);
 app.use('/api/groups', groupsRouter);
 app.use('/api/salary', salaryRouter);
 app.use('/api/timetables', timetablesRouter);
@@ -245,6 +247,17 @@ app.post('/api/login', async (req, res) => {
       console.log('Invalid password for:', username);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
+    
+    // Get IP address and user agent
+    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    
+    // Create user session
+    await createUserSession(user.id, ipAddress, userAgent);
+    
+    // Log login activity
+    await logUserActivity(user.id, 'login', `User logged in successfully`, null, null, null, ipAddress, userAgent);
+    
     // Create token with expiration and role
     const token = jwt.sign(
       { id: user.id, username: user.username, role: user.role },
@@ -277,6 +290,25 @@ app.post('/api/login', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+
+app.post('/api/logout', authenticateToken, async (req, res) => {
+  try {
+    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    
+    // End user session
+    await endUserSession(req.user.id);
+    
+    // Log logout activity
+    await logUserActivity(req.user.id, 'logout', `User logged out successfully`, null, null, null, ipAddress, userAgent);
+    
+    res.json({ message: 'Logged out successfully' });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 app.post('/api/register', async (req, res) => {
   console.log('Received registration request:', {
     body: req.body,
@@ -553,7 +585,7 @@ app.get('/api/classes', authenticateToken, async (req, res) => {
   }
 });
 // Remove authentication for class creation
-app.post('/api/classes', async (req, res) => {
+app.post('/api/classes', authenticateToken, async (req, res) => {
   console.log('POST /api/classes called', req.body);
   const { name, registration_fee, bus_fee, internship_fee, remedial_fee, tuition_fee, pta_fee, total_fee, suspended } = req.body;
   try {
@@ -562,6 +594,12 @@ app.post('/api/classes', async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
       [name, registration_fee, bus_fee, internship_fee, remedial_fee, tuition_fee, pta_fee, total_fee, suspended || false]
     );
+    
+    // Log activity
+    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    await logUserActivity(req.user.id, 'create', `Created class: ${name}`, 'class', result.rows[0].id, name, ipAddress, userAgent);
+    
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating class:', error);
@@ -1471,6 +1509,66 @@ async function runMigrations() {
       console.log('Applications table already exists');
     }
     console.log('Messages table file attachment columns migration completed');
+    
+    // Check if user_sessions table exists
+    const userSessionsTable = await pool.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_name = 'user_sessions'"
+    );
+    if (userSessionsTable.rows.length === 0) {
+      console.log('Creating user_sessions table...');
+      await pool.query(`
+        CREATE TABLE user_sessions (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          session_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          session_end TIMESTAMP,
+          ip_address VARCHAR(45),
+          user_agent TEXT,
+          status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'ended', 'expired')),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      console.log('user_sessions table created successfully');
+    } else {
+      console.log('user_sessions table already exists');
+    }
+    
+    // Check if user_activities table exists
+    const userActivitiesTable = await pool.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_name = 'user_activities'"
+    );
+    if (userActivitiesTable.rows.length === 0) {
+      console.log('Creating user_activities table...');
+      await pool.query(`
+        CREATE TABLE user_activities (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          activity_type VARCHAR(100) NOT NULL,
+          activity_description TEXT NOT NULL,
+          entity_type VARCHAR(50),
+          entity_id INTEGER,
+          entity_name VARCHAR(255),
+          ip_address VARCHAR(45),
+          user_agent TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      console.log('user_activities table created successfully');
+    } else {
+      console.log('user_activities table already exists');
+    }
+    
+    // Create indexes for better performance
+    try {
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_user_sessions_status ON user_sessions(status)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_user_activities_user_id ON user_activities(user_id)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_user_activities_created_at ON user_activities(created_at)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_user_activities_activity_type ON user_activities(activity_type)');
+      console.log('User monitoring indexes created successfully');
+    } catch (error) {
+      console.log('User monitoring indexes already exist or failed to create:', error.message);
+    }
   } catch (error) {
     console.error('Error running migrations:', error);
     throw error;
@@ -1992,6 +2090,12 @@ app.put('/api/users/:id', authenticateToken, async (req, res) => {
     updateValues.push(id);
     const updateQuery = `UPDATE users SET ${updateFields.join(', ')} WHERE id = $${paramIndex}`;
     await pool.query(updateQuery, updateValues);
+    
+    // Log activity
+    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    await logUserActivity(req.user.id, 'update', `Updated user: ${username}`, 'user', id, username, ipAddress, userAgent);
+    
     res.json({ message: 'User updated' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update user' });
@@ -2002,14 +2106,22 @@ app.delete('/api/users/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
     // Check if user is Admin3
-    const userResult = await pool.query('SELECT role FROM users WHERE id = $1', [id]);
+    const userResult = await pool.query('SELECT role, username FROM users WHERE id = $1', [id]);
     if (userResult.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
     if (userResult.rows[0].role === 'Admin3') {
       return res.status(403).json({ error: 'You cannot delete Accounts manager.' });
     }
+    
+    const username = userResult.rows[0].username;
     await pool.query('DELETE FROM users WHERE id = $1', [id]);
+    
+    // Log activity
+    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    await logUserActivity(req.user.id, 'delete', `Deleted user: ${username}`, 'user', id, username, ipAddress, userAgent);
+    
     res.json({ message: 'User deleted' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete user' });
@@ -2019,14 +2131,244 @@ app.post('/api/users/:id/suspend', authenticateToken, async (req, res) => {
   if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
   const { id } = req.params;
   try {
+    // Get user info before updating
+    const userResult = await pool.query('SELECT username, suspended FROM users WHERE id = $1', [id]);
+    if (userResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    
+    const username = userResult.rows[0].username;
+    const currentStatus = userResult.rows[0].suspended;
+    
     // Toggle suspended status
     const result = await pool.query('UPDATE users SET suspended = NOT COALESCE(suspended, false) WHERE id = $1 RETURNING suspended', [id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-    res.json({ suspended: result.rows[0].suspended });
+    const newStatus = result.rows[0].suspended;
+    
+    // Log activity
+    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    const action = newStatus ? 'suspended' : 'unsuspended';
+    await logUserActivity(req.user.id, action, `${action} user: ${username}`, 'user', id, username, ipAddress, userAgent);
+    
+    res.json({ suspended: newStatus });
   } catch (error) {
     res.status(500).json({ error: 'Failed to suspend user' });
   }
 });
+// User monitoring endpoints for Admin3
+app.get('/api/monitor/users', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    console.log('Fetching monitored users...');
+    // Check if user_sessions table exists
+    const tableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'user_sessions'
+      );
+    `);
+    
+    console.log('user_sessions table exists:', tableExists.rows[0].exists);
+    
+    if (!tableExists.rows[0].exists) {
+      // If table doesn't exist, return users without session info
+      const result = await pool.query(`
+        SELECT 
+          u.id, 
+          u.name, 
+          u.username, 
+          u.contact, 
+          u.role, 
+          u.suspended,
+          u.created_at,
+          'Unknown' as current_status,
+          NULL as last_login,
+          NULL as last_ip
+        FROM users u
+        ORDER BY u.created_at DESC
+      `);
+      console.log('Returning users without session info:', result.rows.length);
+      return res.json(result.rows);
+    }
+    
+    const result = await pool.query(`
+      SELECT 
+        u.id, 
+        u.name, 
+        u.username, 
+        u.contact, 
+        u.role, 
+        u.suspended,
+        u.created_at,
+        CASE 
+          WHEN us.session_start IS NOT NULL AND us.session_end IS NULL THEN 'Logged In'
+          ELSE 'Logged Out'
+        END as current_status,
+        us.session_start as last_login,
+        us.ip_address as last_ip
+      FROM users u
+      LEFT JOIN (
+        SELECT DISTINCT ON (user_id) 
+          user_id, 
+          session_start, 
+          session_end, 
+          ip_address
+        FROM user_sessions 
+        ORDER BY user_id, session_start DESC
+      ) us ON u.id = us.user_id
+      ORDER BY u.created_at DESC
+    `);
+    console.log('Returning users with session info:', result.rows.length);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching monitored users:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+app.get('/api/monitor/user-activities', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    // Check if user_activities table exists
+    const tableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'user_activities'
+      );
+    `);
+    
+    if (!tableExists.rows[0].exists) {
+      return res.json([]);
+    }
+    
+    const { userId, limit = 50, offset = 0 } = req.query;
+    let query = `
+      SELECT 
+        ua.id,
+        ua.activity_type,
+        ua.activity_description,
+        ua.entity_type,
+        ua.entity_id,
+        ua.entity_name,
+        ua.ip_address,
+        ua.created_at,
+        u.name as user_name,
+        u.username,
+        u.role as user_role
+      FROM user_activities ua
+      JOIN users u ON ua.user_id = u.id
+    `;
+    const params = [];
+    let paramIndex = 1;
+    
+    if (userId) {
+      query += ` WHERE ua.user_id = $${paramIndex}`;
+      params.push(userId);
+      paramIndex++;
+    }
+    
+    query += ` ORDER BY ua.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    params.push(parseInt(limit), parseInt(offset));
+    
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching user activities:', error);
+    res.status(500).json({ error: 'Failed to fetch user activities' });
+  }
+});
+
+app.get('/api/monitor/user-sessions', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    // Check if user_sessions table exists
+    const tableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'user_sessions'
+      );
+    `);
+    
+    if (!tableExists.rows[0].exists) {
+      return res.json([]);
+    }
+    
+    const { userId, limit = 50, offset = 0 } = req.query;
+    let query = `
+      SELECT 
+        us.id,
+        us.session_start,
+        us.session_end,
+        us.ip_address,
+        us.user_agent,
+        us.status,
+        us.created_at,
+        u.name as user_name,
+        u.username,
+        u.role as user_role
+      FROM user_sessions us
+      JOIN users u ON us.user_id = u.id
+    `;
+    const params = [];
+    let paramIndex = 1;
+    
+    if (userId) {
+      query += ` WHERE us.user_id = $${paramIndex}`;
+      params.push(userId);
+      paramIndex++;
+    }
+    
+    query += ` ORDER BY us.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    params.push(parseInt(limit), parseInt(offset));
+    
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching user sessions:', error);
+    res.status(500).json({ error: 'Failed to fetch user sessions' });
+  }
+});
+
+// Helper function to log user activity
+const logUserActivity = async (userId, activityType, activityDescription, entityType = null, entityId = null, entityName = null, ipAddress = null, userAgent = null) => {
+  try {
+    await pool.query(`
+      INSERT INTO user_activities (user_id, activity_type, activity_description, entity_type, entity_id, entity_name, ip_address, user_agent)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `, [userId, activityType, activityDescription, entityType, entityId, entityName, ipAddress, userAgent]);
+  } catch (error) {
+    console.error('Error logging user activity:', error);
+  }
+};
+
+// Helper function to create user session
+const createUserSession = async (userId, ipAddress = null, userAgent = null) => {
+  try {
+    const result = await pool.query(`
+      INSERT INTO user_sessions (user_id, ip_address, user_agent)
+      VALUES ($1, $2, $3)
+      RETURNING id
+    `, [userId, ipAddress, userAgent]);
+    return result.rows[0].id;
+  } catch (error) {
+    console.error('Error creating user session:', error);
+    return null;
+  }
+};
+
+// Helper function to end user session
+const endUserSession = async (userId) => {
+  try {
+    await pool.query(`
+      UPDATE user_sessions 
+      SET session_end = CURRENT_TIMESTAMP, status = 'ended'
+      WHERE user_id = $1 AND session_end IS NULL
+    `, [userId]);
+  } catch (error) {
+    console.error('Error ending user session:', error);
+  }
+};
 // Chat endpoints
 app.get('/api/users/all-chat', authenticateToken, async (req, res) => {
   try {
@@ -2181,7 +2523,7 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
   }
 });
 // Student registration endpoint
-app.post('/api/students', upload.single('photo'), async (req, res) => {
+app.post('/api/students', authenticateToken, upload.single('photo'), async (req, res) => {
   console.log('BODY:', req.body);
   console.log('FILE:', req.file);
   try {
@@ -2191,7 +2533,7 @@ app.post('/api/students', upload.single('photo'), async (req, res) => {
     } = req.body;
     // Validate required fields
     if (!studentId || !regDate || !fullName || !sex || !dob || !pob || !className || !specialtyName || !contact) {
-      return res.status(400).json({ error: 'All fields except photo are required.' });
+      return res.status(400).json({ error: 'Missing required fields' });
     }
     // Find class_id and specialty_id
     const classResult = await pool.query('SELECT id FROM classes WHERE name = $1', [className]);
@@ -2204,7 +2546,17 @@ app.post('/api/students', upload.single('photo'), async (req, res) => {
       try {
         const filename = `student_${Date.now()}_${req.file.originalname}`;
         // Upload to FTP instead of local storage
-        photo_url = await ftpService.uploadBuffer(req.file.buffer, filename);
+        const ftp = require('basic-ftp');
+        const client = new ftp.Client();
+        await client.access({
+          host: process.env.FTP_HOST || 'ftp.votechs7academygroup.com',
+          user: process.env.FTP_USER || 'votechs7academygroup',
+          password: process.env.FTP_PASS || 'Votechs7academygroup@2024',
+          secure: false
+        });
+        await client.uploadFrom(req.file.buffer, filename);
+        client.close();
+        photo_url = `http://votechs7academygroup.com/${filename}`;
         console.log('Photo uploaded to FTP:', photo_url);
       } catch (error) {
         console.error('Failed to upload photo to FTP:', error);
@@ -2220,13 +2572,19 @@ app.post('/api/students', upload.single('photo'), async (req, res) => {
         console.log('Photo saved locally as fallback:', photo_url);
       }
     }
-    // Insert student into DB
+    // Insert student into database
     const insertResult = await pool.query(
       `INSERT INTO students (student_id, registration_date, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, class_id, specialty_id, guardian_contact, photo_url)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       [studentId, regDate, fullName, sex, dob, pob, father, mother, class_id, specialty_id, contact, photo_url]
     );
     const student = insertResult.rows[0];
+    
+    // Log activity
+    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    await logUserActivity(req.user.id, 'create', `Created student: ${fullName} (${studentId})`, 'student', student.id, fullName, ipAddress, userAgent);
+    
     res.status(201).json(student);
   } catch (error) {
     console.error('Error registering student:', error);
@@ -2245,6 +2603,7 @@ app.get('/api/students', async (req, res) => {
     `);
     res.json(result.rows);
   } catch (error) {
+    console.error('Error fetching students:', error);
     res.status(500).json({ error: 'Failed to fetch students' });
   }
 });
@@ -2259,10 +2618,27 @@ app.use(function (err, req, res, next) {
 app.delete('/api/students/:id', async (req, res) => {
   const { id } = req.params;
   try {
+    // Get student info before deleting
+    const studentResult = await pool.query('SELECT full_name, student_id FROM students WHERE id = $1', [id]);
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+    
+    const studentName = studentResult.rows[0].full_name;
+    const studentId = studentResult.rows[0].student_id;
+    
     const result = await pool.query('DELETE FROM students WHERE id = $1 RETURNING *', [id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Student not found' });
     }
+    
+    // Log activity if user is authenticated
+    if (req.user) {
+      const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+      const userAgent = req.headers['user-agent'] || 'unknown';
+      await logUserActivity(req.user.id, 'delete', `Deleted student: ${studentName} (${studentId})`, 'student', id, studentName, ipAddress, userAgent);
+    }
+    
     res.json({ message: 'Student deleted successfully' });
   } catch (error) {
     console.error('Error deleting student:', error);

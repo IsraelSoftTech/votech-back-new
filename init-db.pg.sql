@@ -137,7 +137,29 @@ CREATE TABLE IF NOT EXISTS academic_years (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Lesson Plans
+-- Lessons Table (for created lesson plan content)
+CREATE TABLE IF NOT EXISTS lessons (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    title VARCHAR(255) NOT NULL,
+    subject VARCHAR(100),
+    class_name VARCHAR(100),
+    week VARCHAR(50),
+    period_type VARCHAR(20) NOT NULL DEFAULT 'weekly' CHECK (period_type IN ('weekly', 'monthly', 'yearly')),
+    objectives TEXT,
+    content TEXT,
+    activities TEXT,
+    assessment TEXT,
+    resources TEXT,
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    admin_comment TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at TIMESTAMP,
+    reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Lesson Plans Table (for uploaded PDF files)
 CREATE TABLE IF NOT EXISTS lesson_plans (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -150,6 +172,8 @@ CREATE TABLE IF NOT EXISTS lesson_plans (
     reviewed_at TIMESTAMP,
     reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
+
+
 
 -- Applications
 CREATE TABLE IF NOT EXISTS applications (
@@ -223,6 +247,38 @@ CREATE TABLE IF NOT EXISTS teacher_assignments (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(teacher_id, class_id, subject_id)
 );
+
+-- User Activity Tracking Tables
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    session_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    session_end TIMESTAMP,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'ended', 'expired')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_activities (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    activity_type VARCHAR(100) NOT NULL,
+    activity_description TEXT NOT NULL,
+    entity_type VARCHAR(50),
+    entity_id INTEGER,
+    entity_name VARCHAR(255),
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_status ON user_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_user_activities_user_id ON user_activities(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_activities_created_at ON user_activities(created_at);
+CREATE INDEX IF NOT EXISTS idx_user_activities_activity_type ON user_activities(activity_type);
 
 
 
