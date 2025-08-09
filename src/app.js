@@ -1,5 +1,7 @@
 const express = require("express");
 const cors = require("cors");
+const StatusCodes = require("http-status-codes").StatusCodes;
+const globalErrorController = require("./controllers/error.controller");
 
 const app = express();
 
@@ -24,3 +26,28 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+
+app.use(express.static(__dirname + "/public"));
+app.use("*", (req, res, next) => {
+  next(
+    new AppError(
+      `${req.originalUrl} does not exist... for ${req.method} request`,
+      404
+    )
+  );
+});
+
+//Handling unexistent routes
+app.use("*", (req, res, next) => {
+  next(
+    new AppError(
+      `${req.originalUrl} does not exist... for ${req.method} request`,
+      StatusCodes.NOT_FOUND
+    )
+  );
+});
+
+//global error controllerr
+app.use(globalErrorController);
+
+module.exports = app;

@@ -1,11 +1,11 @@
-const { Pool } = require('pg');
+const { Pool } = require("pg");
 
 const pool = new Pool({
-  host: 'localhost',
-  user: 'postgres',
-  password: 'postgres',
-  database: 'votechs7academygroup',
-  port: 5432
+  host: "localhost",
+  user: "postgres",
+  password: "postgres",
+  database: "votechs7academygroup",
+  port: 5432,
 });
 
 const createApplicationsTable = `
@@ -30,19 +30,20 @@ CREATE TABLE IF NOT EXISTS applications (
 
 async function initializeApplicationsTable() {
   try {
-    console.log('Creating applications table...');
+    console.log("Creating applications table...");
     await pool.query(createApplicationsTable);
-    console.log('Applications table created successfully!');
-    
+    console.log("Applications table created successfully!");
+
     // Test the table
-    const result = await pool.query('SELECT COUNT(*) as count FROM applications');
+    const result = await pool.query(
+      "SELECT COUNT(*) as count FROM applications"
+    );
     console.log(`Applications table has ${result.rows[0].count} records`);
-    
   } catch (error) {
-    console.error('Error creating applications table:', error);
+    console.error("Error creating applications table:", error);
   } finally {
     await pool.end();
   }
 }
 
-initializeApplicationsTable(); 
+initializeApplicationsTable();
