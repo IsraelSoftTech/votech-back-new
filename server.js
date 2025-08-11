@@ -57,7 +57,18 @@ const sequelize = new Sequelize(
 // Test connection
 sequelize
   .authenticate()
-  .then(() => console.log("✅ DB connected"))
+  .then(async () => {
+    await sequelize.sync({ force: false, alter: true });
+    (async () => {
+      try {
+        await sequelize.sync({ alter: true });
+        console.log("All tables synced!");
+      } catch (error) {
+        console.error("Sync failed:", error);
+      }
+    })();
+    console.log("✅ DB connected");
+  })
   .catch((err) => console.error("❌ DB connection error:", err));
 
 // Log every incoming request
@@ -129,6 +140,7 @@ const excelUpload = multer({
 });
 // Create uploads directory if it doesn't exist (for non-Excel files)
 const fs = require("fs");
+const accademicYearRouter = require("./src/routes/accademicYear.route");
 if (!fs.existsSync("uploads")) {
   fs.mkdirSync("uploads");
 }
@@ -177,7 +189,7 @@ const corsOptions = {
       callback(new Error("Not allowed by CORS"));
     }
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: [
     "Content-Type",
     "Authorization",
@@ -200,6 +212,8 @@ app.use("/api/lesson-plans", lessonPlansRouter);
 app.use("/api/groups", groupsRouter);
 app.use("/api/salary", salaryRouter);
 app.use("/api/timetables", timetablesRouter);
+//marks module
+app.use("/api/v1/academic-years", accademicYearRouter);
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error("Error:", err);
@@ -2030,8 +2044,7 @@ const initializeDatabase = async () => {
           percentage DECIMAL(5,2) NOT NULL CHECK (percentage >= 0 AND percentage <= 100),
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+      );`);
     console.log("All required tables created or already exist.");
     return true;
   } catch (err) {
