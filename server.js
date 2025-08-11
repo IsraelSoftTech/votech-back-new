@@ -16,7 +16,7 @@ const multer = require("multer");
 const XLSX = require("xlsx");
 const execAsync = util.promisify(exec);
 const { Pool } = require("pg");
-const { Sequelize } = require("sequelize");
+const { Sequelize, DataTypes } = require("sequelize");
 require("dotenv").config();
 console.log("DATABASE_URL:", process.env.DATABASE_URL);
 const pool = new Pool({
@@ -4252,5 +4252,3 @@ app.delete("/api/applications/:id", authenticateToken, async (req, res) => {
   }
 });
 // === End Applications API ===
-// Export pool for use in other modules
-module.exports = { pool };
