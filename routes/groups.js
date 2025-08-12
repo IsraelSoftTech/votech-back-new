@@ -213,8 +213,16 @@ router.post('/:groupId/messages/with-file', authenticateToken, upload.single('fi
     }
     
     // Upload file to FTP
-    const fileName = `group_${group_id}_${Date.now()}_${req.file.originalname}`;
-    const fileUrl = await ftpService.uploadBuffer(req.file.buffer, fileName);
+    const fileName = `group-${group_id}-${Date.now()}-${req.file.originalname}`; // Remove nested directory
+    let fileUrl;
+    
+    try {
+      fileUrl = await ftpService.uploadBuffer(req.file.buffer, fileName);
+      console.log('File uploaded to FTP successfully:', fileUrl);
+    } catch (ftpError) {
+      console.error('Error uploading file to FTP:', ftpError);
+      return res.status(500).json({ error: 'Failed to upload file' });
+    }
     
     // Save message with file info
     const result = await pool.query(
@@ -290,8 +298,8 @@ router.post('/:groupId/read', authenticateToken, async (req, res) => {
     // Mark all unread messages in this group as read
     await pool.query(
       `UPDATE messages 
-       SET read = true 
-       WHERE group_id = $1 AND sender_id != $2 AND read = false`,
+       SET read_at = CURRENT_TIMESTAMP 
+       WHERE group_id = $1 AND sender_id != $2 AND read_at IS NULL`,
       [group_id, user_id]
     );
     

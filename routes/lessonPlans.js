@@ -11,6 +11,18 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 });
 
+// Activity logging function
+const logUserActivity = async (userId, activityType, activityDescription, entityType = null, entityId = null, entityName = null, ipAddress = null, userAgent = null) => {
+  try {
+    await pool.query(`
+      INSERT INTO user_activities (user_id, activity_type, activity_description, entity_type, entity_id, entity_name, ip_address, user_agent)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `, [userId, activityType, activityDescription, entityType, entityId, entityName, ipAddress, userAgent]);
+  } catch (error) {
+    console.error('Error logging user activity:', error);
+  }
+};
+
 // Authentication middleware
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -105,6 +117,8 @@ initializeLessonPlansTable();
 router.post('/', authenticateToken, upload.single('file'), async (req, res) => {
   try {
     const { title, period_type } = req.body;
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('User-Agent');
 
     if (!title) {
       return res.status(400).json({ error: 'Title is required' });
@@ -121,16 +135,7 @@ router.post('/', authenticateToken, upload.single('file'), async (req, res) => {
       console.log('Lesson plan uploaded to FTP:', fileUrl);
     } catch (error) {
       console.error('Failed to upload lesson plan to FTP:', error);
-      // Fallback to local storage
-      const uploadDir = path.join(__dirname, '..', 'uploads', 'lesson-plans');
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      const localFilename = 'lesson-plan-' + uniqueSuffix + path.extname(req.file.originalname);
-      const localFilePath = path.join(uploadDir, localFilename);
-      fs.writeFileSync(localFilePath, req.file.buffer);
-      fileUrl = `/uploads/lesson-plans/${localFilename}`;
+      return res.status(500).json({ error: 'Failed to upload lesson plan' });
     }
 
     const result = await pool.query(
@@ -138,6 +143,9 @@ router.post('/', authenticateToken, upload.single('file'), async (req, res) => {
        VALUES ($1, $2, $3, $4) RETURNING *`,
       [req.user.id, title, period_type || 'weekly', fileUrl]
     );
+
+    // Log the activity
+    await logUserActivity(req.user.id, 'create', `Uploaded lesson plan: ${title}`, 'lesson_plan', result.rows[0].id, title, ipAddress, userAgent);
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -194,6 +202,9 @@ router.get('/all', authenticateToken, async (req, res) => {
 router.put('/:id', authenticateToken, upload.single('file'), async (req, res) => {
   try {
     const lessonPlanId = parseInt(req.params.id);
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('User-Agent');
+    
     const {
       title,
       subject,
@@ -221,14 +232,6 @@ router.put('/:id', authenticateToken, upload.single('file'), async (req, res) =>
     let fileName = existingPlan.rows[0].file_name;
 
     if (req.file) {
-      // Delete old file if exists (only if it's a local file)
-      if (fileUrl && fileUrl.startsWith('/uploads/')) {
-        const oldFilePath = path.join(__dirname, '..', fileUrl);
-        if (fs.existsSync(oldFilePath)) {
-          fs.unlinkSync(oldFilePath);
-        }
-      }
-      
       try {
         const filename = `lesson_plan_${Date.now()}_${req.file.originalname}`;
         fileUrl = await ftpService.uploadBuffer(req.file.buffer, filename);
@@ -236,17 +239,7 @@ router.put('/:id', authenticateToken, upload.single('file'), async (req, res) =>
         console.log('Updated lesson plan uploaded to FTP:', fileUrl);
       } catch (error) {
         console.error('Failed to upload updated lesson plan to FTP:', error);
-        // Fallback to local storage with updated path
-        const uploadDir = path.join(__dirname, '..', 'uploads', 'lesson-plans');
-        if (!fs.existsSync(uploadDir)) {
-          fs.mkdirSync(uploadDir, { recursive: true });
-        }
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const localFilename = 'lesson-plan-' + uniqueSuffix + path.extname(req.file.originalname);
-        const localFilePath = path.join(uploadDir, localFilename);
-        fs.writeFileSync(localFilePath, req.file.buffer);
-        fileUrl = `/uploads/lesson-plans/${localFilename}`;
-        fileName = req.file.originalname;
+        return res.status(500).json({ error: 'Failed to upload updated lesson plan' });
       }
     }
 
@@ -264,6 +257,9 @@ router.put('/:id', authenticateToken, upload.single('file'), async (req, res) =>
       ]
     );
 
+    // Log the activity
+    await logUserActivity(req.user.id, 'update', `Updated lesson plan: ${title}`, 'lesson_plan', lessonPlanId, title, ipAddress, userAgent);
+
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating lesson plan:', error);
@@ -275,6 +271,8 @@ router.put('/:id', authenticateToken, upload.single('file'), async (req, res) =>
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const lessonPlanId = parseInt(req.params.id);
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('User-Agent');
 
     // Check if lesson plan belongs to user
     const existingPlan = await pool.query(
@@ -286,13 +284,11 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Lesson plan not found' });
     }
 
-    // Delete file if exists
-    if (existingPlan.rows[0].file_url) {
-      const filePath = path.join(__dirname, '..', existingPlan.rows[0].file_url);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    }
+    // Log the activity before deletion
+    await logUserActivity(req.user.id, 'delete', `Deleted lesson plan: ${existingPlan.rows[0].title}`, 'lesson_plan', lessonPlanId, existingPlan.rows[0].title, ipAddress, userAgent);
+
+    // Delete file if exists (no local delete; FTP delete optional if needed)
+    // Note: Not deleting remote files here to keep history; can add FTP delete if required.
 
     await pool.query(
       'DELETE FROM lesson_plans WHERE id = $1 AND user_id = $2',
@@ -316,10 +312,18 @@ router.put('/:id/review', authenticateToken, async (req, res) => {
 
     const lessonPlanId = parseInt(req.params.id);
     const { status, admin_comment } = req.body;
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('User-Agent');
 
     if (!['approved', 'rejected', 'pending'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
     }
+
+    // Get lesson plan details for logging
+    const planResult = await pool.query(
+      'SELECT title FROM lesson_plans WHERE id = $1',
+      [lessonPlanId]
+    );
 
     const result = await pool.query(
       `UPDATE lesson_plans SET 
@@ -331,6 +335,10 @@ router.put('/:id/review', authenticateToken, async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Lesson plan not found' });
     }
+
+    // Log the activity
+    const planTitle = planResult.rows[0]?.title || 'Unknown';
+    await logUserActivity(req.user.id, 'update', `${status} lesson plan: ${planTitle}`, 'lesson_plan', lessonPlanId, planTitle, ipAddress, userAgent);
 
     res.json(result.rows[0]);
   } catch (error) {
@@ -348,6 +356,8 @@ router.delete('/:id/admin', authenticateToken, async (req, res) => {
     }
 
     const lessonPlanId = parseInt(req.params.id);
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('User-Agent');
 
     // Get lesson plan details
     const existingPlan = await pool.query(
@@ -359,13 +369,11 @@ router.delete('/:id/admin', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Lesson plan not found' });
     }
 
-    // Delete file if exists
-    if (existingPlan.rows[0].file_url) {
-      const filePath = path.join(__dirname, '..', existingPlan.rows[0].file_url);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    }
+    // Log the activity before deletion
+    await logUserActivity(req.user.id, 'delete', `Admin deleted lesson plan: ${existingPlan.rows[0].title}`, 'lesson_plan', lessonPlanId, existingPlan.rows[0].title, ipAddress, userAgent);
+
+    // Delete file if exists (no local delete; FTP delete optional if needed)
+    // Note: Not deleting remote files here to keep history; can add FTP delete if required.
 
     await pool.query('DELETE FROM lesson_plans WHERE id = $1', [lessonPlanId]);
 

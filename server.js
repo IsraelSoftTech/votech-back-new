@@ -27,6 +27,9 @@ const lessonsRouter = require('./routes/lessons');
 const groupsRouter = require('./routes/groups');
 const salaryRouter = require('./routes/salary');
 const timetablesRouter = require('./routes/timetables');
+const casesRouter = require('./routes/cases');
+const createAttendanceRouter = require('./routes/attendance');
+const createDisciplineCasesRouter = require('./routes/discipline_cases');
 // Import FTP service at the top of the file
 const ftpService = require('./ftp-service');
 const app = express();
@@ -156,13 +159,16 @@ app.use('/api/lessons', lessonsRouter);
 app.use('/api/groups', groupsRouter);
 app.use('/api/salary', salaryRouter);
 app.use('/api/timetables', timetablesRouter);
+app.use('/api/cases', casesRouter);
+app.use('/api/attendance', createAttendanceRouter(pool, authenticateToken));
+app.use('/api/discipline-cases', createDisciplineCasesRouter(pool, authenticateToken));
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(500).json({ error: 'Internal server error', details: err.message });
 });
 // Authentication middleware
-const authenticateToken = (req, res, next) => {
+function authenticateToken(req, res, next) {
   console.log('Authenticating request...');
   const authHeader = req.headers['authorization'];
   if (!authHeader) {
@@ -186,7 +192,7 @@ const authenticateToken = (req, res, next) => {
     }
     return res.status(403).json({ error: 'Invalid token' });
   }
-};
+}
 // Public endpoints (no authentication required)
 app.get('/api/test', (req, res) => {
   res.json({ message: 'Server is running' });
@@ -641,10 +647,24 @@ app.post('/api/vocational', authenticateToken, upload.fields([
   const { title, description, year } = req.body;
   const userId = req.user.id;
   // Get file paths from uploaded files
-  const picture1 = req.files.picture1 ? `/uploads/${req.files.picture1[0].filename}` : null;
-  const picture2 = req.files.picture2 ? `/uploads/${req.files.picture2[0].filename}` : null;
-  const picture3 = req.files.picture3 ? `/uploads/${req.files.picture3[0].filename}` : null;
-  const picture4 = req.files.picture4 ? `/uploads/${req.files.picture4[0].filename}` : null;
+  let picture1 = undefined, picture2 = undefined, picture3 = undefined, picture4 = undefined;
+  try {
+    if (req.files.picture1 && req.files.picture1[0]) {
+      picture1 = await ftpService.uploadBuffer(req.files.picture1[0].buffer, `vocational/${Date.now()}_${req.files.picture1[0].originalname}`);
+    }
+    if (req.files.picture2 && req.files.picture2[0]) {
+      picture2 = await ftpService.uploadBuffer(req.files.picture2[0].buffer, `vocational/${Date.now()}_${req.files.picture2[0].originalname}`);
+    }
+    if (req.files.picture3 && req.files.picture3[0]) {
+      picture3 = await ftpService.uploadBuffer(req.files.picture3[0].buffer, `vocational/${Date.now()}_${req.files.picture3[0].originalname}`);
+    }
+    if (req.files.picture4 && req.files.picture4[0]) {
+      picture4 = await ftpService.uploadBuffer(req.files.picture4[0].buffer, `vocational/${Date.now()}_${req.files.picture4[0].originalname}`);
+    }
+  } catch (e) {
+    console.error('Failed to upload vocational pictures to FTP:', e);
+    return res.status(500).json({ error: 'Failed to upload vocational pictures' });
+  }
   try {
     const result = await pool.query(
       `INSERT INTO vocational (user_id, name, description, picture1, picture2, picture3, picture4, year)
@@ -1510,6 +1530,22 @@ async function runMigrations() {
     }
     console.log('Messages table file attachment columns migration completed');
     
+    // Check if messages table has read column
+    const readColumnCheck = await pool.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'messages' AND column_name = 'read'"
+    );
+    if (readColumnCheck.rows.length === 0) {
+      console.log('Adding read column to messages table...');
+      await pool.query('ALTER TABLE messages ADD COLUMN read BOOLEAN DEFAULT FALSE');
+      // Update existing messages to set read = true where read_at is not null
+      await pool.query('UPDATE messages SET read = true WHERE read_at IS NOT NULL');
+      // Create index on read column for better performance
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_messages_read ON messages(read)');
+      console.log('read column added to messages table successfully');
+    } else {
+      console.log('read column already exists in messages table');
+    }
+    
     // Check if user_sessions table exists
     const userSessionsTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'user_sessions'"
@@ -1836,7 +1872,7 @@ const startServer = async () => {
 startServer();
 // === Specialties endpoints ===
 // Create a new specialty
-app.post('/api/specialties', async (req, res) => {
+app.post('/api/specialties', authenticateToken, async (req, res) => {
   const { name, abbreviation } = req.body;
   if (!name) {
     return res.status(400).json({ error: 'Name is required' });
@@ -1846,6 +1882,23 @@ app.post('/api/specialties', async (req, res) => {
       'INSERT INTO specialties (name, abbreviation) VALUES ($1, $2) RETURNING *',
       [name, abbreviation || null]
     );
+    // Log activity for monitoring
+    try {
+      const ipAddress = req.ip || req.connection?.remoteAddress || null;
+      const userAgent = req.get ? req.get('User-Agent') : null;
+      await logUserActivity(
+        req.user?.id,
+        'create',
+        `Created specialty: ${name}`,
+        'specialty',
+        result.rows[0]?.id || null,
+        name || null,
+        ipAddress,
+        userAgent
+      );
+    } catch (e) {
+      console.error('Failed to log specialty creation activity:', e);
+    }
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating specialty:', error);
@@ -2019,18 +2072,11 @@ app.get('/api/students/:id/picture', async (req, res) => {
     const student = result.rows[0];
     // First try photo_url (new schema)
     if (student.photo_url) {
-      console.log(`[IMAGE] Serving photo_url for student ID: ${studentId}`);
-      // If it's a full URL, redirect to it
       if (student.photo_url.startsWith('http')) {
         return res.redirect(student.photo_url);
       }
-      // If it's a local path, serve the file
-      const fs = require('fs');
-      const path = require('path');
-      const filePath = path.join(__dirname, student.photo_url);
-      if (fs.existsSync(filePath)) {
-        return res.sendFile(filePath);
-      }
+      // If not absolute http(s), do not attempt to serve local path anymore
+      return res.status(404).send('No image');
     }
     // Fallback to student_picture (old schema - BYTEA)
     if (student.student_picture) {
@@ -2545,31 +2591,11 @@ app.post('/api/students', authenticateToken, upload.single('photo'), async (req,
     if (req.file) {
       try {
         const filename = `student_${Date.now()}_${req.file.originalname}`;
-        // Upload to FTP instead of local storage
-        const ftp = require('basic-ftp');
-        const client = new ftp.Client();
-        await client.access({
-          host: process.env.FTP_HOST || 'ftp.votechs7academygroup.com',
-          user: process.env.FTP_USER || 'votechs7academygroup',
-          password: process.env.FTP_PASS || 'Votechs7academygroup@2024',
-          secure: false
-        });
-        await client.uploadFrom(req.file.buffer, filename);
-        client.close();
-        photo_url = `http://votechs7academygroup.com/${filename}`;
+        photo_url = await ftpService.uploadBuffer(req.file.buffer, filename);
         console.log('Photo uploaded to FTP:', photo_url);
       } catch (error) {
         console.error('Failed to upload photo to FTP:', error);
-        // Fallback to local storage if FTP fails
-        const fs = require('fs');
-        const path = require('path');
-        const uploadsDir = path.join(__dirname, 'uploads');
-        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-        const filename = `student_${Date.now()}_${req.file.originalname}`;
-        const filepath = path.join(uploadsDir, filename);
-        fs.writeFileSync(filepath, req.file.buffer);
-        photo_url = `/uploads/${filename}`;
-        console.log('Photo saved locally as fallback:', photo_url);
+        return res.status(500).json({ error: 'Failed to upload photo' });
       }
     }
     // Insert student into database
@@ -2764,11 +2790,7 @@ app.post('/api/messages/with-file', authenticateToken, upload.single('file'), as
         console.log('Message file uploaded to FTP:', fileUrl);
       } catch (error) {
         console.error('Failed to upload message file to FTP:', error);
-        // Fallback to local storage
-        const fs = require('fs');
-        const uploadPath = path.join(__dirname, 'uploads', fileName);
-        fs.writeFileSync(uploadPath, file.buffer);
-        fileUrl = `/uploads/${fileName}`;
+        return res.status(500).json({ error: 'Failed to upload message file' });
       }
       fileType = file.mimetype;
     }
@@ -3140,63 +3162,33 @@ app.post('/api/teacher-application', authenticateToken, upload.fields([
     let cv_url = null;
     let photo_url = null;
     if (req.files && req.files.certificate && req.files.certificate[0]) {
-      console.log('Processing certificate file:', req.files.certificate[0].originalname);
       try {
         const filename = `certificate_${Date.now()}_${req.files.certificate[0].originalname}`;
         certificate_url = await ftpService.uploadBuffer(req.files.certificate[0].buffer, filename);
         console.log('Certificate uploaded to FTP:', certificate_url);
       } catch (error) {
         console.error('Failed to upload certificate to FTP:', error);
-        // Fallback to local storage
-        const fs = require('fs');
-        const path = require('path');
-        const uploadsDir = path.join(__dirname, 'uploads');
-        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-        const filename = `certificate_${Date.now()}_${req.files.certificate[0].originalname}`;
-        const filepath = path.join(uploadsDir, filename);
-        fs.writeFileSync(filepath, req.files.certificate[0].buffer);
-        certificate_url = `/uploads/${filename}`;
-        console.log('Certificate saved locally:', certificate_url);
+        return res.status(500).json({ error: 'Failed to upload certificate' });
       }
     }
     if (req.files && req.files.cv && req.files.cv[0]) {
-      console.log('Processing CV file:', req.files.cv[0].originalname);
       try {
         const filename = `cv_${Date.now()}_${req.files.cv[0].originalname}`;
         cv_url = await ftpService.uploadBuffer(req.files.cv[0].buffer, filename);
         console.log('CV uploaded to FTP:', cv_url);
       } catch (error) {
         console.error('Failed to upload CV to FTP:', error);
-        // Fallback to local storage
-        const fs = require('fs');
-        const path = require('path');
-        const uploadsDir = path.join(__dirname, 'uploads');
-        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-        const filename = `cv_${Date.now()}_${req.files.cv[0].originalname}`;
-        const filepath = path.join(uploadsDir, filename);
-        fs.writeFileSync(filepath, req.files.cv[0].buffer);
-        cv_url = `/uploads/${filename}`;
-        console.log('CV saved locally:', cv_url);
+        return res.status(500).json({ error: 'Failed to upload CV' });
       }
     }
     if (req.files && req.files.photo && req.files.photo[0]) {
-      console.log('Processing photo file:', req.files.photo[0].originalname);
       try {
         const filename = `photo_${Date.now()}_${req.files.photo[0].originalname}`;
         photo_url = await ftpService.uploadBuffer(req.files.photo[0].buffer, filename);
         console.log('Photo uploaded to FTP:', photo_url);
       } catch (error) {
         console.error('Failed to upload photo to FTP:', error);
-        // Fallback to local storage
-        const fs = require('fs');
-        const path = require('path');
-        const uploadsDir = path.join(__dirname, 'uploads');
-        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-        const filename = `photo_${Date.now()}_${req.files.photo[0].originalname}`;
-        const filepath = path.join(uploadsDir, filename);
-        fs.writeFileSync(filepath, req.files.photo[0].buffer);
-        photo_url = `/uploads/${filename}`;
-        console.log('Photo saved locally:', photo_url);
+        return res.status(500).json({ error: 'Failed to upload photo' });
       }
     }
     console.log('File processing completed');
@@ -3452,8 +3444,8 @@ app.get('/api/students/test', authenticateToken, async (req, res) => {
 app.get('/api/applications', authenticateToken, async (req, res) => {
   try {
     const authUser = req.user;
-    // All admin roles can view all applications
-    if (!['Admin1', 'Admin2', 'Admin3', 'Admin4'].includes(authUser.role)) {
+    // Admin1 and Admin4 can view all applications
+    if (!['Admin1', 'Admin4'].includes(authUser.role)) {
       return res.status(403).json({ error: 'Access denied. Only administrators can view all applications.' });
     }
     const result = await pool.query(`
@@ -3598,9 +3590,8 @@ app.put('/api/applications/:id', authenticateToken, upload.single('certificate')
       return res.status(404).json({ error: 'Application not found' });
     }
     const application = appResult.rows[0];
-    // Check permissions
-    const canEdit = authUser.role === 'Admin1' ||
-                   authUser.role === 'Admin4' ||
+    // Check permissions: Only Admin4 or the owner (while pending) can edit
+    const canEdit = authUser.role === 'Admin4' ||
                    (application.applicant_id === authUser.id && application.status === 'pending');
     if (!canEdit) {
       return res.status(403).json({ error: 'You cannot edit this application' });
@@ -3609,7 +3600,7 @@ app.put('/api/applications/:id', authenticateToken, upload.single('certificate')
     if (!applicant_name || !subjects || !contact) {
       return res.status(400).json({ error: 'Name, subjects, and contact are required fields' });
     }
-    // For non-Admin4 users, classes can be empty as they will be assigned by Admin4
+    // For Admin4 users, classes must be provided; others can leave it empty
     if (authUser.role === 'Admin4' && !classes) {
       return res.status(400).json({ error: 'Classes must be selected for Admin4 users' });
     }
@@ -3649,9 +3640,9 @@ app.put('/api/applications/:id/status', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
     const authUser = req.user;
-    // Only Admin1 and Admin4 can update status
-    if (authUser.role !== 'Admin1' && authUser.role !== 'Admin4') {
-      return res.status(403).json({ error: 'Access denied. Only administrators can update application status.' });
+    // Only Admin4 can update status
+    if (authUser.role !== 'Admin4') {
+      return res.status(403).json({ error: 'Access denied. Only Admin4 can update application status.' });
     }
     // Validate status
     if (!['pending', 'approved', 'rejected'].includes(status)) {
@@ -3688,9 +3679,8 @@ app.delete('/api/applications/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Application not found' });
     }
     const application = appResult.rows[0];
-    // Check permissions
-    const canDelete = authUser.role === 'Admin1' ||
-                     authUser.role === 'Admin4' ||
+    // Check permissions: Only Admin4 or the owner (while pending) can delete
+    const canDelete = authUser.role === 'Admin4' ||
                      (application.applicant_id === authUser.id && application.status === 'pending');
     if (!canDelete) {
       return res.status(403).json({ error: 'You cannot delete this application' });

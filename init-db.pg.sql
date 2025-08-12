@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS messages (
     file_name VARCHAR(255),
     file_type VARCHAR(50),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    read BOOLEAN DEFAULT FALSE
+    read_at TIMESTAMP
 );
 
 -- Group chats
@@ -90,22 +90,7 @@ CREATE TABLE IF NOT EXISTS group_participants (
     UNIQUE(group_id, user_id)
 );
 
--- Attendance
-CREATE TABLE IF NOT EXISTS attendance_sessions (
-    id SERIAL PRIMARY KEY,
-    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
-    taken_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    session_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS attendance_records (
-    id SERIAL PRIMARY KEY,
-    session_id INTEGER REFERENCES attendance_sessions(id) ON DELETE CASCADE,
-    student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
-    status VARCHAR(10) NOT NULL CHECK (status IN ('present', 'absent')),
-    marked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
+-- Subjects
 CREATE TABLE IF NOT EXISTS subjects (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
@@ -273,12 +258,100 @@ CREATE TABLE IF NOT EXISTS user_activities (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Cases table for psychosocialist counseling
+CREATE TABLE IF NOT EXISTS cases (
+    id SERIAL PRIMARY KEY,
+    case_number VARCHAR(20) UNIQUE NOT NULL,
+    student_id VARCHAR(32) REFERENCES students(student_id) ON DELETE CASCADE,
+    class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL,
+    issue_type VARCHAR(100) NOT NULL,
+    issue_description TEXT NOT NULL,
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'pending', 'resolved', 'closed')),
+    priority VARCHAR(20) DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
+    assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    started_date DATE NOT NULL,
+    resolved_date DATE,
+    sessions_completed INTEGER DEFAULT 0,
+    sessions_scheduled INTEGER DEFAULT 0,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Case sessions table for tracking counseling sessions
+CREATE TABLE IF NOT EXISTS case_sessions (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
+    session_date DATE NOT NULL,
+    session_time TIME NOT NULL,
+    session_type VARCHAR(50) NOT NULL,
+    session_notes TEXT,
+    status VARCHAR(20) DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'completed', 'cancelled', 'rescheduled')),
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Case reports table for storing generated reports
+CREATE TABLE IF NOT EXISTS case_reports (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
+    report_type VARCHAR(50) NOT NULL,
+    report_content TEXT NOT NULL,
+    report_file_url VARCHAR(255),
+    sent_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    sent_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Attendance (re-added for new server)
+CREATE TABLE IF NOT EXISTS attendance_sessions (
+    id SERIAL PRIMARY KEY,
+    type VARCHAR(10) NOT NULL CHECK (type IN ('student','teacher')),
+    class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL,
+    taken_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    session_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS attendance_records (
+    id SERIAL PRIMARY KEY,
+    session_id INTEGER REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+    student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+    teacher_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    status VARCHAR(10) NOT NULL CHECK (status IN ('present','absent')),
+    marked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(session_id, student_id),
+    UNIQUE(session_id, teacher_id),
+    CHECK ((student_id IS NOT NULL AND teacher_id IS NULL) OR (student_id IS NULL AND teacher_id IS NOT NULL))
+);
+
+-- Discipline Cases table
+CREATE TABLE IF NOT EXISTS discipline_cases (
+    id SERIAL PRIMARY KEY,
+    student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+    case_description TEXT NOT NULL,
+    status VARCHAR(20) DEFAULT 'not resolved' CHECK (status IN ('resolved', 'not resolved')),
+    recorded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    recorded_at TIMESTAMP DEFAULT NOW(),
+    resolved_at TIMESTAMP NULL,
+    resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    resolution_notes TEXT NULL
+);
+
 -- Indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_status ON user_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_user_activities_user_id ON user_activities(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_activities_created_at ON user_activities(created_at);
 CREATE INDEX IF NOT EXISTS idx_user_activities_activity_type ON user_activities(activity_type);
+
+-- Index for better performance
+CREATE INDEX IF NOT EXISTS idx_discipline_cases_student ON discipline_cases(student_id);
+CREATE INDEX IF NOT EXISTS idx_discipline_cases_class ON discipline_cases(class_id);
+CREATE INDEX IF NOT EXISTS idx_discipline_cases_status ON discipline_cases(status);
+CREATE INDEX IF NOT EXISTS idx_discipline_cases_recorded_at ON discipline_cases(recorded_at);
 
 
 
