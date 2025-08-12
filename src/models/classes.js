@@ -1,62 +1,48 @@
-const Sequelize = require('sequelize');
-module.exports = function(sequelize, DataTypes) {
-  return sequelize.define('classes', {
-    id: {
-      autoIncrement: true,
-      type: DataTypes.INTEGER,
-      allowNull: false,
-      primaryKey: true
-    },
-    name: {
-      type: DataTypes.STRING(100),
-      allowNull: false
-    },
-    registration_fee: {
-      type: DataTypes.STRING(50),
-      allowNull: true
-    },
-    bus_fee: {
-      type: DataTypes.STRING(50),
-      allowNull: true
-    },
-    internship_fee: {
-      type: DataTypes.STRING(50),
-      allowNull: true
-    },
-    remedial_fee: {
-      type: DataTypes.STRING(50),
-      allowNull: true
-    },
-    tuition_fee: {
-      type: DataTypes.STRING(50),
-      allowNull: true
-    },
-    pta_fee: {
-      type: DataTypes.STRING(50),
-      allowNull: true
-    },
-    total_fee: {
-      type: DataTypes.STRING(50),
-      allowNull: true
-    },
-    suspended: {
-      type: DataTypes.BOOLEAN,
-      allowNull: true,
-      defaultValue: false
+"use strict";
+const { Model, DataTypes } = require("sequelize");
+
+module.exports = (sequelize) => {
+  class Class extends Model {
+    static associate(models) {
+      Class.hasMany(models.ClassSubject, {
+        foreignKey: "class_id",
+        as: "classSubjects",
+      });
     }
-  }, {
-    sequelize,
-    tableName: 'classes',
-    schema: 'public',
-    timestamps: true,
-    indexes: [
-      {
-        name: "classes_pkey",
-        unique: true,
-        fields: [
-          { name: "id" },
-        ]
+  }
+
+  Class.init(
+    {
+      id: {
+        autoIncrement: true,
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        primaryKey: true,
       },
-    ]
-  });
+      name: {
+        type: DataTypes.STRING(100),
+        allowNull: false,
+      },
+      registration_fee: DataTypes.STRING(50),
+      bus_fee: DataTypes.STRING(50),
+      internship_fee: DataTypes.STRING(50),
+      remedial_fee: DataTypes.STRING(50),
+      tuition_fee: DataTypes.STRING(50),
+      pta_fee: DataTypes.STRING(50),
+      total_fee: DataTypes.STRING(50),
+      suspended: {
+        type: DataTypes.BOOLEAN,
+        allowNull: true,
+        defaultValue: false,
+      },
+    },
+    {
+      sequelize,
+      modelName: "Class",
+      tableName: "classes",
+      timestamps: true,
+    }
+  );
+
+  return Class;
 };

@@ -1,4 +1,5 @@
 const Sequelize = require("sequelize");
+
 module.exports = function (sequelize, DataTypes) {
   return sequelize.define(
     "users",
@@ -13,10 +14,17 @@ module.exports = function (sequelize, DataTypes) {
         type: DataTypes.STRING(50),
         allowNull: false,
         unique: "users_username_key",
+        validate: {
+          notEmpty: true,
+          len: [3, 50],
+        },
       },
       contact: {
         type: DataTypes.STRING(50),
         allowNull: true,
+        validate: {
+          len: [0, 50],
+        },
       },
       password: {
         type: DataTypes.STRING(255),
@@ -25,10 +33,17 @@ module.exports = function (sequelize, DataTypes) {
       name: {
         type: DataTypes.STRING(100),
         allowNull: true,
+        validate: {
+          len: [0, 100],
+        },
       },
       email: {
         type: DataTypes.STRING(255),
         allowNull: true,
+        validate: {
+          isEmail: true,
+          len: [0, 255],
+        },
       },
       gender: {
         type: DataTypes.STRING(20),
@@ -37,6 +52,9 @@ module.exports = function (sequelize, DataTypes) {
       role: {
         type: DataTypes.STRING(20),
         allowNull: false,
+        validate: {
+          notEmpty: true,
+        },
       },
       suspended: {
         type: DataTypes.BOOLEAN,

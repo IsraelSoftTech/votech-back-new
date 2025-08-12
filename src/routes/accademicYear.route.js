@@ -8,7 +8,6 @@ const { protect, restrictTo } = require("../controllers/auth.controller");
   try {
     await academicYearControllers.initAcademicYear();
     console.log("AcademicYear module ready, starting server...");
-    // start your express server here
   } catch (error) {
     console.error("Failed to initialize AcademicYear module", error);
     process.exit(1);

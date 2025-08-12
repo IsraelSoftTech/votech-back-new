@@ -141,6 +141,8 @@ const excelUpload = multer({
 // Create uploads directory if it doesn't exist (for non-Excel files)
 const fs = require("fs");
 const accademicYearRouter = require("./src/routes/accademicYear.route");
+const subjectRouter = require("./src/routes/subject.route");
+const classSubjectRouter = require("./src/routes/classSubject.route");
 if (!fs.existsSync("uploads")) {
   fs.mkdirSync("uploads");
 }
@@ -214,6 +216,8 @@ app.use("/api/salary", salaryRouter);
 app.use("/api/timetables", timetablesRouter);
 //marks module
 app.use("/api/v1/academic-years", accademicYearRouter);
+app.use("/api/v1/subjects", subjectRouter);
+app.use("/api/v1/class-subjects", classSubjectRouter);
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error("Error:", err);
