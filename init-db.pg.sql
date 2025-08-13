@@ -340,6 +340,20 @@ CREATE TABLE IF NOT EXISTS discipline_cases (
     resolution_notes TEXT NULL
 );
 
+-- Events table
+CREATE TABLE IF NOT EXISTS events (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    event_type VARCHAR(50) NOT NULL CHECK (event_type IN ('Meeting', 'Class', 'Others')),
+    event_date DATE NOT NULL,
+    event_time TIME NOT NULL,
+    participants VARCHAR(255),
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_status ON user_sessions(status);

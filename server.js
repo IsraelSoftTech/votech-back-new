@@ -30,6 +30,7 @@ const timetablesRouter = require('./routes/timetables');
 const casesRouter = require('./routes/cases');
 const createAttendanceRouter = require('./routes/attendance');
 const createDisciplineCasesRouter = require('./routes/discipline_cases');
+const createEventsRouter = require('./routes/events');
 // Import FTP service at the top of the file
 const ftpService = require('./ftp-service');
 const app = express();
@@ -162,6 +163,7 @@ app.use('/api/timetables', timetablesRouter);
 app.use('/api/cases', casesRouter);
 app.use('/api/attendance', createAttendanceRouter(pool, authenticateToken));
 app.use('/api/discipline-cases', createDisciplineCasesRouter(pool, authenticateToken));
+app.use('/api/events', createEventsRouter(pool, authenticateToken));
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err);
