@@ -78,6 +78,7 @@ const include = [
     include: [
       { association: ClassSubjectModel.associations.class },
       { association: ClassSubjectModel.associations.teacher },
+      { association: ClassSubjectModel.associations.department },
     ],
   },
 ];

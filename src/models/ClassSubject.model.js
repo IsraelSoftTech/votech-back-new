@@ -1,26 +1,25 @@
 "use strict";
-const { Model, DataTypes } = require("sequelize");
+const { Model } = require("sequelize");
 
-module.exports = (sequelize) => {
+module.exports = (sequelize, DataTypes) => {
   class ClassSubject extends Model {
     static associate(models) {
+      // Class association
       ClassSubject.belongsTo(models.Class, {
         foreignKey: "class_id",
         as: "class",
-        onUpdate: "CASCADE",
-        onDelete: "SET NULL",
       });
       ClassSubject.belongsTo(models.Subject, {
         foreignKey: "subject_id",
         as: "subject",
-        onUpdate: "CASCADE",
-        onDelete: "CASCADE",
       });
       ClassSubject.belongsTo(models.users, {
         foreignKey: "teacher_id",
         as: "teacher",
-        onUpdate: "CASCADE",
-        onDelete: "SET NULL",
+      });
+      ClassSubject.belongsTo(models.specialties, {
+        foreignKey: "department_id",
+        as: "department",
       });
     }
   }
@@ -30,41 +29,48 @@ module.exports = (sequelize) => {
       class_id: {
         type: DataTypes.INTEGER,
         allowNull: false,
-        validate: {
-          isInt: { msg: "Class ID must be an integer" },
-          min: { args: [1], msg: "Class ID must be greater than 0" },
-        },
       },
       subject_id: {
         type: DataTypes.INTEGER,
         allowNull: false,
-        validate: {
-          isInt: { msg: "Subject ID must be an integer" },
-          min: { args: [1], msg: "Subject ID must be greater than 0" },
-        },
       },
       teacher_id: {
         type: DataTypes.INTEGER,
         allowNull: false,
-        validate: {
-          isInt: { msg: "Teacher ID must be an integer" },
-          min: { args: [1], msg: "Teacher ID must be greater than 0" },
-        },
+      },
+      department_id: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
       },
     },
     {
       sequelize,
       modelName: "ClassSubject",
       tableName: "class_subjects",
-      timestamps: true,
-      paranoid: true,
-      deletedAt: "deleted_at",
       indexes: [
         {
           unique: true,
-          fields: ["class_id", "subject_id", "teacher_id"],
+          fields: ["class_id", "subject_id", "department_id"],
+          name: "unique_class_subject_department",
         },
       ],
+      validate: {
+        async oneTeacherPerClassSubjectDepartment() {
+          const exists = await ClassSubject.findOne({
+            where: {
+              class_id: this.class_id,
+              subject_id: this.subject_id,
+              department_id: this.department_id,
+            },
+          });
+
+          if (exists && exists.teacher_id !== this.teacher_id) {
+            throw new Error(
+              "Only one teacher can be assigned to the same class, subject, and department."
+            );
+          }
+        },
+      },
     }
   );
 

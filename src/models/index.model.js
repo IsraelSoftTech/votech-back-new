@@ -15,6 +15,8 @@ const ReportCardSnapshot = require("./ReportCardSnapShot.model")(
   sequelize,
   DataTypes
 );
+const specialties = require("./specialties")(sequelize, DataTypes);
+const specialty_classes = require("./specialty_classes")(sequelize, DataTypes);
 
 console.log({
   Subject,
@@ -29,12 +31,14 @@ console.log({
   ReportCardComment,
   ReportCardSnapshot,
   AcademicYear,
+  specialties,
+  specialty_classes,
 });
 
 const models = {
   Subject,
-  ClassSubject,
   Class,
+  ClassSubject,
   Teacher,
   Mark,
   users,
@@ -44,6 +48,8 @@ const models = {
   Sequence,
   ReportCardComment,
   ReportCardSnapshot,
+  specialties,
+  specialty_classes,
 };
 
 // Call associate after all models are initialized

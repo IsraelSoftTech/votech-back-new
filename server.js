@@ -143,6 +143,9 @@ const fs = require("fs");
 const accademicYearRouter = require("./src/routes/accademicYear.route");
 const subjectRouter = require("./src/routes/subject.route");
 const classSubjectRouter = require("./src/routes/classSubject.route");
+const departmentClassesRouter = require("./src/routes/departmentClasses.route");
+const teacherRouter = require("./src/routes/teachers.route");
+const classRouter = require("./src/routes/class.route");
 if (!fs.existsSync("uploads")) {
   fs.mkdirSync("uploads");
 }
@@ -214,10 +217,17 @@ app.use("/api/lesson-plans", lessonPlansRouter);
 app.use("/api/groups", groupsRouter);
 app.use("/api/salary", salaryRouter);
 app.use("/api/timetables", timetablesRouter);
+
 //marks module
+//------------------------------------------------------------------//
 app.use("/api/v1/academic-years", accademicYearRouter);
 app.use("/api/v1/subjects", subjectRouter);
 app.use("/api/v1/class-subjects", classSubjectRouter);
+app.use("/api/v1/department-classes", departmentClassesRouter);
+app.use("/api/v1/teachers", teacherRouter);
+app.use("/api/v1/classes", classRouter); //This is a modified class route please do not confuse it for the existing one, this was added later and does not affect the funtinalityof the existing class routes.
+//------------------------------------------------------------------//
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error("Error:", err);

@@ -13,6 +13,10 @@ classSubjectRouter
   .get(classSubjectControllers.readAllClassSubjects);
 
 classSubjectRouter
+  .route("/save")
+  .post(classSubjectControllers.saveClassSubjects);
+
+classSubjectRouter
   .route("/:id")
   .get(classSubjectControllers.readOneClassSubject)
   .patch(classSubjectControllers.updateClassSubject)
