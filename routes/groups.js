@@ -310,4 +310,64 @@ router.post('/:groupId/read', authenticateToken, async (req, res) => {
   }
 });
 
+// Delete a group
+router.delete('/:groupId', authenticateToken, async (req, res) => {
+  const group_id = parseInt(req.params.groupId);
+  const user_id = req.user.id;
+  
+  console.log(`DELETE /groups/${group_id} called by user ${user_id}`);
+  
+  try {
+    // First check if the group exists
+    const groupExists = await pool.query(
+      'SELECT * FROM groups WHERE id = $1',
+      [group_id]
+    );
+    
+    console.log(`Group ${group_id} exists:`, groupExists.rows.length > 0);
+    
+    if (groupExists.rows.length === 0) {
+      console.log(`Group ${group_id} not found in database`);
+      return res.status(404).json({ error: 'Group not found' });
+    }
+    
+    // Check if user is the creator of the group
+    const groupCheck = await pool.query(
+      'SELECT * FROM groups WHERE id = $1 AND creator_id = $2',
+      [group_id, user_id]
+    );
+    
+    console.log(`User ${user_id} is creator of group ${group_id}:`, groupCheck.rows.length > 0);
+    
+    if (groupCheck.rows.length === 0) {
+      console.log(`User ${user_id} is not the creator of group ${group_id}`);
+      return res.status(403).json({ error: 'You can only delete groups you created' });
+    }
+    
+    // Start a transaction
+    await pool.query('BEGIN');
+    
+    // Delete all messages in the group
+    const messagesDeleted = await pool.query('DELETE FROM messages WHERE group_id = $1', [group_id]);
+    console.log(`Deleted ${messagesDeleted.rowCount} messages from group ${group_id}`);
+    
+    // Delete all group participants
+    const participantsDeleted = await pool.query('DELETE FROM group_participants WHERE group_id = $1', [group_id]);
+    console.log(`Deleted ${participantsDeleted.rowCount} participants from group ${group_id}`);
+    
+    // Delete the group
+    const groupDeleted = await pool.query('DELETE FROM groups WHERE id = $1', [group_id]);
+    console.log(`Deleted group ${group_id}:`, groupDeleted.rowCount > 0);
+    
+    await pool.query('COMMIT');
+    
+    console.log(`Group ${group_id} deleted successfully`);
+    res.json({ message: 'Group deleted successfully' });
+  } catch (error) {
+    await pool.query('ROLLBACK');
+    console.error('Error deleting group:', error);
+    res.status(500).json({ error: 'Failed to delete group' });
+  }
+});
+
 module.exports = router; 

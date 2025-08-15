@@ -30,19 +30,33 @@ class FTPService {
         secureOptions: { rejectUnauthorized: false }
       });
       console.log(`[FTP] Connected successfully to ${this.host}`);
+      
+      // Create directories if needed
       const remotePathParts = remoteFileName.split('/');
       if (remotePathParts.length > 1) {
         const directoryPath = remotePathParts.slice(0, -1).join('/');
+        console.log(`[FTP] Creating directory: ${directoryPath}`);
         try {
+          // Try to create the full directory path
+          await client.ensureDir(directoryPath);
+          console.log(`[FTP] Directory created/verified: ${directoryPath}`);
+        } catch (dirError) {
+          console.log(`[FTP] Directory creation failed, trying step by step: ${dirError.message}`);
+          // Fallback: create directories one by one
           let currentPath = '';
           for (const part of remotePathParts.slice(0, -1)) {
             currentPath = currentPath ? `${currentPath}/${part}` : part;
             try {
-              await client.ensureDir(currentPath);
-            } catch {}
+              await client.send(`MKD ${currentPath}`);
+              console.log(`[FTP] Created directory: ${currentPath}`);
+            } catch (mkdirError) {
+              // Directory might already exist, continue
+              console.log(`[FTP] Directory ${currentPath} might already exist: ${mkdirError.message}`);
+            }
           }
-        } catch {}
+        }
       }
+      
       await client.uploadFrom(localFilePath, remoteFileName);
       const publicUrl = `${this.publicBaseUrl.replace(/\/$/, '')}/${remoteFileName}`;
       console.log(`[FTP] File uploaded successfully. Public URL: ${publicUrl}`);
@@ -89,6 +103,12 @@ class FTPService {
         tempFilePath = path.join(tempDir, fileNameOnly);
       }
       fs.writeFileSync(tempFilePath, buffer);
+      
+      // Ensure the remote directory exists before uploading
+      if (nestedDirs) {
+        await this.ensureRemoteDirectory(nestedDirs);
+      }
+      
       const publicUrl = await this.uploadFile(tempFilePath, fileName);
       try { fs.unlinkSync(tempFilePath); } catch {}
       return publicUrl;
@@ -107,6 +127,41 @@ class FTPService {
         return this.uploadBuffer(buffer, fileName, retryCount + 1);
       }
       throw new Error(`Failed to upload buffer to FTP after ${retryCount + 1} attempts: ${error.message}`);
+    }
+  }
+
+  async ensureRemoteDirectory(directoryPath) {
+    let client = null;
+    try {
+      console.log(`[FTP] Ensuring remote directory exists: ${directoryPath}`);
+      client = new ftp.Client();
+      client.ftp.verbose = false;
+      client.ftp.timeout = 30000;
+      await client.access({
+        host: this.host,
+        user: this.user,
+        password: this.password,
+        secure: this.secure,
+        secureOptions: { rejectUnauthorized: false }
+      });
+      
+      const pathParts = directoryPath.split('/');
+      let currentPath = '';
+      for (const part of pathParts) {
+        currentPath = currentPath ? `${currentPath}/${part}` : part;
+        try {
+          await client.send(`MKD ${currentPath}`);
+          console.log(`[FTP] Created directory: ${currentPath}`);
+        } catch (mkdirError) {
+          // Directory might already exist, which is fine
+          console.log(`[FTP] Directory ${currentPath} already exists or creation failed: ${mkdirError.message}`);
+        }
+      }
+    } catch (error) {
+      console.error(`[FTP] Error ensuring remote directory: ${error.message}`);
+      throw error;
+    } finally {
+      try { if (client) client.close(); } catch {}
     }
   }
 

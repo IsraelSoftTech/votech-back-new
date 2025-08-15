@@ -278,7 +278,10 @@ app.post('/api/login', async (req, res) => {
       username: user.username,
       contact: user.contact,
       created_at: user.created_at,
-      role: user.role
+      role: user.role,
+      profile_image_url: user.profile_image_url || null,
+      // Keep camelCase for frontend convenience
+      profileImageUrl: user.profile_image_url || null
     };
     // Check for academic years if admin
     let requireAcademicYear = false;
@@ -631,12 +634,44 @@ app.put('/api/classes/:id', authenticateToken, async (req, res) => {
 });
 app.delete('/api/classes/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
+  const client = await pool.connect();
   try {
-    await pool.query('DELETE FROM classes WHERE id=$1', [id]);
+    await client.query('BEGIN');
+
+    // Conditionally remove related rows in dependent tables (only if tables exist)
+    const dependentTables = [
+      { table: 'timetable_entries', column: 'class_id' },
+      { table: 'class_subjects', column: 'class_id' },
+      { table: 'subject_classifications', column: 'class_id' },
+      { table: 'subject_coefficients', column: 'class_id' },
+      { table: 'specialty_classes', column: 'class_id' },
+      { table: 'attendance_sessions', column: 'class_id' },
+    ];
+
+    for (const dep of dependentTables) {
+      const existsRes = await client.query(
+        `SELECT EXISTS (
+           SELECT FROM information_schema.tables 
+           WHERE table_schema = 'public' AND table_name = $1
+         ) AS exists`,
+        [dep.table]
+      );
+      if (existsRes.rows[0]?.exists) {
+        await client.query(`DELETE FROM ${dep.table} WHERE ${dep.column} = $1`, [id]);
+      }
+    }
+
+    // Finally delete the class
+    await client.query('DELETE FROM classes WHERE id = $1', [id]);
+
+    await client.query('COMMIT');
     res.json({ success: true });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Error deleting class:', error);
     res.status(500).json({ error: 'Error deleting class', details: error.message });
+  } finally {
+    client.release();
   }
 });
 // Vocational endpoints
@@ -1085,7 +1120,7 @@ app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
   try {
     // First, check if the class exists
     const classCheck = await pool.query(
-      'SELECT id, name, user_id FROM classes WHERE id = $1',
+      'SELECT id, name FROM classes WHERE id = $1',
       [classId]
     );
     if (classCheck.rows.length === 0) {
@@ -1094,19 +1129,18 @@ app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
     }
     const className = classCheck.rows[0].name;
     console.log(`[FEE DEBUG] ClassId: ${classId}, ClassName: ${className}`);
-    // Get all students in class with role-based access
+
+    // Determine if requester has admin-level visibility
+    const isAdminLike = typeof userRole === 'string' && (
+      userRole.toLowerCase() === 'admin' || ['Admin1','Admin2','Admin3','Admin4'].includes(userRole)
+    );
+
+    // Get all students in class (students.user_id does not exist, so no per-user restriction)
     let resultStudents;
-    if (userRole === 'admin') {
-      resultStudents = await pool.query(
-        'SELECT s.id, s.full_name, s.user_id, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.class_id = $1',
-        [classId]
-      );
-    } else {
-      resultStudents = await pool.query(
-        'SELECT s.id, s.full_name, s.user_id, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.class_id = $1 AND s.user_id = $2',
-        [classId, userId]
-      );
-    }
+    resultStudents = await pool.query(
+      'SELECT s.id, s.full_name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.class_id = $1',
+      [classId]
+    );
     const students = resultStudents.rows;
     console.log(`[FEE DEBUG] Found ${students.length} students in class ${className} (ID: ${classId})`);
     if (students.length > 0) {
@@ -1115,6 +1149,7 @@ app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
     if (students.length === 0) {
       return res.json([]);
     }
+
     // Get all fees for these students
     const studentIds = students.map(s => s.id);
     let fees = [];
@@ -1131,29 +1166,56 @@ app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
         fees = resultFees.rows;
       }
     }
-    // Map fees by student
+
+    // Map fees by student (normalize fee types)
     const feeMap = {};
     for (const f of fees) {
-      if (!feeMap[f.student_id]) feeMap[f.student_id] = {};
-      feeMap[f.student_id][f.fee_type] = parseFloat(f.paid);
+      const sid = f.student_id;
+      const key = String(f.fee_type || '').trim().toLowerCase();
+      if (!feeMap[sid]) feeMap[sid] = {};
+      feeMap[sid][key] = parseFloat(f.paid) || 0;
     }
+
+    // Helper to safely parse class fee numbers (handle nulls/commas)
+    const safeNum = (v) => {
+      if (v === null || v === undefined) return 0;
+      const n = parseFloat(String(v).replace(/,/g, ''));
+      return isNaN(n) ? 0 : n;
+    };
+
     // Build stats
     const stats = students.map(s => {
       const paid = feeMap[s.id] || {};
-      const reg = parseFloat(s.registration_fee) || 0;
-      const bus = parseFloat(s.bus_fee) || 0;
-      const intern = parseFloat(s.internship_fee) || 0;
-      const remedial = parseFloat(s.remedial_fee) || 0;
-      const tuition = parseFloat(s.tuition_fee) || 0;
-      const pta = parseFloat(s.pta_fee) || 0;
+      // Normalize keys
+      const paidReg = paid['registration'] || 0;
+      const paidBus = paid['bus'] || 0;
+      const paidIntern = paid['internship'] || 0;
+      const paidRemedial = paid['remedial'] || 0;
+      const paidTuition = paid['tuition'] || 0;
+      const paidPTA = paid['pta'] || 0;
+
+      // Class fee expectations
+      const reg = safeNum(s.registration_fee);
+      const bus = safeNum(s.bus_fee);
+      const intern = safeNum(s.internship_fee);
+      const remedial = safeNum(s.remedial_fee);
+      const tuition = safeNum(s.tuition_fee);
+      const pta = safeNum(s.pta_fee);
+
       const total = reg + bus + intern + remedial + tuition + pta;
-      const paidReg = paid['Registration'] || 0;
-      const paidBus = paid['Bus'] || 0;
-      const paidIntern = paid['Internship'] || 0;
-      const paidRemedial = paid['Remedial'] || 0;
-      const paidTuition = paid['Tuition'] || 0;
-      const paidPTA = paid['PTA'] || 0;
       const paidTotal = paidReg + paidBus + paidIntern + paidRemedial + paidTuition + paidPTA;
+
+      // Determine status robustly
+      let status = 'Owing';
+      if (total > 0) {
+        if (paidTotal >= total - 0.0001) status = 'Paid';
+        else if (paidTotal > 0) status = 'Partial';
+        else status = 'Owing';
+      } else {
+        // No configured fees for the class -> treat as Owing unless there is any payment (edge)
+        status = paidTotal > 0 ? 'Paid' : 'Owing';
+      }
+
       return {
         name: s.full_name,
         Registration: paidReg,
@@ -1164,14 +1226,14 @@ app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
         PTA: paidPTA,
         Total: paidTotal,
         Balance: Math.max(0, total - paidTotal),
-        Status: paidTotal >= total ? 'Paid' : 'Owing'
+        Status: status
       };
     });
     console.log('[FEE DEBUG] Fee stats to return:', stats);
     res.json(stats);
   } catch (error) {
     console.error('Error in /api/fees/class/:classId:', error);
-    res.status(500).json({ error: 'Error fetching class fee stats', details: error.message });
+    res.status(500).json({ error: 'Failed to fetch class fee stats' });
   }
 });
 function verifyDatabaseStructure() {
@@ -1501,6 +1563,17 @@ async function runMigrations() {
       console.log('photo_url column added to students table successfully');
     } else {
       console.log('photo_url column already exists in students table');
+    }
+    // Ensure users.profile_image_url exists
+    const profileImgCol = await pool.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'profile_image_url'"
+    );
+    if (profileImgCol.rows.length === 0) {
+      console.log('Adding profile_image_url column to users table...');
+      await pool.query('ALTER TABLE users ADD COLUMN profile_image_url VARCHAR(500)');
+      console.log('profile_image_url column added to users table successfully');
+    } else {
+      console.log('profile_image_url column already exists in users table');
     }
     // Check if applications table exists
     const applicationsTable = await pool.query(
@@ -3697,3 +3770,108 @@ app.delete('/api/applications/:id', authenticateToken, async (req, res) => {
 // === End Applications API ===
 // Export pool for use in other modules
 module.exports = { pool };
+
+// Clear all monitoring data endpoint
+app.delete('/api/monitor/clear-all', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    console.log('Clearing all monitoring data...');
+    
+    // Clear user activities
+    await pool.query('DELETE FROM user_activities');
+    console.log('User activities cleared');
+    
+    // Clear user sessions
+    await pool.query('DELETE FROM user_sessions');
+    console.log('User sessions cleared');
+    
+    // Reset user status to 'Logged Out' for all users
+    await pool.query('UPDATE users SET last_login = NULL, last_ip = NULL');
+    console.log('User statuses reset');
+    
+    res.json({ message: 'All monitoring data cleared successfully' });
+  } catch (error) {
+    console.error('Error clearing monitoring data:', error);
+    res.status(500).json({ error: 'Failed to clear monitoring data' });
+  }
+});
+
+// Configure multer for profile uploads (memory storage only - no local saving)
+const profileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit for profile images
+  },
+  fileFilter: function (req, file, cb) {
+    // Allow only images
+    const allowedTypes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/gif'
+    ];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`File type ${file.mimetype} not allowed. Only images (JPEG, PNG, GIF) are accepted.`), false);
+    }
+  }
+});
+
+// Update current user profile (username + profile image)
+app.put('/api/profile', authenticateToken, profileUpload.single('profile'), async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { username } = req.body;
+
+    // Optional: upload new profile image to FTP
+    let profile_image_url = null;
+    if (req.file) {
+      try {
+        const safeOriginal = req.file.originalname.replace(/[^a-zA-Z0-9_.-]/g, '_');
+        // Use a simpler path structure that's more likely to work
+        const fileName = `profile_${userId}_${Date.now()}_${safeOriginal}`;
+        profile_image_url = await ftpService.uploadBuffer(req.file.buffer, fileName);
+        console.log('Profile image uploaded to FTP:', profile_image_url);
+      } catch (e) {
+        console.error('Failed to upload profile image to FTP:', e);
+        return res.status(500).json({ error: 'Failed to upload profile image: ' + e.message });
+      }
+    }
+
+    // Build dynamic update
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    if (username && username.trim()) {
+      fields.push(`username = $${idx++}`);
+      values.push(username.trim());
+    }
+    if (profile_image_url) {
+      fields.push(`profile_image_url = $${idx++}`);
+      values.push(profile_image_url);
+    }
+
+    if (fields.length > 0) {
+      values.push(userId);
+      const sql = `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx}`;
+      await pool.query(sql, values);
+    }
+
+    const result = await pool.query('SELECT id, username, contact, created_at, role, profile_image_url FROM users WHERE id = $1', [userId]);
+    const user = result.rows[0];
+    return res.json({
+      message: 'Profile updated',
+      user: {
+        ...user,
+        profileImageUrl: user.profile_image_url || null
+      }
+    });
+  } catch (error) {
+    if (error && error.code === '23505') { // unique_violation
+      return res.status(400).json({ error: 'Username already exists' });
+    }
+    console.error('Error updating profile:', error);
+    return res.status(500).json({ error: 'Failed to update profile: ' + error.message });
+  }
+});
