@@ -33,9 +33,6 @@ const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 const PORT = 5000;
 
-//local imports
-const marksModuleApp = require("./src/app");
-
 if (
   !process.env.DB_NAME ||
   !process.env.DB_PASSWORD ||
@@ -147,6 +144,7 @@ const departmentClassesRouter = require("./src/routes/departmentClasses.route");
 const teacherRouter = require("./src/routes/teachers.route");
 const classRouter = require("./src/routes/class.route");
 const academicBandRouter = require("./src/routes/academicBand.route");
+const marksRouter = require("./src/routes/mark.route");
 if (!fs.existsSync("uploads")) {
   fs.mkdirSync("uploads");
 }
@@ -228,6 +226,7 @@ app.use("/api/v1/department-classes", departmentClassesRouter);
 app.use("/api/v1/teachers", teacherRouter);
 app.use("/api/v1/classes", classRouter); //This is a modified class route please do not confuse it for the existing one, this was added later and does not affect the funtinalityof the existing class routes.
 app.use("/api/v1/academic-bands", academicBandRouter);
+app.use("/api/v1/marks", marksRouter);
 //------------------------------------------------------------------//
 
 // Error handling middleware

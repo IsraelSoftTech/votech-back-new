@@ -12,7 +12,7 @@ module.exports = (sequelize) => {
     static associate(models) {
       AcademicYear.hasMany(models.Sequence, { foreignKey: "academic_year_id" });
       AcademicYear.hasMany(models.Term, { foreignKey: "academic_year_id" });
-      AcademicYear.hasMany(models.Mark, { foreignKey: "academic_year_id" });
+      AcademicYear.hasMany(models.marks, { foreignKey: "academic_year_id" });
       AcademicYear.hasMany(models.ReportCardComment, {
         foreignKey: "academic_year_id",
       });

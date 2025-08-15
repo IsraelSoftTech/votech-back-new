@@ -4,7 +4,7 @@ const Subject = require("./Subject.model")(sequelize, DataTypes);
 const ClassSubject = require("./ClassSubject.model")(sequelize, DataTypes);
 const Class = require("./classes")(sequelize, DataTypes);
 const Teacher = require("./teachers")(sequelize, DataTypes);
-const Mark = require("./Mark.model")(sequelize, DataTypes);
+const marks = require("./Mark.model")(sequelize, DataTypes);
 const users = require("./users")(sequelize, DataTypes);
 const students = require("./students")(sequelize, DataTypes);
 const AcademicYear = require("./AcademicYear.model")(sequelize, DataTypes);
@@ -24,7 +24,7 @@ console.log({
   ClassSubject,
   Class,
   Teacher,
-  Mark,
+  marks,
   users,
   students,
   Term,
@@ -42,7 +42,7 @@ const models = {
   Class,
   ClassSubject,
   Teacher,
-  Mark,
+  marks,
   users,
   students,
   AcademicYear,

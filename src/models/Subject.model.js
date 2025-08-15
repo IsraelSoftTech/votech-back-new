@@ -8,7 +8,7 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "subject_id",
         as: "classSubjects",
       });
-      Subject.hasMany(models.Mark, { foreignKey: "subject_id", as: "marks" });
+      Subject.hasMany(models.marks, { foreignKey: "subject_id", as: "marks" });
     }
   }
 

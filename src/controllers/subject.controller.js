@@ -91,7 +91,7 @@ const createSubject = catchAsync(async (req, res, next) => {
 });
 
 const readOneSubject = catchAsync(async (req, res, next) => {
-  await CRUDSubject.readOne(req.params.id, res, { include });
+  await CRUDSubject.readOne(req.params.id, res, include);
 });
 
 const readAllSubjects = catchAsync(async (req, res, next) => {
