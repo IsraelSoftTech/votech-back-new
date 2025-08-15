@@ -146,6 +146,7 @@ const classSubjectRouter = require("./src/routes/classSubject.route");
 const departmentClassesRouter = require("./src/routes/departmentClasses.route");
 const teacherRouter = require("./src/routes/teachers.route");
 const classRouter = require("./src/routes/class.route");
+const academicBandRouter = require("./src/routes/academicBand.route");
 if (!fs.existsSync("uploads")) {
   fs.mkdirSync("uploads");
 }
@@ -226,6 +227,7 @@ app.use("/api/v1/class-subjects", classSubjectRouter);
 app.use("/api/v1/department-classes", departmentClassesRouter);
 app.use("/api/v1/teachers", teacherRouter);
 app.use("/api/v1/classes", classRouter); //This is a modified class route please do not confuse it for the existing one, this was added later and does not affect the funtinalityof the existing class routes.
+app.use("/api/v1/academic-bands", academicBandRouter);
 //------------------------------------------------------------------//
 
 // Error handling middleware
