@@ -1095,21 +1095,61 @@ app.post('/api/fees', authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const { student_id, class_id, fee_type, amount, paid_at } = req.body;
   try {
-    // Optionally: check if student belongs to user
+    // Validate
+    const numericAmount = parseFloat(amount);
+    if (Number.isNaN(numericAmount) || numericAmount <= 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+
+    // Fetch student's class and expected fees
+    const resultStudent = await pool.query(
+      'SELECT s.id as student_id, s.class_id, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1',
+      [student_id]
+    );
+    if (resultStudent.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+    const srow = resultStudent.rows[0];
+
+    // Sum already paid for this fee type
+    const sumRes = await pool.query(
+      'SELECT COALESCE(SUM(amount),0) as paid FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2)',
+      [student_id, fee_type]
+    );
+    const alreadyPaid = parseFloat(sumRes.rows[0].paid) || 0;
+
+    // Determine expected for this type
+    const keyMap = {
+      registration: 'registration_fee',
+      bus: 'bus_fee',
+      internship: 'internship_fee',
+      remedial: 'remedial_fee',
+      tuition: 'tuition_fee',
+      pta: 'pta_fee'
+    };
+    const ft = String(fee_type || '').trim().toLowerCase();
+    const feeKey = keyMap[ft];
+    const expected = feeKey ? parseFloat(String(srow[feeKey] || '0').replace(/,/g, '')) : 0;
+    const remaining = Math.max(0, expected - alreadyPaid);
+    if (numericAmount > remaining) {
+      return res.status(400).json({ error: 'Amount exceeds remaining balance for this fee type' });
+    }
+
+    // Insert
     if (paid_at) {
       await pool.query(
         'INSERT INTO fees (student_id, class_id, fee_type, amount, paid_at) VALUES ($1, $2, $3, $4, $5)',
-        [student_id, class_id, fee_type, amount, paid_at]
+        [student_id, class_id || srow.class_id, fee_type, numericAmount, paid_at]
       );
     } else {
       await pool.query(
         'INSERT INTO fees (student_id, class_id, fee_type, amount) VALUES ($1, $2, $3, $4)',
-        [student_id, class_id, fee_type, amount]
+        [student_id, class_id || srow.class_id, fee_type, numericAmount]
       );
     }
     res.json({ message: 'Fee payment recorded' });
   } catch (error) {
-    res.status(500).json({ error: 'Error recording fee payment' });
+    res.status(500).json({ error: 'Error recording fee payment', details: error.message });
   }
 });
 app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
@@ -3873,5 +3913,263 @@ app.put('/api/profile', authenticateToken, profileUpload.single('profile'), asyn
     }
     console.error('Error updating profile:', error);
     return res.status(500).json({ error: 'Failed to update profile: ' + error.message });
+  }
+});
+
+// Get all payment records (consolidated by student) - students who have started or completed payments
+app.get('/api/fees/payments', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const userRole = req.user.role;
+  try {
+    let result;
+    if (userRole === 'admin' || userRole === 'Admin3' || userRole === 'Admin2' || userRole === 'Admin1' || userRole === 'Admin4') {
+      // Admins can view all payment records - consolidated by student, only those who have started or completed payments
+      result = await pool.query(`
+        SELECT 
+          s.id as student_id,
+          s.full_name as student_name,
+          s.student_id as student_number,
+          c.id as class_id,
+          c.name as class_name,
+          c.registration_fee,
+          c.bus_fee,
+          c.internship_fee,
+          c.remedial_fee,
+          c.tuition_fee,
+          c.pta_fee,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'registration' THEN f.amount ELSE 0 END), 0) as registration_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'bus' THEN f.amount ELSE 0 END), 0) as bus_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'internship' THEN f.amount ELSE 0 END), 0) as internship_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'remedial' THEN f.amount ELSE 0 END), 0) as remedial_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'tuition' THEN f.amount ELSE 0 END), 0) as tuition_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'pta' THEN f.amount ELSE 0 END), 0) as pta_paid,
+          COALESCE(SUM(f.amount), 0) as total_paid,
+          MAX(f.paid_at) as last_payment_date,
+          COUNT(f.id) as payment_count
+        FROM students s
+        JOIN classes c ON s.class_id = c.id
+        LEFT JOIN fees f ON s.id = f.student_id
+        GROUP BY s.id, s.full_name, s.student_id, c.id, c.name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee
+        HAVING COUNT(f.id) > 0
+        ORDER BY s.full_name
+      `);
+    } else {
+      // Regular users can only view their own students' payment records - consolidated by student, only those who have started or completed payments
+      result = await pool.query(`
+        SELECT 
+          s.id as student_id,
+          s.full_name as student_name,
+          s.student_id as student_number,
+          c.id as class_id,
+          c.name as class_name,
+          c.registration_fee,
+          c.bus_fee,
+          c.internship_fee,
+          c.remedial_fee,
+          c.tuition_fee,
+          c.pta_fee,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'registration' THEN f.amount ELSE 0 END), 0) as registration_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'bus' THEN f.amount ELSE 0 END), 0) as bus_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'internship' THEN f.amount ELSE 0 END), 0) as internship_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'remedial' THEN f.amount ELSE 0 END), 0) as remedial_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'tuition' THEN f.amount ELSE 0 END), 0) as tuition_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'pta' THEN f.amount ELSE 0 END), 0) as pta_paid,
+          COALESCE(SUM(f.amount), 0) as total_paid,
+          MAX(f.paid_at) as last_payment_date,
+          COUNT(f.id) as payment_count
+        FROM students s
+        JOIN classes c ON s.class_id = c.id
+        LEFT JOIN fees f ON s.id = f.student_id
+        WHERE s.user_id = $1
+        GROUP BY s.id, s.full_name, s.student_id, c.id, c.name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee
+        HAVING COUNT(f.id) > 0
+        ORDER BY s.full_name
+      `, [userId]);
+    }
+    
+    // Calculate balances and status for each student
+    const consolidatedRecords = result.rows.map(row => {
+      const totalExpected = parseFloat(row.registration_fee || 0) + 
+                           parseFloat(row.bus_fee || 0) + 
+                           parseFloat(row.internship_fee || 0) + 
+                           parseFloat(row.remedial_fee || 0) + 
+                           parseFloat(row.tuition_fee || 0) + 
+                           parseFloat(row.pta_fee || 0);
+      
+      const totalBalance = totalExpected - parseFloat(row.total_paid || 0);
+      const paymentStatus = totalBalance <= 0 ? 'Completed' : 
+                           parseFloat(row.total_paid || 0) > 0 ? 'Partial' : 'Pending';
+      
+      return {
+        ...row,
+        total_expected: totalExpected,
+        total_balance: totalBalance,
+        payment_status: paymentStatus,
+        registration_balance: Math.max(0, parseFloat(row.registration_fee || 0) - parseFloat(row.registration_paid || 0)),
+        bus_balance: Math.max(0, parseFloat(row.bus_fee || 0) - parseFloat(row.bus_paid || 0)),
+        internship_balance: Math.max(0, parseFloat(row.internship_fee || 0) - parseFloat(row.internship_paid || 0)),
+        remedial_balance: Math.max(0, parseFloat(row.remedial_fee || 0) - parseFloat(row.remedial_paid || 0)),
+        tuition_balance: Math.max(0, parseFloat(row.tuition_fee || 0) - parseFloat(row.tuition_paid || 0)),
+        pta_balance: Math.max(0, parseFloat(row.pta_fee || 0) - parseFloat(row.pta_paid || 0))
+      };
+    });
+    
+    res.json(consolidatedRecords);
+  } catch (error) {
+    console.error('Error fetching payment records:', error);
+    res.status(500).json({ error: 'Error fetching payment records', details: error.message });
+  }
+});
+
+// Update payment record
+app.put('/api/fees/payments/:id', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const userRole = req.user.role;
+  const paymentId = req.params.id;
+  const { amount } = req.body;
+  
+  try {
+    const numericAmount = parseFloat(amount);
+    if (Number.isNaN(numericAmount) || numericAmount < 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+
+    // Load payment with student and class
+    const isAdminLike = (userRole === 'admin' || ['Admin1','Admin2','Admin3','Admin4'].includes(userRole));
+    const baseQuery = `
+      SELECT f.id, f.student_id, f.fee_type, f.amount as current_amount,
+             s.class_id,
+             c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee
+      FROM fees f
+      JOIN students s ON f.student_id = s.id
+      JOIN classes c ON s.class_id = c.id
+      WHERE f.id = $1`;
+    const param = [paymentId];
+    const permQuery = isAdminLike ? baseQuery : `${baseQuery} AND s.user_id = $2`;
+    const permParams = isAdminLike ? param : [paymentId, userId];
+    const result = await pool.query(permQuery, permParams);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Payment record not found' });
+    }
+    const row = result.rows[0];
+
+    // Compute remaining for this fee type excluding this record
+    const keyMap = {
+      registration: 'registration_fee',
+      bus: 'bus_fee',
+      internship: 'internship_fee',
+      remedial: 'remedial_fee',
+      tuition: 'tuition_fee',
+      pta: 'pta_fee'
+    };
+    const ft = String(row.fee_type || '').trim().toLowerCase();
+    const feeKey = keyMap[ft];
+    const expected = feeKey ? parseFloat(String(row[feeKey] || '0').replace(/,/g, '')) : 0;
+    const sumOtherRes = await pool.query(
+      'SELECT COALESCE(SUM(amount),0) as paid FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2) AND id <> $3',
+      [row.student_id, row.fee_type, paymentId]
+    );
+    const paidOther = parseFloat(sumOtherRes.rows[0].paid) || 0;
+    const maxAllowed = Math.max(0, expected - paidOther);
+    if (numericAmount > maxAllowed) {
+      return res.status(400).json({ error: 'Amount exceeds remaining balance for this fee type' });
+    }
+
+    // Update
+    await pool.query('UPDATE fees SET amount = $1 WHERE id = $2', [numericAmount, paymentId]);
+    res.json({ message: 'Payment record updated successfully' });
+  } catch (error) {
+    console.error('Error updating payment record:', error);
+    res.status(500).json({ error: 'Error updating payment record', details: error.message });
+  }
+});
+
+// Delete payment record
+app.delete('/api/fees/payments/:id', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const userRole = req.user.role;
+  const paymentId = req.params.id;
+  
+  try {
+    // Check if payment exists and user has permission
+    let result;
+    const isAdminLike = (userRole === 'admin' || ['Admin1','Admin2','Admin3','Admin4'].includes(userRole));
+    if (isAdminLike) {
+      result = await pool.query(
+        'SELECT f.id FROM fees f JOIN students s ON f.student_id = s.id WHERE f.id = $1',
+        [paymentId]
+      );
+    } else {
+      result = await pool.query(
+        'SELECT f.id FROM fees f JOIN students s ON f.student_id = s.id WHERE f.id = $1 AND s.user_id = $2',
+        [paymentId, userId]
+      );
+    }
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Payment record not found' });
+    }
+    
+    // Delete the payment record
+    await pool.query('DELETE FROM fees WHERE id = $1', [paymentId]);
+    
+    res.json({ message: 'Payment record deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting payment record:', error);
+    res.status(500).json({ error: 'Error deleting payment record', details: error.message });
+  }
+});
+
+// Get individual payment details for a specific student
+app.get('/api/fees/payments/student/:studentId', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const userRole = req.user.role;
+  const studentId = req.params.studentId;
+  
+  try {
+    let result;
+    if (userRole === 'admin' || userRole === 'Admin3' || userRole === 'Admin2' || userRole === 'Admin1' || userRole === 'Admin4') {
+      // Admins can view all payment details
+      result = await pool.query(`
+        SELECT 
+          f.id,
+          f.student_id,
+          f.class_id,
+          f.fee_type,
+          f.amount,
+          f.paid_at,
+          s.full_name as student_name,
+          s.student_id as student_number,
+          c.name as class_name
+        FROM fees f
+        JOIN students s ON f.student_id = s.id
+        JOIN classes c ON f.class_id = c.id
+        WHERE f.student_id = $1
+        ORDER BY f.paid_at DESC
+      `, [studentId]);
+    } else {
+      // Regular users can only view their own students' payment details
+      result = await pool.query(`
+        SELECT 
+          f.id,
+          f.student_id,
+          f.class_id,
+          f.fee_type,
+          f.amount,
+          f.paid_at,
+          s.full_name as student_name,
+          s.student_id as student_number,
+          c.name as class_name
+        FROM fees f
+        JOIN students s ON f.student_id = s.id
+        JOIN classes c ON f.class_id = c.id
+        WHERE f.student_id = $1 AND s.user_id = $2
+        ORDER BY f.paid_at DESC
+      `, [studentId, userId]);
+    }
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching student payment details:', error);
+    res.status(500).json({ error: 'Error fetching student payment details', details: error.message });
   }
 });
