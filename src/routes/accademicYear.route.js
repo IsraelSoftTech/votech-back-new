@@ -17,7 +17,7 @@ const { protect, restrictTo } = require("../controllers/auth.controller");
 const accademicYearRouter = express.Router();
 
 accademicYearRouter.use(protect);
-accademicYearRouter.use(restrictTo("Admin1"));
+accademicYearRouter.use(restrictTo("Admin1", "Admin3"));
 accademicYearRouter
   .route("/")
   .post(academicYearControllers.createAcademicYear)

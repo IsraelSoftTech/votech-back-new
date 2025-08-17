@@ -1,7 +1,7 @@
 const Sequelize = require("sequelize");
 
 module.exports = function (sequelize, DataTypes) {
-  return sequelize.define(
+  const Student = sequelize.define(
     "students",
     {
       id: {
@@ -51,6 +51,14 @@ module.exports = function (sequelize, DataTypes) {
           key: "id",
         },
       },
+      academic_year_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: "AcademicYear",
+          key: "id",
+        },
+      },
       specialty_id: {
         type: DataTypes.INTEGER,
         allowNull: true,
@@ -73,6 +81,7 @@ module.exports = function (sequelize, DataTypes) {
       tableName: "students",
       schema: "public",
       timestamps: true,
+      paranoid: true,
       indexes: [
         {
           name: "students_pkey",
@@ -87,4 +96,23 @@ module.exports = function (sequelize, DataTypes) {
       ],
     }
   );
+
+  Student.associate = (models) => {
+    Student.belongsTo(models.Class, {
+      foreignKey: "class_id",
+      as: "Class",
+    });
+
+    Student.belongsTo(models.AcademicYear, {
+      foreignKey: "academic_year_id",
+      as: "AcademicYear",
+    });
+
+    Student.belongsTo(models.specialties, {
+      foreignKey: "specialty_id",
+      as: "specialties",
+    });
+  };
+
+  return Student;
 };

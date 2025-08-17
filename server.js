@@ -145,6 +145,9 @@ const teacherRouter = require("./src/routes/teachers.route");
 const classRouter = require("./src/routes/class.route");
 const academicBandRouter = require("./src/routes/academicBand.route");
 const marksRouter = require("./src/routes/mark.route");
+const studentRouter = require("./src/routes/students.route");
+const reportCardRouter = require("./src/routes/reportCard.route");
+const globalErrorController = require("./src/controllers/error.controller");
 if (!fs.existsSync("uploads")) {
   fs.mkdirSync("uploads");
 }
@@ -227,6 +230,8 @@ app.use("/api/v1/teachers", teacherRouter);
 app.use("/api/v1/classes", classRouter); //This is a modified class route please do not confuse it for the existing one, this was added later and does not affect the funtinalityof the existing class routes.
 app.use("/api/v1/academic-bands", academicBandRouter);
 app.use("/api/v1/marks", marksRouter);
+app.use("/api/v1/students", studentRouter);
+app.use("/api/v1/report-cards", reportCardRouter);
 //------------------------------------------------------------------//
 
 // Error handling middleware
@@ -2658,6 +2663,103 @@ app.get("/api/users/chat-list", authenticateToken, async (req, res) => {
   }
 });
 // Student registration endpoint
+// app.post("/api/students", upload.single("photo"), async (req, res) => {
+//   console.log("BODY:", req.body);
+//   console.log("FILE:", req.file);
+//   try {
+//     const {
+//       studentId,
+//       regDate,
+//       fullName,
+//       sex,
+//       dob,
+//       pob,
+//       father,
+//       mother,
+//       class: className,
+//       dept: specialtyName,
+//       contact,
+//     } = req.body;
+//     // Validate required fields
+//     if (
+//       !studentId ||
+//       !regDate ||
+//       !fullName ||
+//       !sex ||
+//       !dob ||
+//       !pob ||
+//       !className ||
+//       !specialtyName ||
+//       !contact
+//     ) {
+//       return res
+//         .status(400)
+//         .json({ error: "All fields except photo are required." });
+//     }
+//     // Find class_id and specialty_id
+//     const classResult = await pool.query(
+//       "SELECT id FROM classes WHERE name = $1",
+//       [className]
+//     );
+//     const specialtyResult = await pool.query(
+//       "SELECT id FROM specialties WHERE name = $1",
+//       [specialtyName]
+//     );
+//     const class_id = classResult.rows[0] ? classResult.rows[0].id : null;
+//     const specialty_id = specialtyResult.rows[0]
+//       ? specialtyResult.rows[0].id
+//       : null;
+//     // Handle photo upload
+//     let photo_url = null;
+//     if (req.file) {
+//       try {
+//         const filename = `student_${Date.now()}_${req.file.originalname}`;
+//         // Upload to FTP instead of local storage
+//         photo_url = await ftpService.uploadBuffer(req.file.buffer, filename);
+//         console.log("Photo uploaded to FTP:", photo_url);
+//       } catch (error) {
+//         console.error("Failed to upload photo to FTP:", error);
+//         // Fallback to local storage if FTP fails
+//         const fs = require("fs");
+//         const path = require("path");
+//         const uploadsDir = path.join(__dirname, "uploads");
+//         if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+//         const filename = `student_${Date.now()}_${req.file.originalname}`;
+//         const filepath = path.join(uploadsDir, filename);
+//         fs.writeFileSync(filepath, req.file.buffer);
+//         photo_url = `/uploads/${filename}`;
+//         console.log("Photo saved locally as fallback:", photo_url);
+//       }
+//     }
+//     // Insert student into DB
+//     const insertResult = await pool.query(
+//       `INSERT INTO students (student_id, registration_date, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, class_id, specialty_id, guardian_contact, photo_url)
+//        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+//       [
+//         studentId,
+//         regDate,
+//         fullName,
+//         sex,
+//         dob,
+//         pob,
+//         father,
+//         mother,
+//         class_id,
+//         specialty_id,
+//         contact,
+//         photo_url,
+//       ]
+//     );
+//     const student = insertResult.rows[0];
+//     res.status(201).json(student);
+//   } catch (error) {
+//     console.error("Error registering student:", error);
+//     res
+//       .status(500)
+//       .json({ error: "Failed to register student", details: error.message });
+//   }
+// });
+
 app.post("/api/students", upload.single("photo"), async (req, res) => {
   console.log("BODY:", req.body);
   console.log("FILE:", req.file);
@@ -2674,7 +2776,9 @@ app.post("/api/students", upload.single("photo"), async (req, res) => {
       class: className,
       dept: specialtyName,
       contact,
+      academicYear, // ✅ added
     } = req.body;
+
     // Validate required fields
     if (
       !studentId ||
@@ -2685,12 +2789,14 @@ app.post("/api/students", upload.single("photo"), async (req, res) => {
       !pob ||
       !className ||
       !specialtyName ||
-      !contact
+      !contact ||
+      !academicYear // ✅ validate academic year
     ) {
       return res
         .status(400)
         .json({ error: "All fields except photo are required." });
     }
+
     // Find class_id and specialty_id
     const classResult = await pool.query(
       "SELECT id FROM classes WHERE name = $1",
@@ -2704,17 +2810,16 @@ app.post("/api/students", upload.single("photo"), async (req, res) => {
     const specialty_id = specialtyResult.rows[0]
       ? specialtyResult.rows[0].id
       : null;
+
     // Handle photo upload
     let photo_url = null;
     if (req.file) {
       try {
         const filename = `student_${Date.now()}_${req.file.originalname}`;
-        // Upload to FTP instead of local storage
         photo_url = await ftpService.uploadBuffer(req.file.buffer, filename);
         console.log("Photo uploaded to FTP:", photo_url);
       } catch (error) {
         console.error("Failed to upload photo to FTP:", error);
-        // Fallback to local storage if FTP fails
         const fs = require("fs");
         const path = require("path");
         const uploadsDir = path.join(__dirname, "uploads");
@@ -2726,10 +2831,12 @@ app.post("/api/students", upload.single("photo"), async (req, res) => {
         console.log("Photo saved locally as fallback:", photo_url);
       }
     }
-    // Insert student into DB
+
+    // Insert student into DB including academic_year_id
     const insertResult = await pool.query(
-      `INSERT INTO students (student_id, registration_date, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, class_id, specialty_id, guardian_contact, photo_url)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      `INSERT INTO students 
+       (student_id, registration_date, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, class_id, specialty_id, guardian_contact, photo_url, academic_year_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
       [
         studentId,
         regDate,
@@ -2739,12 +2846,14 @@ app.post("/api/students", upload.single("photo"), async (req, res) => {
         pob,
         father,
         mother,
-        class_id,
-        specialty_id,
+        className,
+        specialtyName,
         contact,
         photo_url,
+        Number(academicYear), // ✅ added to query
       ]
     );
+
     const student = insertResult.rows[0];
     res.status(201).json(student);
   } catch (error) {
@@ -2754,6 +2863,7 @@ app.post("/api/students", upload.single("photo"), async (req, res) => {
       .json({ error: "Failed to register student", details: error.message });
   }
 });
+
 // GET /api/students - List all students with class/specialty names
 app.get("/api/students", async (req, res) => {
   try {
@@ -4265,5 +4375,15 @@ app.delete("/api/applications/:id", authenticateToken, async (req, res) => {
     console.error("Error deleting application:", error);
     res.status(500).json({ error: "Failed to delete application" });
   }
+});
+
+app.use(globalErrorController);
+
+app.all("*", (req, res, next) => {
+  const error = new Error(
+    `No route exists for '${req.originalUrl}' with ${req.method} request`
+  );
+  error.statusCode = 404;
+  next(error);
 });
 // === End Applications API ===
