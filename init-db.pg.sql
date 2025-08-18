@@ -59,6 +59,17 @@ CREATE TABLE IF NOT EXISTS students (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Fees (for tracking fee payments)
+CREATE TABLE IF NOT EXISTS fees (
+    id SERIAL PRIMARY KEY,
+    student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+    class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL,
+    fee_type VARCHAR(50) NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    paid_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Messages (user-to-user chat)
 CREATE TABLE IF NOT EXISTS messages (
     id SERIAL PRIMARY KEY,
@@ -108,9 +119,97 @@ CREATE TABLE IF NOT EXISTS inventory (
   estimated_cost NUMERIC(12,2) NOT NULL,
   type VARCHAR(20) NOT NULL, -- 'income' or 'expenditure'
   depreciation_rate NUMERIC(5,2),
+  budget_head_id INTEGER,
+  asset_category VARCHAR(100),
+  purchase_date DATE,
+  supplier VARCHAR(255),
+  warranty_expiry DATE,
+  location VARCHAR(255),
+  condition VARCHAR(50) DEFAULT 'new',
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Budget Heads for Financial Categorization
+CREATE TABLE IF NOT EXISTS budget_heads (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL UNIQUE,
+  code VARCHAR(50) UNIQUE,
+  category VARCHAR(100) NOT NULL, -- 'income', 'expenditure', 'asset'
+  description TEXT,
+  allocated_amount NUMERIC(15,2) DEFAULT 0,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Asset Categories for Equipment Classification
+CREATE TABLE IF NOT EXISTS asset_categories (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL UNIQUE,
+  description TEXT,
+  default_depreciation_rate NUMERIC(5,2) DEFAULT 0,
+  useful_life_years INTEGER DEFAULT 5,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Financial Transactions for Comprehensive Tracking
+CREATE TABLE IF NOT EXISTS financial_transactions (
+  id SERIAL PRIMARY KEY,
+  transaction_date DATE NOT NULL,
+  type VARCHAR(20) NOT NULL, -- 'income', 'expenditure', 'asset_purchase'
+  amount NUMERIC(15,2) NOT NULL,
+  budget_head_id INTEGER REFERENCES budget_heads(id),
+  description TEXT NOT NULL,
+  reference_type VARCHAR(50), -- 'inventory', 'salary', 'fee', etc.
+  reference_id INTEGER,
+  department VARCHAR(255),
+  created_by INTEGER REFERENCES users(id),
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Asset Depreciation Tracking
+CREATE TABLE IF NOT EXISTS asset_depreciation (
+  id SERIAL PRIMARY KEY,
+  inventory_id INTEGER REFERENCES inventory(id) ON DELETE CASCADE,
+  asset_name VARCHAR(255) NOT NULL,
+  original_cost NUMERIC(12,2) NOT NULL,
+  current_value NUMERIC(12,2) NOT NULL,
+  depreciation_rate NUMERIC(5,2) NOT NULL,
+  monthly_depreciation NUMERIC(12,2) NOT NULL,
+  total_depreciation NUMERIC(12,2) NOT NULL,
+  calculation_date DATE NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(inventory_id, calculation_date)
+);
+
+-- Sample Budget Heads Data
+INSERT INTO budget_heads (name, code, category, description, allocated_amount) VALUES
+('Tuition Fees', 'TF001', 'income', 'Student tuition and registration fees', 50000000),
+('Government Grants', 'GG001', 'income', 'Educational grants from government', 20000000),
+('Donations', 'DN001', 'income', 'Charitable donations and sponsorships', 5000000),
+('Salaries and Wages', 'SW001', 'expenditure', 'Staff and teacher salaries', 30000000),
+('Utilities', 'UT001', 'expenditure', 'Electricity, water, and internet', 5000000),
+('Maintenance', 'MN001', 'expenditure', 'Building and equipment maintenance', 3000000),
+('Office Supplies', 'OS001', 'expenditure', 'Stationery and office materials', 1000000),
+('Computer Equipment', 'CE001', 'asset', 'Computers, laptops, and IT equipment', 10000000),
+('Furniture', 'FR001', 'asset', 'Desks, chairs, and classroom furniture', 5000000),
+('Laboratory Equipment', 'LE001', 'asset', 'Science lab and technical equipment', 8000000)
+ON CONFLICT (name) DO NOTHING;
+
+-- Sample Asset Categories Data
+INSERT INTO asset_categories (name, description, default_depreciation_rate, useful_life_years) VALUES
+('Computer Equipment', 'Computers, laptops, tablets, and IT devices', 2.5, 4),
+('Furniture', 'Desks, chairs, cabinets, and classroom furniture', 1.0, 10),
+('Laboratory Equipment', 'Science lab equipment and technical instruments', 2.0, 5),
+('Vehicles', 'School buses and transport vehicles', 1.5, 7),
+('Buildings', 'School buildings and infrastructure', 0.5, 50),
+('Office Equipment', 'Printers, scanners, and office machines', 3.0, 3),
+('Audio Visual Equipment', 'Projectors, sound systems, and displays', 2.0, 5),
+('Sports Equipment', 'Physical education and sports equipment', 1.5, 8)
+ON CONFLICT (name) DO NOTHING;
 
 -- Academic Years
 CREATE TABLE IF NOT EXISTS academic_years (

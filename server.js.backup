@@ -31,6 +31,7 @@ const casesRouter = require('./routes/cases');
 const createAttendanceRouter = require('./routes/attendance');
 const createDisciplineCasesRouter = require('./routes/discipline_cases');
 const createEventsRouter = require('./routes/events');
+const createFeeRouter = require('./routes/fee');
 // Import FTP service at the top of the file
 const ftpService = require('./ftp-service');
 const app = express();
@@ -164,6 +165,7 @@ app.use('/api/cases', casesRouter);
 app.use('/api/attendance', createAttendanceRouter(pool, authenticateToken));
 app.use('/api/discipline-cases', createDisciplineCasesRouter(pool, authenticateToken));
 app.use('/api/events', createEventsRouter(pool, authenticateToken));
+app.use('/api/fee-management', createFeeRouter(pool, authenticateToken));
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err);
@@ -3166,21 +3168,13 @@ app.post('/api/subject-coefficients', authenticateToken, async (req, res) => {
 app.get('/api/inventory', authenticateToken, async (req, res) => {
   try {
     const { type } = req.query;
-    let query = `
-      SELECT i.*, 
-             bh.name as budget_head_name,
-             ac.name as asset_category_name,
-             ac.default_depreciation_rate as category_depreciation_rate
-      FROM inventory i
-      LEFT JOIN budget_heads bh ON i.budget_head_id = bh.id
-      LEFT JOIN asset_categories ac ON i.asset_category = ac.name
-    `;
+    let query = 'SELECT * FROM inventory';
     let params = [];
     if (type) {
-      query += ' WHERE i.type = $1';
+      query += ' WHERE type = $1';
       params.push(type);
     }
-    query += ' ORDER BY i.created_at DESC';
+    query += ' ORDER BY created_at DESC';
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (error) {
@@ -3188,109 +3182,49 @@ app.get('/api/inventory', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch inventory' });
   }
 });
-
 // Register new inventory item
 app.post('/api/inventory', authenticateToken, async (req, res) => {
   try {
-    const { 
-      date, item_name, department, quantity, estimated_cost, type, 
-      depreciation_rate, budget_head_id, asset_category, purchase_date,
-      supplier, warranty_expiry, location, condition 
-    } = req.body;
-    
+    const { date, item_name, department, quantity, estimated_cost, type, depreciation_rate } = req.body;
     if (!date || !item_name || !department || !quantity || !estimated_cost || !type) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
-    
     const result = await pool.query(
-      `INSERT INTO inventory (
-        date, item_name, department, quantity, estimated_cost, type, 
-        depreciation_rate, budget_head_id, asset_category, purchase_date,
-        supplier, warranty_expiry, location, condition
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) 
-      RETURNING *`,
-      [date, item_name, department, quantity, estimated_cost, type, 
-       depreciation_rate || null, budget_head_id || null, asset_category || null,
-       purchase_date || null, supplier || null, warranty_expiry || null,
-       location || null, condition || 'new']
+      `INSERT INTO inventory (date, item_name, department, quantity, estimated_cost, type, depreciation_rate)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [date, item_name, department, quantity, estimated_cost, type, depreciation_rate || null]
     );
-    
-    // Create financial transaction record
-    if (result.rows[0]) {
-      await pool.query(
-        `INSERT INTO financial_transactions (
-          transaction_date, type, amount, budget_head_id, description, 
-          reference_type, reference_id, department, created_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [date, type, estimated_cost, budget_head_id || null, 
-         `Inventory: ${item_name}`, 'inventory', result.rows[0].id, 
-         department, req.user.id]
-      );
-    }
-    
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error registering inventory item:', error);
     res.status(500).json({ error: 'Failed to register inventory item' });
   }
 });
-
 // Update inventory item
 app.put('/api/inventory/:id', authenticateToken, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { 
-      date, item_name, department, quantity, estimated_cost, type, 
-      depreciation_rate, budget_head_id, asset_category, purchase_date,
-      supplier, warranty_expiry, location, condition 
-    } = req.body;
-    
+    const { date, item_name, department, quantity, estimated_cost, type, depreciation_rate } = req.body;
     const result = await pool.query(
       `UPDATE inventory SET
         date = $1, item_name = $2, department = $3, quantity = $4,
-        estimated_cost = $5, type = $6, depreciation_rate = $7, 
-        budget_head_id = $8, asset_category = $9, purchase_date = $10,
-        supplier = $11, warranty_expiry = $12, location = $13, 
-        condition = $14, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $15 RETURNING *`,
-      [date, item_name, department, quantity, estimated_cost, type, 
-       depreciation_rate || null, budget_head_id || null, asset_category || null,
-       purchase_date || null, supplier || null, warranty_expiry || null,
-       location || null, condition || 'new', id]
+        estimated_cost = $5, type = $6, depreciation_rate = $7, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $8 RETURNING *`,
+      [date, item_name, department, quantity, estimated_cost, type, depreciation_rate || null, id]
     );
-    
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Inventory item not found' });
     }
-    
-    // Update financial transaction record
-    await pool.query(
-      `UPDATE financial_transactions SET
-        transaction_date = $1, amount = $2, budget_head_id = $3,
-        description = $4, department = $5, updated_at = CURRENT_TIMESTAMP
-       WHERE reference_type = 'inventory' AND reference_id = $6`,
-      [date, estimated_cost, budget_head_id || null, 
-       `Inventory: ${item_name}`, department, id]
-    );
-    
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating inventory item:', error);
     res.status(500).json({ error: 'Failed to update inventory item' });
   }
 });
-
 // Delete inventory item
 app.delete('/api/inventory/:id', authenticateToken, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    
-    // Delete related financial transaction first
-    await pool.query(
-      'DELETE FROM financial_transactions WHERE reference_type = $1 AND reference_id = $2',
-      ['inventory', id]
-    );
-    
     const result = await pool.query('DELETE FROM inventory WHERE id = $1 RETURNING *', [id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Inventory item not found' });
@@ -3301,392 +3235,955 @@ app.delete('/api/inventory/:id', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to delete inventory item' });
   }
 });
-
-// === BUDGET HEADS ENDPOINTS ===
-// Get all budget heads
-app.get('/api/budget-heads', authenticateToken, async (req, res) => {
+// === DEPARTMENTS ENDPOINTS ===
+// Get all departments
+app.get('/api/departments', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT * FROM budget_heads WHERE is_active = true ORDER BY category, name'
-    );
-    res.json(result.rows);
+    // Get departments from specialties table (since that's where departments are stored)
+    const result = await pool.query('SELECT DISTINCT name as department FROM specialties ORDER BY name');
+    // Also include any departments from inventory table
+    const inventoryDepartments = await pool.query('SELECT DISTINCT department FROM inventory WHERE department IS NOT NULL ORDER BY department');
+    // Combine and deduplicate departments
+    const allDepartments = new Set();
+    result.rows.forEach(row => allDepartments.add(row.department));
+    inventoryDepartments.rows.forEach(row => allDepartments.add(row.department));
+    const departments = Array.from(allDepartments).sort();
+    res.json(departments.map(dept => ({ name: dept })));
   } catch (error) {
-    console.error('Error fetching budget heads:', error);
-    res.status(500).json({ error: 'Failed to fetch budget heads' });
+    console.error('Error fetching departments:', error);
+    res.status(500).json({ error: 'Failed to fetch departments' });
   }
 });
-
-// Create new budget head
-app.post('/api/budget-heads', authenticateToken, async (req, res) => {
+// ===== TEACHER APPLICATION ENDPOINTS =====
+// Submit teacher application
+app.post('/api/teacher-application', authenticateToken, upload.fields([
+  { name: 'certificate', maxCount: 1 },
+  { name: 'cv', maxCount: 1 },
+  { name: 'photo', maxCount: 1 }
+]), async (req, res) => {
   try {
-    const { name, code, category, description, allocated_amount } = req.body;
-    
-    if (!name || !category) {
-      return res.status(400).json({ error: 'Name and category are required' });
+    console.log('Teacher application submission started');
+    console.log('User ID:', req.user.id);
+    console.log('Request body:', req.body);
+    console.log('Request files:', req.files ? Object.keys(req.files) : 'No files');
+    const userId = req.user.id;
+    const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
+    // Validate required fields
+    if (!full_name || !sex || !id_card || !dob || !pob || !subjects || !classes || !contact) {
+      console.log('Missing required fields:', { full_name, sex, id_card, dob, pob, subjects, classes, contact });
+      return res.status(400).json({ error: 'All fields are required' });
     }
-    
-    const result = await pool.query(
-      `INSERT INTO budget_heads (name, code, category, description, allocated_amount)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [name, code || null, category, description || null, allocated_amount || 0]
-    );
-    
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Error creating budget head:', error);
-    if (error.code === '23505') { // Unique violation
-      res.status(400).json({ error: 'Budget head with this name or code already exists' });
-    } else {
-      res.status(500).json({ error: 'Failed to create budget head' });
-    }
-  }
-});
-
-// Update budget head
-app.put('/api/budget-heads/:id', authenticateToken, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-    const { name, code, category, description, allocated_amount, is_active } = req.body;
-    
-    const result = await pool.query(
-      `UPDATE budget_heads SET
-        name = $1, code = $2, category = $3, description = $4, 
-        allocated_amount = $5, is_active = $6, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $7 RETURNING *`,
-      [name, code || null, category, description || null, 
-       allocated_amount || 0, is_active !== false, id]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Budget head not found' });
-    }
-    
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error updating budget head:', error);
-    res.status(500).json({ error: 'Failed to update budget head' });
-  }
-});
-
-// Delete budget head
-app.delete('/api/budget-heads/:id', authenticateToken, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-    
-    // Check if budget head is being used in any transactions
-    const usageCheck = await pool.query(
-      'SELECT COUNT(*) as count FROM financial_transactions WHERE budget_head_id = $1',
-      [id]
-    );
-    
-    if (parseInt(usageCheck.rows[0].count) > 0) {
-      return res.status(400).json({ 
-        error: 'Cannot delete budget head. It is being used in financial transactions.' 
-      });
-    }
-    
-    const result = await pool.query('DELETE FROM budget_heads WHERE id = $1 RETURNING *', [id]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Budget head not found' });
-    }
-    
-    res.json({ message: 'Budget head deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting budget head:', error);
-    res.status(500).json({ error: 'Failed to delete budget head' });
-  }
-});
-
-// === ASSET CATEGORIES ENDPOINTS ===
-// Get all asset categories
-app.get('/api/asset-categories', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(
-      'SELECT * FROM asset_categories WHERE is_active = true ORDER BY name'
-    );
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching asset categories:', error);
-    res.status(500).json({ error: 'Failed to fetch asset categories' });
-  }
-});
-
-// Create new asset category
-app.post('/api/asset-categories', authenticateToken, async (req, res) => {
-  try {
-    const { name, description, default_depreciation_rate, useful_life_years } = req.body;
-    
-    if (!name) {
-      return res.status(400).json({ error: 'Name is required' });
-    }
-    
-    const result = await pool.query(
-      `INSERT INTO asset_categories (name, description, default_depreciation_rate, useful_life_years)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [name, description || null, default_depreciation_rate || 0, useful_life_years || 5]
-    );
-    
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Error creating asset category:', error);
-    if (error.code === '23505') { // Unique violation
-      res.status(400).json({ error: 'Asset category with this name already exists' });
-    } else {
-      res.status(500).json({ error: 'Failed to create asset category' });
-    }
-  }
-});
-
-// Update asset category
-app.put('/api/asset-categories/:id', authenticateToken, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-    const { name, description, default_depreciation_rate, useful_life_years, is_active } = req.body;
-    
-    const result = await pool.query(
-      `UPDATE asset_categories SET
-        name = $1, description = $2, default_depreciation_rate = $3, 
-        useful_life_years = $4, is_active = $5, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $6 RETURNING *`,
-      [name, description || null, default_depreciation_rate || 0, 
-       useful_life_years || 5, is_active !== false, id]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Asset category not found' });
-    }
-    
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error updating asset category:', error);
-    res.status(500).json({ error: 'Failed to update asset category' });
-  }
-});
-
-// Delete asset category
-app.delete('/api/asset-categories/:id', authenticateToken, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-    
-    // Check if asset category is being used in any inventory items
-    const usageCheck = await pool.query(
-      'SELECT COUNT(*) as count FROM inventory WHERE asset_category = (SELECT name FROM asset_categories WHERE id = $1)',
-      [id]
-    );
-    
-    if (parseInt(usageCheck.rows[0].count) > 0) {
-      return res.status(400).json({ 
-        error: 'Cannot delete asset category. It is being used in inventory items.' 
-      });
-    }
-    
-    const result = await pool.query('DELETE FROM asset_categories WHERE id = $1 RETURNING *', [id]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Asset category not found' });
-    }
-    
-    res.json({ message: 'Asset category deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting asset category:', error);
-    res.status(500).json({ error: 'Failed to delete asset category' });
-  }
-});
-
-// === FINANCIAL REPORTS ENDPOINTS ===
-// Get financial summary for reporting
-app.get('/api/financial-summary', authenticateToken, async (req, res) => {
-  try {
-    const { period, start_date, end_date, month, year } = req.query;
-    
-    let dateFilter = '';
-    let params = [];
-    
-    if (period === 'date' && start_date && end_date) {
-      dateFilter = 'WHERE transaction_date BETWEEN $1 AND $2';
-      params = [start_date, end_date];
-    } else if (period === 'month' && month && year) {
-      dateFilter = 'WHERE EXTRACT(MONTH FROM transaction_date) = $1 AND EXTRACT(YEAR FROM transaction_date) = $2';
-      params = [parseInt(month), parseInt(year)];
-    } else if (period === 'year' && year) {
-      dateFilter = 'WHERE EXTRACT(YEAR FROM transaction_date) = $1';
-      params = [parseInt(year)];
-    }
-    
-    const query = `
-      SELECT 
-        type,
-        SUM(amount) as total_amount,
-        COUNT(*) as transaction_count
-      FROM financial_transactions
-      ${dateFilter}
-      GROUP BY type
-      ORDER BY type
-    `;
-    
-    const result = await pool.query(query, params);
-    
-    // Calculate totals
-    const summary = {
-      income: 0,
-      expenditure: 0,
-      asset_purchase: 0,
-      net_balance: 0,
-      period: period,
-      period_value: period === 'date' ? `${start_date} to ${end_date}` : 
-                   period === 'month' ? `${month}/${year}` : year,
-      transactions: result.rows
-    };
-    
-    result.rows.forEach(row => {
-      if (row.type === 'income') summary.income = parseFloat(row.total_amount);
-      else if (row.type === 'expenditure') summary.expenditure = parseFloat(row.total_amount);
-      else if (row.type === 'asset_purchase') summary.asset_purchase = parseFloat(row.total_amount);
-    });
-    
-    summary.net_balance = summary.income - summary.expenditure - summary.asset_purchase;
-    
-    res.json(summary);
-  } catch (error) {
-    console.error('Error fetching financial summary:', error);
-    res.status(500).json({ error: 'Failed to fetch financial summary' });
-  }
-});
-
-// Get balance sheet
-app.get('/api/balance-sheet', authenticateToken, async (req, res) => {
-  try {
-    const { as_of_date } = req.query;
-    const date = as_of_date || new Date().toISOString().split('T')[0];
-    
-    // Get total assets (inventory items that are assets - typically equipment/equipment purchases)
-    const assetsQuery = `
-      SELECT 
-        SUM(estimated_cost) as total_assets,
-        SUM(estimated_cost) as current_value
-      FROM inventory 
-      WHERE type = 'expenditure' AND estimated_cost > 0
-    `;
-    
-    const assetsResult = await pool.query(assetsQuery);
-    
-    // Get total liabilities (expenditures that are not assets)
-    const liabilitiesQuery = `
-      SELECT SUM(amount) as total_liabilities
-      FROM financial_transactions 
-      WHERE type = 'expenditure' AND transaction_date <= $1
-    `;
-    
-    const liabilitiesResult = await pool.query(liabilitiesQuery, [date]);
-    
-    // Get total equity (income - expenditures)
-    const equityQuery = `
-        SELECT 
-        SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as total_income,
-        SUM(CASE WHEN type = 'expenditure' THEN amount ELSE 0 END) as total_expenditures
-      FROM financial_transactions 
-      WHERE transaction_date <= $1
-    `;
-    
-    const equityResult = await pool.query(equityQuery, [date]);
-    
-    const totalAssets = parseFloat(assetsResult.rows[0]?.total_assets || 0);
-    const currentValue = parseFloat(assetsResult.rows[0]?.current_value || 0);
-    const totalLiabilities = parseFloat(liabilitiesResult.rows[0]?.total_liabilities || 0);
-    const totalIncome = parseFloat(equityResult.rows[0]?.total_income || 0);
-    const totalExpenditures = parseFloat(equityResult.rows[0]?.total_expenditures || 0);
-    
-    const balanceSheet = {
-      as_of_date: date,
-      assets: {
-        total_assets: totalAssets,
-        current_value: currentValue,
-        depreciation: 0 // Simplified for now
-      },
-      liabilities: {
-        total_liabilities: totalLiabilities
-      },
-      equity: {
-        total_income: totalIncome,
-        total_expenditures: totalExpenditures,
-        net_equity: totalIncome - totalExpenditures
-      },
-      totals: {
-        assets_plus_equity: currentValue + (totalIncome - totalExpenditures),
-        liabilities_plus_equity: totalLiabilities + (totalIncome - totalExpenditures)
-      }
-    };
-    
-    res.json(balanceSheet);
-  } catch (error) {
-    console.error('Error generating balance sheet:', error);
-    res.status(500).json({ error: 'Failed to generate balance sheet', details: error.message });
-  }
-});
-
-// Calculate monthly depreciation for all assets
-app.post('/api/calculate-depreciation', authenticateToken, async (req, res) => {
-  try {
-    const { month, year } = req.body;
-    const calculationDate = new Date(year, month - 1, 1);
-    
-    // Get all expenditure items (assets) with depreciation rates
-    const assetsQuery = `
-      SELECT id, item_name, estimated_cost, depreciation_rate, purchase_date
-      FROM inventory 
-      WHERE type = 'expenditure' AND depreciation_rate > 0 AND purchase_date IS NOT NULL
-    `;
-    
-    const assetsResult = await pool.query(assetsQuery);
-    
-    const depreciationRecords = [];
-    
-    for (const asset of assetsResult.rows) {
-      const purchaseDate = new Date(asset.purchase_date);
-      const monthsSincePurchase = (calculationDate.getFullYear() - purchaseDate.getFullYear()) * 12 + 
-                                 (calculationDate.getMonth() - purchaseDate.getMonth());
-      
-      if (monthsSincePurchase > 0) {
-        const monthlyDepreciation = (parseFloat(asset.estimated_cost) * parseFloat(asset.depreciation_rate)) / 100;
-        const totalDepreciation = monthlyDepreciation * monthsSincePurchase;
-        const currentValue = parseFloat(asset.estimated_cost) - totalDepreciation;
-        
-        // Insert or update depreciation record
-        await pool.query(
-          `INSERT INTO asset_depreciation (
-            inventory_id, asset_name, original_cost, current_value, 
-            depreciation_rate, monthly_depreciation, total_depreciation, calculation_date
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-          ON CONFLICT (inventory_id, calculation_date) 
-          DO UPDATE SET
-            current_value = EXCLUDED.current_value,
-            total_depreciation = EXCLUDED.total_depreciation,
-            updated_at = CURRENT_TIMESTAMP`,
-          [asset.id, asset.item_name, asset.estimated_cost, currentValue,
-           asset.depreciation_rate, monthlyDepreciation, totalDepreciation, calculationDate]
-        );
-        
-        depreciationRecords.push({
-          asset_name: asset.item_name,
-          original_cost: asset.estimated_cost,
-          current_value: currentValue,
-          monthly_depreciation: monthlyDepreciation,
-          total_depreciation: totalDepreciation
-        });
+    console.log('All required fields present');
+    // Upload files to FTP and get URLs
+    let certificate_url = null;
+    let cv_url = null;
+    let photo_url = null;
+    if (req.files && req.files.certificate && req.files.certificate[0]) {
+      try {
+        const filename = `certificate_${Date.now()}_${req.files.certificate[0].originalname}`;
+        certificate_url = await ftpService.uploadBuffer(req.files.certificate[0].buffer, filename);
+        console.log('Certificate uploaded to FTP:', certificate_url);
+      } catch (error) {
+        console.error('Failed to upload certificate to FTP:', error);
+        return res.status(500).json({ error: 'Failed to upload certificate' });
       }
     }
-    
+    if (req.files && req.files.cv && req.files.cv[0]) {
+      try {
+        const filename = `cv_${Date.now()}_${req.files.cv[0].originalname}`;
+        cv_url = await ftpService.uploadBuffer(req.files.cv[0].buffer, filename);
+        console.log('CV uploaded to FTP:', cv_url);
+      } catch (error) {
+        console.error('Failed to upload CV to FTP:', error);
+        return res.status(500).json({ error: 'Failed to upload CV' });
+      }
+    }
+    if (req.files && req.files.photo && req.files.photo[0]) {
+      try {
+        const filename = `photo_${Date.now()}_${req.files.photo[0].originalname}`;
+        photo_url = await ftpService.uploadBuffer(req.files.photo[0].buffer, filename);
+        console.log('Photo uploaded to FTP:', photo_url);
+      } catch (error) {
+        console.error('Failed to upload photo to FTP:', error);
+        return res.status(500).json({ error: 'Failed to upload photo' });
+      }
+    }
+    console.log('File processing completed');
+    // Check if teacher application already exists for this user
+    console.log('Checking for existing teacher application');
+    const existingResult = await pool.query(
+      'SELECT * FROM teachers WHERE user_id = $1',
+      [userId]
+    );
+    if (existingResult.rows.length > 0) {
+      console.log('Teacher application already exists for user:', userId);
+      return res.status(400).json({ error: 'Teacher application already exists for this user' });
+    }
+    console.log('Creating new teacher application');
+    // Create new teacher application
+    const result = await pool.query(
+      `INSERT INTO teachers (user_id, full_name, sex, id_card, dob, pob, subjects, classes, contact, certificate_url, cv_url, photo_url, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending') RETURNING *`,
+      [userId, full_name, sex, id_card, dob, pob, subjects, classes, contact, certificate_url, cv_url, photo_url]
+    );
+    console.log('Teacher application created successfully:', result.rows[0].id);
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error submitting teacher application:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ error: 'Failed to submit teacher application: ' + error.message });
+  }
+});
+// Edit teacher application
+app.put('/api/teacher-application/:id', authenticateToken, upload.fields([
+  { name: 'certificate', maxCount: 1 },
+  { name: 'cv', maxCount: 1 },
+  { name: 'photo', maxCount: 1 }
+]), async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const teacherId = parseInt(req.params.id);
+    const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
+    // Validate required fields
+    if (!full_name || !sex || !id_card || !dob || !pob || !subjects || !classes || !contact) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+    // Upload files to FTP and get URLs
+    let certificate_url = undefined;
+    let cv_url = undefined;
+    let photo_url = undefined;
+    if (req.files && req.files.certificate && req.files.certificate[0]) {
+      try {
+        const filename = `certificate_${Date.now()}_${req.files.certificate[0].originalname}`;
+        certificate_url = await ftpService.uploadBuffer(req.files.certificate[0].buffer, filename);
+        console.log('Certificate uploaded to FTP:', certificate_url);
+      } catch (error) {
+        console.error('Failed to upload certificate to FTP:', error);
+        // Fallback to local storage
+        const fs = require('fs');
+        const path = require('path');
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+        const filename = `certificate_${Date.now()}_${req.files.certificate[0].originalname}`;
+        const filepath = path.join(uploadsDir, filename);
+        fs.writeFileSync(filepath, req.files.certificate[0].buffer);
+        certificate_url = `/uploads/${filename}`;
+      }
+    }
+    if (req.files && req.files.cv && req.files.cv[0]) {
+      try {
+        const filename = `cv_${Date.now()}_${req.files.cv[0].originalname}`;
+        cv_url = await ftpService.uploadBuffer(req.files.cv[0].buffer, filename);
+        console.log('CV uploaded to FTP:', cv_url);
+      } catch (error) {
+        console.error('Failed to upload CV to FTP:', error);
+        // Fallback to local storage
+        const fs = require('fs');
+        const path = require('path');
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+        const filename = `cv_${Date.now()}_${req.files.cv[0].originalname}`;
+        const filepath = path.join(uploadsDir, filename);
+        fs.writeFileSync(filepath, req.files.cv[0].buffer);
+        cv_url = `/uploads/${filename}`;
+      }
+    }
+    if (req.files && req.files.photo && req.files.photo[0]) {
+      try {
+        const filename = `photo_${Date.now()}_${req.files.photo[0].originalname}`;
+        photo_url = await ftpService.uploadBuffer(req.files.photo[0].buffer, filename);
+        console.log('Photo uploaded to FTP:', photo_url);
+      } catch (error) {
+        console.error('Failed to upload photo to FTP:', error);
+        // Fallback to local storage
+        const fs = require('fs');
+        const path = require('path');
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+        const filename = `photo_${Date.now()}_${req.files.photo[0].originalname}`;
+        const filepath = path.join(uploadsDir, filename);
+        fs.writeFileSync(filepath, req.files.photo[0].buffer);
+        photo_url = `/uploads/${filename}`;
+      }
+    }
+    // Verify the teacher application belongs to the user
+    const existingResult = await pool.query(
+      'SELECT * FROM teachers WHERE id = $1 AND user_id = $2',
+      [teacherId, userId]
+    );
+    if (existingResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Teacher application not found' });
+    }
+    // Build update query dynamically
+    let updateFields = ['full_name = $1', 'sex = $2', 'id_card = $3', 'dob = $4', 'pob = $5', 'subjects = $6', 'classes = $7', 'contact = $8'];
+    let updateValues = [full_name, sex, id_card, dob, pob, subjects, classes, contact];
+    let paramIndex = 9;
+    if (certificate_url !== undefined) {
+      updateFields.push(`certificate_url = $${paramIndex}`);
+      updateValues.push(certificate_url);
+      paramIndex++;
+    }
+    if (cv_url !== undefined) {
+      updateFields.push(`cv_url = $${paramIndex}`);
+      updateValues.push(cv_url);
+      paramIndex++;
+    }
+    if (photo_url !== undefined) {
+      updateFields.push(`photo_url = $${paramIndex}`);
+      updateValues.push(photo_url);
+      paramIndex++;
+    }
+    updateValues.push(teacherId);
+    const updateQuery = `UPDATE teachers SET ${updateFields.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
+    const result = await pool.query(updateQuery, updateValues);
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating teacher application:', error);
+    res.status(500).json({ error: 'Failed to update teacher application: ' + error.message });
+  }
+});
+// Delete teacher application
+app.delete('/api/teacher-application/:id', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const teacherId = parseInt(req.params.id);
+    // Verify the teacher application belongs to the user
+    const existingResult = await pool.query(
+      'SELECT * FROM teachers WHERE id = $1 AND user_id = $2',
+      [teacherId, userId]
+    );
+    if (existingResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Teacher application not found' });
+    }
+    // Delete the teacher application
+    await pool.query(
+      'DELETE FROM teachers WHERE id = $1 AND user_id = $2',
+      [teacherId, userId]
+    );
+    res.json({ message: 'Teacher application deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting teacher application:', error);
+    res.status(500).json({ error: 'Failed to delete teacher application' });
+  }
+});
+// Get teacher application for current user
+app.get('/api/teacher-application', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const result = await pool.query(
+      'SELECT * FROM teachers WHERE user_id = $1',
+      [userId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No teacher application found' });
+    }
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching teacher application:', error);
+    res.status(500).json({ error: 'Failed to fetch teacher application' });
+  }
+});
+// ===== END TEACHER APPLICATION ENDPOINTS =====
+// Error handling middleware for multer errors
+app.use((error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'File too large. Maximum file size is 10MB.' });
+    }
+    if (error.code === 'LIMIT_FILE_COUNT') {
+      return res.status(400).json({ error: 'Too many files. Maximum 3 files allowed.' });
+    }
+    if (error.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({ error: 'Unexpected file field.' });
+    }
+    return res.status(400).json({ error: 'File upload error: ' + error.message });
+  }
+  if (error.message && error.message.includes('File type')) {
+    return res.status(400).json({ error: error.message });
+  }
+  next(error);
+});
+// Get departments for inventory
+app.get('/api/departments', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT DISTINCT department FROM inventory ORDER BY department');
+    res.json(result.rows.map(row => row.department));
+  } catch (error) {
+    console.error('Error fetching departments:', error);
+    res.status(500).json({ error: 'Failed to fetch departments' });
+  }
+});
+// Get students by class
+app.get('/api/students/class/:classId', authenticateToken, async (req, res) => {
+  try {
+    const { classId } = req.params;
+    console.log(`[DEBUG] Fetching students for class ID: ${classId}`);
+    // Validate class exists
+    const classResult = await pool.query('SELECT * FROM classes WHERE id = $1', [classId]);
+    if (classResult.rows.length === 0) {
+      console.log(`[DEBUG] Class not found with ID: ${classId}`);
+      return res.status(404).json({ error: 'Class not found' });
+    }
+    console.log(`[DEBUG] Class found: ${classResult.rows[0].name}`);
+    // Get students for the class
+    const result = await pool.query(`
+      SELECT
+        id,
+        full_name,
+        student_id,
+        class_id
+      FROM students
+      WHERE class_id = $1
+      ORDER BY full_name
+    `, [classId]);
+    console.log(`[DEBUG] Found ${result.rows.length} students for class ${classId}`);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching students by class:', error);
+    res.status(500).json({ error: 'Failed to fetch students for class', details: error.message });
+  }
+});
+// Test endpoint to check students table
+app.get('/api/students/test', authenticateToken, async (req, res) => {
+  try {
+    console.log('[DEBUG] Testing students table access');
+    const result = await pool.query('SELECT COUNT(*) as count FROM students');
+    console.log(`[DEBUG] Students table has ${result.rows[0].count} records`);
+    res.json({ message: 'Students table accessible', count: result.rows[0].count });
+  } catch (error) {
+    console.error('Error testing students table:', error);
+    res.status(500).json({ error: 'Students table test failed', details: error.message });
+  }
+});
+// === Lesson Plans API ===
+// === Applications API ===
+// Get all applications (for all admins)
+app.get('/api/applications', authenticateToken, async (req, res) => {
+  try {
+    const authUser = req.user;
+    // Admin1 and Admin4 can view all applications
+    if (!['Admin1', 'Admin4'].includes(authUser.role)) {
+      return res.status(403).json({ error: 'Access denied. Only administrators can view all applications.' });
+    }
+    const result = await pool.query(`
+      SELECT
+        a.*,
+        u.username as applicant_username,
+        u.name as applicant_full_name,
+        u.role as applicant_role
+      FROM applications a
+      JOIN users u ON a.applicant_id = u.id
+      ORDER BY a.submitted_at DESC
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching applications:', error);
+    res.status(500).json({ error: 'Failed to fetch applications' });
+  }
+});
+// Get user's own application
+app.get('/api/applications/user/:userId', authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const authUser = req.user;
+    // Users can only view their own application
+    if (authUser.id !== parseInt(userId) && authUser.role !== 'Admin1' && authUser.role !== 'Admin4') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    const result = await pool.query(`
+      SELECT * FROM applications
+      WHERE applicant_id = $1
+    `, [userId]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Application not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching user application:', error);
+    res.status(500).json({ error: 'Failed to fetch application' });
+  }
+});
+// Get user assigned data (classes and subjects)
+app.get('/api/user/assigned-data/:userId', authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const authUser = req.user;
+    // Users can only view their own assigned data or Admin1/Admin4 can view any user's data
+    if (authUser.id !== parseInt(userId) && authUser.role !== 'Admin1' && authUser.role !== 'Admin4') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    // Get user's application to see assigned classes and subjects
+    const applicationResult = await pool.query(`
+      SELECT classes, subjects FROM applications
+      WHERE applicant_id = $1 AND status = 'approved'
+    `, [userId]);
+    let assignedClasses = [];
+    let assignedSubjects = [];
+    if (applicationResult.rows.length > 0) {
+      const application = applicationResult.rows[0];
+      // Parse assigned classes
+      if (application.classes) {
+        assignedClasses = application.classes.split(',').map(c => c.trim()).filter(c => c);
+      }
+      // Parse assigned subjects
+      if (application.subjects) {
+        assignedSubjects = application.subjects.split(',').map(s => s.trim()).filter(s => s);
+      }
+    }
     res.json({
-      message: 'Depreciation calculated successfully',
-      month: month,
-      year: year,
-      records_processed: depreciationRecords.length,
-      records: depreciationRecords
+      assignedClasses,
+      assignedSubjects
     });
-    
   } catch (error) {
-    console.error('Error calculating depreciation:', error);
-    res.status(500).json({ error: 'Failed to calculate depreciation' });
+    console.error('Error fetching user assigned data:', error);
+    res.status(500).json({ error: 'Failed to fetch assigned data' });
   }
 });
+// Submit new application
+app.post('/api/applications', authenticateToken, upload.single('certificate'), async (req, res) => {
+  try {
+    const authUser = req.user;
+    console.log('[DEBUG] Application submission - User:', authUser.username, 'Role:', authUser.role);
+    console.log('[DEBUG] Request body:', req.body);
+    console.log('[DEBUG] File:', req.file ? req.file.originalname : 'No file');
+    // Check if user already has an application
+    const existingApp = await pool.query(`
+      SELECT id FROM applications WHERE applicant_id = $1
+    `, [authUser.id]);
+    if (existingApp.rows.length > 0) {
+      return res.status(400).json({ error: 'You have already submitted an application' });
+    }
+    const { applicant_name, classes, subjects, contact } = req.body;
+    console.log('[DEBUG] Extracted data:', { applicant_name, classes, subjects, contact });
+    // Validate required fields
+    if (!applicant_name || !subjects || !contact) {
+      return res.status(400).json({ error: 'Name, subjects, and contact are required fields' });
+    }
+    // For non-Admin4 users, classes can be empty as they will be assigned by Admin4
+    if (authUser.role === 'Admin4' && !classes) {
+      return res.status(400).json({ error: 'Classes must be selected for Admin4 users' });
+    }
+    let certificateUrl = null;
+    let certificateName = null;
+    // Handle file upload if provided
+    if (req.file) {
+      try {
+        const ftpFileName = `${authUser.id}_${Date.now()}_${req.file.originalname}`;
+        certificateUrl = await ftpService.uploadBuffer(req.file.buffer, ftpFileName);
+        certificateName = req.file.originalname;
+        console.log('[DEBUG] Certificate uploaded to FTP:', certificateUrl);
+      } catch (ftpError) {
+        console.error('FTP upload failed:', ftpError);
+        return res.status(500).json({ error: 'Failed to upload certificate' });
+      }
+    }
+    const result = await pool.query(`
+      INSERT INTO applications (
+        applicant_id, applicant_name, classes, subjects, contact,
+        certificate_url, certificate_name, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+      RETURNING *
+    `, [authUser.id, applicant_name, classes, subjects, contact, certificateUrl, certificateName]);
+    res.status(201).json({
+      message: 'Application submitted successfully',
+      application: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error submitting application:', error);
+    res.status(500).json({ error: 'Failed to submit application' });
+  }
+});
+// Update application
+app.put('/api/applications/:id', authenticateToken, upload.single('certificate'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const authUser = req.user;
+    const { applicant_name, classes, subjects, contact } = req.body;
+    // Get the application
+    const appResult = await pool.query(`
+      SELECT * FROM applications WHERE id = $1
+    `, [id]);
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Application not found' });
+    }
+    const application = appResult.rows[0];
+    // Check permissions: Only Admin4 or the owner (while pending) can edit
+    const canEdit = authUser.role === 'Admin4' ||
+                   (application.applicant_id === authUser.id && application.status === 'pending');
+    if (!canEdit) {
+      return res.status(403).json({ error: 'You cannot edit this application' });
+    }
+    // Validate required fields
+    if (!applicant_name || !subjects || !contact) {
+      return res.status(400).json({ error: 'Name, subjects, and contact are required fields' });
+    }
+    // For Admin4 users, classes must be provided; others can leave it empty
+    if (authUser.role === 'Admin4' && !classes) {
+      return res.status(400).json({ error: 'Classes must be selected for Admin4 users' });
+    }
+    let certificateUrl = application.certificate_url;
+    let certificateName = application.certificate_name;
+    // Handle file upload if provided
+    if (req.file) {
+      try {
+        const ftpFileName = `certificates/${application.applicant_id}_${Date.now()}_${req.file.originalname}`;
+        certificateUrl = await ftpService.uploadBuffer(req.file.buffer, ftpFileName);
+        certificateName = req.file.originalname;
+        console.log('[DEBUG] Updated certificate uploaded to FTP:', certificateUrl);
+      } catch (ftpError) {
+        console.error('FTP upload failed:', ftpError);
+        return res.status(500).json({ error: 'Failed to upload certificate' });
+      }
+    }
+    const result = await pool.query(`
+      UPDATE applications
+      SET applicant_name = $1, classes = $2, subjects = $3, contact = $4,
+          certificate_url = $5, certificate_name = $6
+      WHERE id = $7
+      RETURNING *
+    `, [applicant_name, classes, subjects, contact, certificateUrl, certificateName, id]);
+    res.json({
+      message: 'Application updated successfully',
+      application: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error updating application:', error);
+    res.status(500).json({ error: 'Failed to update application' });
+  }
+});
+// Update application status (approve/reject)
+app.put('/api/applications/:id/status', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const authUser = req.user;
+    // Only Admin4 can update status
+    if (authUser.role !== 'Admin4') {
+      return res.status(403).json({ error: 'Access denied. Only Admin4 can update application status.' });
+    }
+    // Validate status
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+    const result = await pool.query(`
+      UPDATE applications
+      SET status = $1, reviewed_at = NOW(), reviewed_by = $2
+      WHERE id = $3
+      RETURNING *
+    `, [status, authUser.id, id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Application not found' });
+    }
+    res.json({
+      message: 'Application status updated successfully',
+      application: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error updating application status:', error);
+    res.status(500).json({ error: 'Failed to update application status' });
+  }
+});
+// Delete application
+app.delete('/api/applications/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const authUser = req.user;
+    // Get the application
+    const appResult = await pool.query(`
+      SELECT * FROM applications WHERE id = $1
+    `, [id]);
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Application not found' });
+    }
+    const application = appResult.rows[0];
+    // Check permissions: Only Admin4 or the owner (while pending) can delete
+    const canDelete = authUser.role === 'Admin4' ||
+                     (application.applicant_id === authUser.id && application.status === 'pending');
+    if (!canDelete) {
+      return res.status(403).json({ error: 'You cannot delete this application' });
+    }
+    await pool.query('DELETE FROM applications WHERE id = $1', [id]);
+    res.json({ message: 'Application deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting application:', error);
+    res.status(500).json({ error: 'Failed to delete application' });
+  }
+});
+// === End Applications API ===
+// Export pool for use in other modules
+module.exports = { pool };
+
+// Clear all monitoring data endpoint
+app.delete('/api/monitor/clear-all', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    console.log('Clearing all monitoring data...');
+    
+    // Clear user activities
+    await pool.query('DELETE FROM user_activities');
+    console.log('User activities cleared');
+    
+    // Clear user sessions
+    await pool.query('DELETE FROM user_sessions');
+    console.log('User sessions cleared');
+    
+    // Reset user status to 'Logged Out' for all users
+    await pool.query('UPDATE users SET last_login = NULL, last_ip = NULL');
+    console.log('User statuses reset');
+    
+    res.json({ message: 'All monitoring data cleared successfully' });
+  } catch (error) {
+    console.error('Error clearing monitoring data:', error);
+    res.status(500).json({ error: 'Failed to clear monitoring data' });
+  }
+});
+
+// Configure multer for profile uploads (memory storage only - no local saving)
+const profileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit for profile images
+  },
+  fileFilter: function (req, file, cb) {
+    // Allow only images
+    const allowedTypes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/gif'
+    ];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`File type ${file.mimetype} not allowed. Only images (JPEG, PNG, GIF) are accepted.`), false);
+    }
+  }
+});
+
+// Update current user profile (username + profile image)
+app.put('/api/profile', authenticateToken, profileUpload.single('profile'), async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { username } = req.body;
+
+    // Optional: upload new profile image to FTP
+    let profile_image_url = null;
+    if (req.file) {
+      try {
+        const safeOriginal = req.file.originalname.replace(/[^a-zA-Z0-9_.-]/g, '_');
+        // Use a simpler path structure that's more likely to work
+        const fileName = `profile_${userId}_${Date.now()}_${safeOriginal}`;
+        profile_image_url = await ftpService.uploadBuffer(req.file.buffer, fileName);
+        console.log('Profile image uploaded to FTP:', profile_image_url);
+      } catch (e) {
+        console.error('Failed to upload profile image to FTP:', e);
+        return res.status(500).json({ error: 'Failed to upload profile image: ' + e.message });
+      }
+    }
+
+    // Build dynamic update
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    if (username && username.trim()) {
+      fields.push(`username = $${idx++}`);
+      values.push(username.trim());
+    }
+    if (profile_image_url) {
+      fields.push(`profile_image_url = $${idx++}`);
+      values.push(profile_image_url);
+    }
+
+    if (fields.length > 0) {
+      values.push(userId);
+      const sql = `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx}`;
+      await pool.query(sql, values);
+    }
+
+    const result = await pool.query('SELECT id, username, contact, created_at, role, profile_image_url FROM users WHERE id = $1', [userId]);
+    const user = result.rows[0];
+    return res.json({
+      message: 'Profile updated',
+      user: {
+        ...user,
+        profileImageUrl: user.profile_image_url || null
+      }
+    });
+  } catch (error) {
+    if (error && error.code === '23505') { // unique_violation
+      return res.status(400).json({ error: 'Username already exists' });
+    }
+    console.error('Error updating profile:', error);
+    return res.status(500).json({ error: 'Failed to update profile: ' + error.message });
+  }
+});
+
+// Get all payment records (consolidated by student) - students who have started or completed payments
+app.get('/api/fees/payments', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const userRole = req.user.role;
+  try {
+    let result;
+    if (userRole === 'admin' || userRole === 'Admin3' || userRole === 'Admin2' || userRole === 'Admin1' || userRole === 'Admin4') {
+      // Admins can view all payment records - consolidated by student, only those who have started or completed payments
+      result = await pool.query(`
+        SELECT 
+          s.id as student_id,
+          s.full_name as student_name,
+          s.student_id as student_number,
+          c.id as class_id,
+          c.name as class_name,
+          c.registration_fee,
+          c.bus_fee,
+          c.internship_fee,
+          c.remedial_fee,
+          c.tuition_fee,
+          c.pta_fee,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'registration' THEN f.amount ELSE 0 END), 0) as registration_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'bus' THEN f.amount ELSE 0 END), 0) as bus_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'internship' THEN f.amount ELSE 0 END), 0) as internship_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'remedial' THEN f.amount ELSE 0 END), 0) as remedial_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'tuition' THEN f.amount ELSE 0 END), 0) as tuition_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'pta' THEN f.amount ELSE 0 END), 0) as pta_paid,
+          COALESCE(SUM(f.amount), 0) as total_paid,
+          MAX(f.paid_at) as last_payment_date,
+          COUNT(f.id) as payment_count
+        FROM students s
+        JOIN classes c ON s.class_id = c.id
+        LEFT JOIN fees f ON s.id = f.student_id
+        GROUP BY s.id, s.full_name, s.student_id, c.id, c.name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee
+        HAVING COUNT(f.id) > 0
+        ORDER BY s.full_name
+      `);
+    } else {
+      // Regular users can only view their own students' payment records - consolidated by student, only those who have started or completed payments
+      result = await pool.query(`
+        SELECT 
+          s.id as student_id,
+          s.full_name as student_name,
+          s.student_id as student_number,
+          c.id as class_id,
+          c.name as class_name,
+          c.registration_fee,
+          c.bus_fee,
+          c.internship_fee,
+          c.remedial_fee,
+          c.tuition_fee,
+          c.pta_fee,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'registration' THEN f.amount ELSE 0 END), 0) as registration_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'bus' THEN f.amount ELSE 0 END), 0) as bus_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'internship' THEN f.amount ELSE 0 END), 0) as internship_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'remedial' THEN f.amount ELSE 0 END), 0) as remedial_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'tuition' THEN f.amount ELSE 0 END), 0) as tuition_paid,
+          COALESCE(SUM(CASE WHEN LOWER(f.fee_type) = 'pta' THEN f.amount ELSE 0 END), 0) as pta_paid,
+          COALESCE(SUM(f.amount), 0) as total_paid,
+          MAX(f.paid_at) as last_payment_date,
+          COUNT(f.id) as payment_count
+        FROM students s
+        JOIN classes c ON s.class_id = c.id
+        LEFT JOIN fees f ON s.id = f.student_id
+        WHERE s.user_id = $1
+        GROUP BY s.id, s.full_name, s.student_id, c.id, c.name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee
+        HAVING COUNT(f.id) > 0
+        ORDER BY s.full_name
+      `, [userId]);
+    }
+    
+    // Calculate balances and status for each student
+    const consolidatedRecords = result.rows.map(row => {
+      const totalExpected = parseFloat(row.registration_fee || 0) + 
+                           parseFloat(row.bus_fee || 0) + 
+                           parseFloat(row.internship_fee || 0) + 
+                           parseFloat(row.remedial_fee || 0) + 
+                           parseFloat(row.tuition_fee || 0) + 
+                           parseFloat(row.pta_fee || 0);
+      
+      const totalBalance = totalExpected - parseFloat(row.total_paid || 0);
+      const paymentStatus = totalBalance <= 0 ? 'Completed' : 
+                           parseFloat(row.total_paid || 0) > 0 ? 'Partial' : 'Pending';
+      
+      return {
+        ...row,
+        total_expected: totalExpected,
+        total_balance: totalBalance,
+        payment_status: paymentStatus,
+        registration_balance: Math.max(0, parseFloat(row.registration_fee || 0) - parseFloat(row.registration_paid || 0)),
+        bus_balance: Math.max(0, parseFloat(row.bus_fee || 0) - parseFloat(row.bus_paid || 0)),
+        internship_balance: Math.max(0, parseFloat(row.internship_fee || 0) - parseFloat(row.internship_paid || 0)),
+        remedial_balance: Math.max(0, parseFloat(row.remedial_fee || 0) - parseFloat(row.remedial_paid || 0)),
+        tuition_balance: Math.max(0, parseFloat(row.tuition_fee || 0) - parseFloat(row.tuition_paid || 0)),
+        pta_balance: Math.max(0, parseFloat(row.pta_fee || 0) - parseFloat(row.pta_paid || 0))
+      };
+    });
+    
+    res.json(consolidatedRecords);
+  } catch (error) {
+    console.error('Error fetching payment records:', error);
+    res.status(500).json({ error: 'Error fetching payment records', details: error.message });
+  }
+});
+
+// Update payment record
+app.put('/api/fees/payments/:id', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const userRole = req.user.role;
+  const paymentId = req.params.id;
+  const { amount } = req.body;
+  
+  try {
+    const numericAmount = parseFloat(amount);
+    if (Number.isNaN(numericAmount) || numericAmount < 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+
+    // Load payment with student and class
+    const isAdminLike = (userRole === 'admin' || ['Admin1','Admin2','Admin3','Admin4'].includes(userRole));
+    const baseQuery = `
+      SELECT f.id, f.student_id, f.fee_type, f.amount as current_amount,
+             s.class_id,
+             c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee
+      FROM fees f
+      JOIN students s ON f.student_id = s.id
+      JOIN classes c ON s.class_id = c.id
+      WHERE f.id = $1`;
+    const param = [paymentId];
+    const permQuery = isAdminLike ? baseQuery : `${baseQuery} AND s.user_id = $2`;
+    const permParams = isAdminLike ? param : [paymentId, userId];
+    const result = await pool.query(permQuery, permParams);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Payment record not found' });
+    }
+    const row = result.rows[0];
+
+    // Compute remaining for this fee type excluding this record
+    const keyMap = {
+      registration: 'registration_fee',
+      bus: 'bus_fee',
+      internship: 'internship_fee',
+      remedial: 'remedial_fee',
+      tuition: 'tuition_fee',
+      pta: 'pta_fee'
+    };
+    const ft = String(row.fee_type || '').trim().toLowerCase();
+    const feeKey = keyMap[ft];
+    const expected = feeKey ? parseFloat(String(row[feeKey] || '0').replace(/,/g, '')) : 0;
+    const sumOtherRes = await pool.query(
+      'SELECT COALESCE(SUM(amount),0) as paid FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2) AND id <> $3',
+      [row.student_id, row.fee_type, paymentId]
+    );
+    const paidOther = parseFloat(sumOtherRes.rows[0].paid) || 0;
+    const maxAllowed = Math.max(0, expected - paidOther);
+    if (numericAmount > maxAllowed) {
+      return res.status(400).json({ error: 'Amount exceeds remaining balance for this fee type' });
+    }
+
+    // Update
+    await pool.query('UPDATE fees SET amount = $1 WHERE id = $2', [numericAmount, paymentId]);
+    res.json({ message: 'Payment record updated successfully' });
+  } catch (error) {
+    console.error('Error updating payment record:', error);
+    res.status(500).json({ error: 'Error updating payment record', details: error.message });
+  }
+});
+
+// Delete payment record
+app.delete('/api/fees/payments/:id', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const userRole = req.user.role;
+  const paymentId = req.params.id;
+  
+  try {
+    // Check if payment exists and user has permission
+    let result;
+    const isAdminLike = (userRole === 'admin' || ['Admin1','Admin2','Admin3','Admin4'].includes(userRole));
+    if (isAdminLike) {
+      result = await pool.query(
+        'SELECT f.id FROM fees f JOIN students s ON f.student_id = s.id WHERE f.id = $1',
+        [paymentId]
+      );
+    } else {
+      result = await pool.query(
+        'SELECT f.id FROM fees f JOIN students s ON f.student_id = s.id WHERE f.id = $1 AND s.user_id = $2',
+        [paymentId, userId]
+      );
+    }
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Payment record not found' });
+    }
+    
+    // Delete the payment record
+    await pool.query('DELETE FROM fees WHERE id = $1', [paymentId]);
+    
+    res.json({ message: 'Payment record deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting payment record:', error);
+    res.status(500).json({ error: 'Error deleting payment record', details: error.message });
+  }
+});
+
+// Get individual payment details for a specific student
+app.get('/api/fees/payments/student/:studentId', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const userRole = req.user.role;
+  const studentId = req.params.studentId;
+  
+  try {
+    let result;
+    if (userRole === 'admin' || userRole === 'Admin3' || userRole === 'Admin2' || userRole === 'Admin1' || userRole === 'Admin4') {
+      // Admins can view all payment details
+      result = await pool.query(`
+        SELECT 
+          f.id,
+          f.student_id,
+          f.class_id,
+          f.fee_type,
+          f.amount,
+          f.paid_at,
+          s.full_name as student_name,
+          s.student_id as student_number,
+          c.name as class_name
+        FROM fees f
+        JOIN students s ON f.student_id = s.id
+        JOIN classes c ON f.class_id = c.id
+        WHERE f.student_id = $1
+        ORDER BY f.paid_at DESC
+      `, [studentId]);
+    } else {
+      // Regular users can only view their own students' payment details
+      result = await pool.query(`
+        SELECT 
+          f.id,
+          f.student_id,
+          f.class_id,
+          f.fee_type,
+          f.amount,
+          f.paid_at,
+          s.full_name as student_name,
+          s.student_id as student_number,
+          c.name as class_name
+        FROM fees f
+        JOIN students s ON f.student_id = s.id
+        JOIN classes c ON f.class_id = c.id
+        WHERE f.student_id = $1 AND s.user_id = $2
+        ORDER BY f.paid_at DESC
+      `, [studentId, userId]);
+    }
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching student payment details:', error);
+    res.status(500).json({ error: 'Error fetching student payment details', details: error.message });
+  }
+});
+
+// Import route modules
+const attendanceRoutes = require('./routes/attendance');
+const casesRoutes = require('./routes/cases');
+const createFeeRouter = require('./routes/fee');
+
+// ... existing code ...
+
+// Use route modules
+app.use('/api/attendance', attendanceRoutes);
+app.use('/api/cases', casesRoutes);
+app.use('/api/fee-management', createFeeRouter(pool, authenticateToken));
