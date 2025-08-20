@@ -34,7 +34,7 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Auth middleware
+
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   if (!authHeader) return res.status(401).json({ error: 'No authorization header' });
