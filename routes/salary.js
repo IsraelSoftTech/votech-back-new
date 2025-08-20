@@ -8,6 +8,46 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
+// Authentication middleware function (copied from server.js)
+function authenticateToken(req, res, next) {
+  console.log("Authenticating request...");
+  console.log("Headers:", req.headers);
+
+  const authHeader = req.headers["authorization"];
+  if (!authHeader) {
+    console.log("No authorization header");
+    return res.status(401).json({ error: "No authorization header" });
+  }
+
+  console.log("Authorization header:", authHeader);
+  const token = authHeader.split(" ")[1];
+  if (!token) {
+    console.log("No token in authorization header");
+    return res.status(401).json({ error: "No token provided" });
+  }
+
+  console.log("Extracted token:", token);
+
+  try {
+    const jwt = require("jsonwebtoken");
+    // Use the same JWT_SECRET as the main server
+    const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+    console.log("JWT_SECRET:", JWT_SECRET);
+
+    const user = jwt.verify(token, JWT_SECRET);
+    console.log("Token verified for user:", user.username, "ID:", user.id);
+    req.user = user;
+    next();
+  } catch (err) {
+    console.error("Token verification failed:", err.message);
+    console.error("Error details:", err);
+    if (err.name === "TokenExpiredError") {
+      return res.status(401).json({ error: "Token expired" });
+    }
+    return res.status(403).json({ error: "Invalid token" });
+  }
+}
+
 // Helper function to convert month number to month name
 const getMonthName = (monthNumber) => {
   const months = [
@@ -468,6 +508,55 @@ router.delete("/delete-all", async (req, res) => {
   } catch (error) {
     console.error("Error deleting all salary records:", error);
     res.status(500).json({ error: "Failed to delete salary records" });
+  }
+});
+
+// Get paid salaries for current user
+router.get("/my/paid", authenticateToken, async (req, res) => {
+  try {
+    // Get user ID from JWT token
+    const userId = req.user.id;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: "User ID is required",
+      });
+    }
+
+    const result = await pool.query(
+      `
+      SELECT 
+        s.id,
+        s.amount,
+        s.month,
+        s.year,
+        s.paid_at,
+        s.paid,
+        a.applicant_name,
+        a.contact,
+        a.classes,
+        a.subjects
+      FROM salaries s
+      LEFT JOIN applications a ON s.user_id = a.applicant_id
+      WHERE s.user_id = $1 AND s.paid = true
+      ORDER BY s.paid_at DESC, s.year DESC, s.month DESC
+    `,
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      data: result.rows,
+      count: result.rows.length,
+    });
+  } catch (error) {
+    console.error("Error fetching user paid salaries:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to fetch paid salaries",
+      details: error.message,
+    });
   }
 });
 
