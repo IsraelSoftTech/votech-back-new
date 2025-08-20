@@ -1,41 +1,78 @@
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
 });
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection:', reason);
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection:", reason);
 });
-const express = require('express');
-const cors = require('cors');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const path = require('path');
-const net = require('net');
-const { exec } = require('child_process');
-const util = require('util');
-const multer = require('multer');
-const XLSX = require('xlsx');
+const express = require("express");
+const cors = require("cors");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const path = require("path");
+const net = require("net");
+const { exec } = require("child_process");
+const util = require("util");
+const multer = require("multer");
+const XLSX = require("xlsx");
 const execAsync = util.promisify(exec);
-const { Pool } = require('pg');
-require('dotenv').config();
-console.log('DATABASE_URL:', process.env.DATABASE_URL);
+const { Pool } = require("pg");
+const { Sequelize, DataTypes } = require("sequelize");
+require("dotenv").config();
+console.log("DATABASE_URL:", process.env.DATABASE_URL);
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
+  connectionString: process.env.DATABASE_URL,
 });
 // Import routes
-const lessonPlansRouter = require('./routes/lessonPlans');
-const lessonsRouter = require('./routes/lessons');
-const groupsRouter = require('./routes/groups');
-const salaryRouter = require('./routes/salary');
-const timetablesRouter = require('./routes/timetables');
-const casesRouter = require('./routes/cases');
-const createAttendanceRouter = require('./routes/attendance');
-const createDisciplineCasesRouter = require('./routes/discipline_cases');
-const createEventsRouter = require('./routes/events');
+const lessonPlansRouter = require("./routes/lessonPlans");
+const lessonsRouter = require("./routes/lessons");
+const groupsRouter = require("./routes/groups");
+const salaryRouter = require("./routes/salary");
+const timetablesRouter = require("./routes/timetables");
+const casesRouter = require("./routes/cases");
+const createAttendanceRouter = require("./routes/attendance");
+const createDisciplineCasesRouter = require("./routes/discipline_cases");
+const createEventsRouter = require("./routes/events");
 // Import FTP service at the top of the file
-const ftpService = require('./ftp-service');
+const ftpService = require("./ftp-service");
 const app = express();
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 const PORT = 5000;
+
+if (
+  !process.env.DB_NAME ||
+  !process.env.DB_PASSWORD ||
+  !process.env.DB_USER_NAME
+) {
+  throw new Error("Database enviroment variables not set.");
+}
+// DB connection
+const sequelize = new Sequelize(
+  process.env.DB_NAME,
+  process.env.DB_USER_NAME,
+  process.env.DB_PASSWORD,
+  {
+    host: "31.97.113.198",
+    dialect: "postgres",
+  }
+);
+
+// Test connection
+sequelize
+  .authenticate()
+  .then(async () => {
+    await sequelize.sync({ force: false, alter: true });
+    (async () => {
+      try {
+        await sequelize.sync({ alter: true });
+        console.log("All tables synced!");
+      } catch (error) {
+        console.error("Sync failed:", error);
+      }
+    })();
+    console.log("✅ DB connected");
+  })
+  .catch((err) => console.error("❌ DB connection error:", err));
+
 // Log every incoming request
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
@@ -44,66 +81,88 @@ app.use((req, res, next) => {
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, 'uploads/');
+    cb(null, "uploads/");
   },
   filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(
+      null,
+      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname)
+    );
+  },
 });
 // Use memory storage for student uploads
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit for all files
-    files: 3 // Maximum 3 files (certificate, cv, photo)
+    files: 3, // Maximum 3 files (certificate, cv, photo)
   },
   fileFilter: function (req, file, cb) {
     // Allow images, PDFs, and common document formats
     const allowedTypes = [
-      'image/jpeg',
-      'image/jpg',
-      'image/png',
-      'image/gif',
-      'application/pdf',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ];
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error(`File type ${file.mimetype} not allowed. Only images, PDFs, and Word documents are accepted.`), false);
+      cb(
+        new Error(
+          `File type ${file.mimetype} not allowed. Only images, PDFs, and Word documents are accepted.`
+        ),
+        false
+      );
     }
-  }
+  },
 });
 // Configure multer for Excel file uploads
 const excelUpload = multer({
   storage: multer.memoryStorage(), // Use memory storage instead of disk storage
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB limit for Excel files
+    fileSize: 10 * 1024 * 1024, // 10MB limit for Excel files
   },
   fileFilter: function (req, file, cb) {
     // Accept Excel files
-    if (file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-        file.mimetype === 'application/vnd.ms-excel') {
+    if (
+      file.mimetype ===
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+      file.mimetype === "application/vnd.ms-excel"
+    ) {
       cb(null, true);
     } else {
-      cb(new Error('Only Excel files (.xlsx, .xls) are allowed!'), false);
+      cb(new Error("Only Excel files (.xlsx, .xls) are allowed!"), false);
     }
-  }
+  },
 });
 // Create uploads directory if it doesn't exist (for non-Excel files)
-const fs = require('fs');
-if (!fs.existsSync('uploads')) {
-  fs.mkdirSync('uploads');
+const fs = require("fs");
+const accademicYearRouter = require("./src/routes/accademicYear.route");
+const subjectRouter = require("./src/routes/subject.route");
+const classSubjectRouter = require("./src/routes/classSubject.route");
+const departmentClassesRouter = require("./src/routes/departmentClasses.route");
+const teacherRouter = require("./src/routes/teachers.route");
+const classRouter = require("./src/routes/class.route");
+const academicBandRouter = require("./src/routes/academicBand.route");
+const marksRouter = require("./src/routes/mark.route");
+const studentRouter = require("./src/routes/students.route");
+const reportCardRouter = require("./src/routes/reportCard.route");
+const globalErrorController = require("./src/controllers/error.controller");
+if (!fs.existsSync("uploads")) {
+  fs.mkdirSync("uploads");
 }
 // Function to find an available port
 const findAvailablePort = (startPort) => {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.unref();
-    server.on('error', (err) => {
-      if (err.code === 'EADDRINUSE') {
+    server.on("error", (err) => {
+      if (err.code === "EADDRINUSE") {
         findAvailablePort(startPort + 1)
           .then(resolve)
           .catch(reject);
@@ -122,155 +181,207 @@ const findAvailablePort = (startPort) => {
 // CORS configuration with dynamic origin
 const corsOptions = {
   origin: function (origin, callback) {
-    console.log('CORS request from origin:', origin);
+    console.log("CORS request from origin:", origin);
     const allowedOrigins = [
-      'https://votechs7academygroup.com', // Production frontend
-      'https://votech-latest-front.onrender.com', // Keep for backup
-      'http://localhost:3000',             // local development
-      'http://localhost:3004'              // local development (alternate port)
+      "https://votechs7academygroup.com", // Production frontend
+      "https://votech-latest-front.onrender.com", // Keep for backup
+      "http://localhost:3000", // local development
+      "http://localhost:3004", // local development (alternate port)
     ];
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) {
-      console.log('No origin provided, allowing request');
+      console.log("No origin provided, allowing request");
       return callback(null, true);
     }
     if (allowedOrigins.indexOf(origin) !== -1) {
-      console.log('Origin allowed:', origin);
+      console.log("Origin allowed:", origin);
       callback(null, true);
     } else {
-      console.log('Origin not allowed:', origin);
-      callback(new Error('Not allowed by CORS'));
+      console.log("Origin not allowed:", origin);
+      callback(new Error("Not allowed by CORS"));
     }
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
-  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "Accept",
+    "Origin",
+    "X-Requested-With",
+  ],
+  exposedHeaders: ["Content-Range", "X-Content-Range"],
   credentials: true,
-  maxAge: 86400
+  maxAge: 86400,
 };
 // Middleware
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use('/uploads', express.static('uploads')); // Serve uploaded files
-app.options('*', cors(corsOptions));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use("/uploads", express.static("uploads")); // Serve uploaded files
+app.options("*", cors(corsOptions));
 // Use routes
-app.use('/api/lesson-plans', lessonPlansRouter);
-app.use('/api/lessons', lessonsRouter);
-app.use('/api/groups', groupsRouter);
-app.use('/api/salary', salaryRouter);
-app.use('/api/timetables', timetablesRouter);
-app.use('/api/cases', casesRouter);
-app.use('/api/attendance', createAttendanceRouter(pool, authenticateToken));
-app.use('/api/discipline-cases', createDisciplineCasesRouter(pool, authenticateToken));
-app.use('/api/events', createEventsRouter(pool, authenticateToken));
+app.use("/api/lesson-plans", lessonPlansRouter);
+app.use("/api/lessons", lessonsRouter);
+app.use("/api/groups", groupsRouter);
+app.use("/api/salary", salaryRouter);
+app.use("/api/timetables", timetablesRouter);
+
+//marks module
+//------------------------------------------------------------------//
+app.use("/api/v1/academic-years", accademicYearRouter);
+app.use("/api/v1/subjects", subjectRouter);
+app.use("/api/v1/class-subjects", classSubjectRouter);
+app.use("/api/v1/department-classes", departmentClassesRouter);
+app.use("/api/v1/teachers", teacherRouter);
+app.use("/api/v1/classes", classRouter); //This is a modified class route please do not confuse it for the existing one, this was added later and does not affect the funtinalityof the existing class routes.
+app.use("/api/v1/academic-bands", academicBandRouter);
+app.use("/api/v1/marks", marksRouter);
+app.use("/api/v1/students", studentRouter);
+app.use("/api/v1/report-cards", reportCardRouter);
+//------------------------------------------------------------------//
+
+app.use("/api/cases", casesRouter);
+app.use("/api/attendance", createAttendanceRouter(pool, authenticateToken));
+app.use(
+  "/api/discipline-cases",
+  createDisciplineCasesRouter(pool, authenticateToken)
+);
+app.use("/api/events", createEventsRouter(pool, authenticateToken));
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  res.status(500).json({ error: 'Internal server error', details: err.message });
+  console.error("Error:", err);
+  res
+    .status(500)
+    .json({ error: "Internal server error", details: err.message });
 });
 // Authentication middleware
 function authenticateToken(req, res, next) {
-  console.log('Authenticating request...');
-  const authHeader = req.headers['authorization'];
+  console.log("Authenticating request...");
+  const authHeader = req.headers["authorization"];
   if (!authHeader) {
-    console.log('No authorization header');
-    return res.status(401).json({ error: 'No authorization header' });
+    console.log("No authorization header");
+    return res.status(401).json({ error: "No authorization header" });
   }
-  const token = authHeader.split(' ')[1];
+  const token = authHeader.split(" ")[1];
   if (!token) {
-    console.log('No token in authorization header');
-    return res.status(401).json({ error: 'No token provided' });
+    console.log("No token in authorization header");
+    return res.status(401).json({ error: "No token provided" });
   }
   try {
     const user = jwt.verify(token, JWT_SECRET);
-    console.log('Token verified for user:', user.username);
+    console.log("Token verified for user:", user.username);
     req.user = user;
     next();
   } catch (err) {
-    console.error('Token verification failed:', err.message);
-    if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expired' });
+    console.error("Token verification failed:", err.message);
+    if (err.name === "TokenExpiredError") {
+      return res.status(401).json({ error: "Token expired" });
     }
-    return res.status(403).json({ error: 'Invalid token' });
+    return res.status(403).json({ error: "Invalid token" });
   }
 }
 // Public endpoints (no authentication required)
-app.get('/api/test', (req, res) => {
-  res.json({ message: 'Server is running' });
+app.get("/api/test", (req, res) => {
+  res.json({ message: "Server is running" });
 });
 // Test lesson plans endpoint
-app.get('/api/lesson-plans/test', (req, res) => {
-  res.json({ message: 'Lesson plans endpoint is working' });
+app.get("/api/lesson-plans/test", (req, res) => {
+  res.json({ message: "Lesson plans endpoint is working" });
 });
 // Temporary endpoint to create admin user (remove in production)
-app.post('/api/setup-admin', async (req, res) => {
+app.post("/api/setup-admin", async (req, res) => {
   try {
-    const adminPassword = 'admin1234';
+    const adminPassword = "admin1234";
     const hashedPassword = await bcrypt.hash(adminPassword, 10);
     // Check if admin user exists
-    const result = await pool.query('SELECT * FROM users WHERE username = $1', ['admin1234']);
+    const result = await pool.query("SELECT * FROM users WHERE username = $1", [
+      "admin1234",
+    ]);
     const existingUsers = result.rows;
     if (existingUsers.length > 0) {
       // Update existing admin password and role
       await pool.query(
-        'UPDATE users SET password = $1, role = $2 WHERE username = $3',
-        [hashedPassword, 'admin', 'admin1234']
+        "UPDATE users SET password = $1, role = $2 WHERE username = $3",
+        [hashedPassword, "admin", "admin1234"]
       );
-      console.log('Admin password and role updated');
+      console.log("Admin password and role updated");
     } else {
       // Create new admin user with role admin
       await pool.query(
-        'INSERT INTO users (username, password, email, contact, is_default, role) VALUES ($1, $2, $3, $4, $5, $6)',
-        ['admin1234', hashedPassword, 'admin@example.com', '+237000000000', true, 'admin']
+        "INSERT INTO users (username, password, email, contact, is_default, role) VALUES ($1, $2, $3, $4, $5, $6)",
+        [
+          "admin1234",
+          hashedPassword,
+          "admin@example.com",
+          "+237000000000",
+          true,
+          "admin",
+        ]
       );
-      console.log('Admin user created');
+      console.log("Admin user created");
     }
     res.json({
-      message: 'Admin user setup complete',
-      username: 'admin1234',
-      password: 'admin1234'
+      message: "Admin user setup complete",
+      username: "admin1234",
+      password: "admin1234",
     });
   } catch (error) {
-    console.error('Error setting up admin:', error);
-    res.status(500).json({ error: 'Failed to setup admin user' });
+    console.error("Error setting up admin:", error);
+    res.status(500).json({ error: "Failed to setup admin user" });
   }
 });
-app.post('/api/login', async (req, res) => {
+app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
-  console.log('Login attempt for:', username);
+  console.log("Login attempt for:", username);
   try {
-    const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+    const result = await pool.query("SELECT * FROM users WHERE username = $1", [
+      username,
+    ]);
     const users = result.rows;
     if (users.length === 0) {
-      console.log('User not found:', username);
-      return res.status(401).json({ error: 'Invalid credentials' });
+      console.log("User not found:", username);
+      return res.status(401).json({ error: "Invalid credentials" });
     }
     const user = users[0];
     if (user.suspended) {
-      return res.status(403).json({ error: 'This account is suspended. Please contact the administrator.' });
+      return res.status(403).json({
+        error: "This account is suspended. Please contact the administrator.",
+      });
     }
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
-      console.log('Invalid password for:', username);
-      return res.status(401).json({ error: 'Invalid credentials' });
+      console.log("Invalid password for:", username);
+      return res.status(401).json({ error: "Invalid credentials" });
     }
-    
+
     // Get IP address and user agent
-    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
-    
+    const ipAddress =
+      req.ip ||
+      req.connection.remoteAddress ||
+      req.headers["x-forwarded-for"] ||
+      "unknown";
+    const userAgent = req.headers["user-agent"] || "unknown";
+
     // Create user session
     await createUserSession(user.id, ipAddress, userAgent);
-    
+
     // Log login activity
-    await logUserActivity(user.id, 'login', `User logged in successfully`, null, null, null, ipAddress, userAgent);
-    
+    await logUserActivity(
+      user.id,
+      "login",
+      `User logged in successfully`,
+      null,
+      null,
+      null,
+      ipAddress,
+      userAgent
+    );
+
     // Create token with expiration and role
     const token = jwt.sign(
       { id: user.id, username: user.username, role: user.role },
       JWT_SECRET,
-      { expiresIn: '24h' }
+      { expiresIn: "24h" }
     );
     // Send back user data (excluding password) along with token
     const userData = {
@@ -281,282 +392,372 @@ app.post('/api/login', async (req, res) => {
       role: user.role,
       profile_image_url: user.profile_image_url || null,
       // Keep camelCase for frontend convenience
-      profileImageUrl: user.profile_image_url || null
+      profileImageUrl: user.profile_image_url || null,
     };
     // Check for academic years if admin
     let requireAcademicYear = false;
     if (["Admin1", "Admin2", "Admin3", "Admin4"].includes(user.role)) {
-      const yearsResult = await pool.query('SELECT COUNT(*) FROM academic_years');
+      const yearsResult = await pool.query(
+        "SELECT COUNT(*) FROM academic_years"
+      );
       const count = parseInt(yearsResult.rows[0].count, 10);
       requireAcademicYear = count === 0; // or set to true to always require
     }
-    console.log('Login successful for:', username);
+    console.log("Login successful for:", username);
     res.json({
       token,
       user: userData,
-      requireAcademicYear
+      requireAcademicYear,
     });
   } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Login error:", error);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
-app.post('/api/logout', authenticateToken, async (req, res) => {
+app.post("/api/logout", authenticateToken, async (req, res) => {
   try {
-    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
-    
+    const ipAddress =
+      req.ip ||
+      req.connection.remoteAddress ||
+      req.headers["x-forwarded-for"] ||
+      "unknown";
+    const userAgent = req.headers["user-agent"] || "unknown";
+
     // End user session
     await endUserSession(req.user.id);
-    
+
     // Log logout activity
-    await logUserActivity(req.user.id, 'logout', `User logged out successfully`, null, null, null, ipAddress, userAgent);
-    
-    res.json({ message: 'Logged out successfully' });
+    await logUserActivity(
+      req.user.id,
+      "logout",
+      `User logged out successfully`,
+      null,
+      null,
+      null,
+      ipAddress,
+      userAgent
+    );
+
+    res.json({ message: "Logged out successfully" });
   } catch (error) {
-    console.error('Logout error:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Logout error:", error);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
-app.post('/api/register', async (req, res) => {
-  console.log('Received registration request:', {
+app.post("/api/register", async (req, res) => {
+  console.log("Received registration request:", {
     body: req.body,
     headers: req.headers,
     method: req.method,
-    url: req.url
+    url: req.url,
   });
   const { username, contact, password, role, name, email, gender } = req.body;
   if (!username || !password) {
-    console.log('Missing required fields:', { username: !!username, password: !!password });
-    return res.status(400).json({ error: 'Username and password are required' });
+    console.log("Missing required fields:", {
+      username: !!username,
+      password: !!password,
+    });
+    return res
+      .status(400)
+      .json({ error: "Username and password are required" });
   }
   // Expanded allowed roles
   const allowedRoles = [
-    'student', 'Teacher', 'parent',
-    'Admin1', 'Admin2', 'Admin3', 'Admin4',
-    'Secretary', 'Discipline', 'Psychosocialist'
+    "student",
+    "Teacher",
+    "parent",
+    "Admin1",
+    "Admin2",
+    "Admin3",
+    "Admin4",
+    "Secretary",
+    "Discipline",
+    "Psychosocialist",
   ];
-  let userRole = (role && allowedRoles.includes(role)) ? role : 'student';
+  let userRole = role && allowedRoles.includes(role) ? role : "student";
   try {
     // Check if username exists
-    const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+    const result = await pool.query("SELECT * FROM users WHERE username = $1", [
+      username,
+    ]);
     const users = result.rows;
     if (users.length > 0) {
-      console.log('Username already exists:', username);
-      return res.status(400).json({ error: 'Username already exists' });
+      console.log("Username already exists:", username);
+      return res.status(400).json({ error: "Username already exists" });
     }
     // Hash the password
     const hashedPassword = await bcrypt.hash(password, 10);
     // Create new user with all fields
     const insertResult = await pool.query(
-      'INSERT INTO users (username, contact, password, role, name, email, gender) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+      "INSERT INTO users (username, contact, password, role, name, email, gender) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
       [username, contact, hashedPassword, userRole, name, email, gender]
     );
     const newUser = insertResult.rows[0];
-    console.log('Account created successfully:', { username, userId: newUser.id, role: userRole });
-    res.status(201).json({ message: 'Account created successfully' });
+    console.log("Account created successfully:", {
+      username,
+      userId: newUser.id,
+      role: userRole,
+    });
+    res.status(201).json({ message: "Account created successfully" });
   } catch (error) {
-    console.error('Error in registration endpoint:', error);
-    res.status(500).json({ error: `Failed to create account: ${error.message}` });
+    console.error("Error in registration endpoint:", error);
+    res
+      .status(500)
+      .json({ error: `Failed to create account: ${error.message}` });
   }
 });
-app.post('/api/check-user', async (req, res) => {
+app.post("/api/check-user", async (req, res) => {
   const { username } = req.body;
-  console.log('Checking if user exists:', username);
+  console.log("Checking if user exists:", username);
   try {
-    const [users] = await pool.query('SELECT username FROM users WHERE username = $1', [username]);
+    const [users] = await pool.query(
+      "SELECT username FROM users WHERE username = $1",
+      [username]
+    );
     if (users.length > 0) {
-      console.log('User exists:', username);
+      console.log("User exists:", username);
       res.json({ exists: true });
     } else {
-      console.log('User does not exist:', username);
+      console.log("User does not exist:", username);
       res.json({ exists: false });
     }
   } catch (error) {
-    console.error('Error checking user:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Error checking user:", error);
+    res.status(500).json({ error: "Server error" });
   }
 });
-app.post('/api/reset-password', async (req, res) => {
+app.post("/api/reset-password", async (req, res) => {
   const { username, newPassword } = req.body;
-  console.log('Password reset request for:', username);
+  console.log("Password reset request for:", username);
   try {
     // Check if user exists
-    const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+    const result = await pool.query("SELECT * FROM users WHERE username = $1", [
+      username,
+    ]);
     const users = result.rows;
     if (users.length === 0) {
-      console.log('User not found for password reset:', username);
-      return res.status(404).json({ error: 'User not found' });
+      console.log("User not found for password reset:", username);
+      return res.status(404).json({ error: "User not found" });
     }
     // Hash the new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     // Update the password
-    await pool.query(
-      'UPDATE users SET password = $1 WHERE username = $2',
-      [hashedPassword, username]
-    );
-    console.log('Password reset successful for:', username);
-    res.json({ message: 'Password reset successfully' });
+    await pool.query("UPDATE users SET password = $1 WHERE username = $2", [
+      hashedPassword,
+      username,
+    ]);
+    console.log("Password reset successful for:", username);
+    res.json({ message: "Password reset successfully" });
   } catch (error) {
-    console.error('Error resetting password:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Error resetting password:", error);
+    res.status(500).json({ error: "Server error" });
   }
 });
-app.post('/api/change-password', authenticateToken, async (req, res) => {
+app.post("/api/change-password", authenticateToken, async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   const userId = req.user.id;
   try {
     // Get current user
-    const [users] = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+    const [users] = await pool.query("SELECT * FROM users WHERE id = $1", [
+      userId,
+    ]);
     if (users.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: "User not found" });
     }
     const user = users[0];
     // Verify current password
     const validPassword = await bcrypt.compare(currentPassword, user.password);
     if (!validPassword) {
-      return res.status(400).json({ error: 'Current password is incorrect' });
+      return res.status(400).json({ error: "Current password is incorrect" });
     }
     // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     // Update password
-    await pool.query(
-      'UPDATE users SET password = $1 WHERE id = $2',
-      [hashedPassword, userId]
-    );
-    res.json({ message: 'Password changed successfully' });
+    await pool.query("UPDATE users SET password = $1 WHERE id = $2", [
+      hashedPassword,
+      userId,
+    ]);
+    res.json({ message: "Password changed successfully" });
   } catch (error) {
-    console.error('Error changing password:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Error changing password:", error);
+    res.status(500).json({ error: "Server error" });
   }
 });
 // Users endpoints
-app.get('/api/users', authenticateToken, async (req, res) => {
+app.get("/api/users", authenticateToken, async (req, res) => {
   try {
-    const [users] = await pool.query('SELECT id, username, email, contact, created_at FROM users WHERE id = $1', [req.user.id]);
-    console.log('Successfully fetched users:', users);
+    const [users] = await pool.query(
+      "SELECT id, username, email, contact, created_at FROM users WHERE id = $1",
+      [req.user.id]
+    );
+    console.log("Successfully fetched users:", users);
     res.json(users);
   } catch (error) {
-    console.error('Error fetching users:', error);
-    res.status(500).json({ error: 'Error fetching users' });
+    console.error("Error fetching users:", error);
+    res.status(500).json({ error: "Error fetching users" });
   }
 });
 // Excel upload endpoint for bulk student registration
-app.post('/api/students/upload', authenticateToken, excelUpload.single('file'), async (req, res) => {
-  const userId = req.user.id;
-  if (!req.file) {
-    return res.status(400).json({ error: 'No Excel file uploaded' });
-  }
-  function parseExcelDate(dateStr) {
-    if (!dateStr) return '';
-    // If it's a number, treat as Excel serial date
-    if (typeof dateStr === 'number') {
-      // Excel's epoch starts at 1900-01-01
-      const excelEpoch = new Date(Date.UTC(1899, 11, 30));
-      const d = new Date(excelEpoch.getTime() + dateStr * 86400000);
-      // Format as yyyy-mm-dd
-      return d.toISOString().slice(0, 10);
+app.post(
+  "/api/students/upload",
+  authenticateToken,
+  excelUpload.single("file"),
+  async (req, res) => {
+    const userId = req.user.id;
+    if (!req.file) {
+      return res.status(400).json({ error: "No Excel file uploaded" });
     }
-    // Accept both Date objects and strings
-    if (dateStr instanceof Date) {
-      return dateStr.toISOString().slice(0, 10);
-    }
-    if (typeof dateStr === 'string') {
-      // Try to parse d-MMM-yyyy (e.g., 5-Dec-2025)
-      const match = /^([0-9]{1,2})[-.\/]([A-Za-z]{3})[-.\/]([0-9]{4})$/.exec(dateStr.trim());
-      if (match) {
-        const day = match[1].padStart(2, '0');
-        const monthStr = match[2].toLowerCase();
-        const year = match[3];
-        const months = {
-          jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
-          jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
-        };
-        const month = months[monthStr] || '01';
-        return `${year}-${month}-${day}`;
+    function parseExcelDate(dateStr) {
+      if (!dateStr) return "";
+      // If it's a number, treat as Excel serial date
+      if (typeof dateStr === "number") {
+        // Excel's epoch starts at 1900-01-01
+        const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+        const d = new Date(excelEpoch.getTime() + dateStr * 86400000);
+        // Format as yyyy-mm-dd
+        return d.toISOString().slice(0, 10);
       }
-      // Try to parse yyyy-mm-dd
-      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+      // Accept both Date objects and strings
+      if (dateStr instanceof Date) {
+        return dateStr.toISOString().slice(0, 10);
+      }
+      if (typeof dateStr === "string") {
+        // Try to parse d-MMM-yyyy (e.g., 5-Dec-2025)
+        const match = /^([0-9]{1,2})[-.\/]([A-Za-z]{3})[-.\/]([0-9]{4})$/.exec(
+          dateStr.trim()
+        );
+        if (match) {
+          const day = match[1].padStart(2, "0");
+          const monthStr = match[2].toLowerCase();
+          const year = match[3];
+          const months = {
+            jan: "01",
+            feb: "02",
+            mar: "03",
+            apr: "04",
+            may: "05",
+            jun: "06",
+            jul: "07",
+            aug: "08",
+            sep: "09",
+            oct: "10",
+            nov: "11",
+            dec: "12",
+          };
+          const month = months[monthStr] || "01";
+          return `${year}-${month}-${day}`;
+        }
+        // Try to parse yyyy-mm-dd
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+        // Fallback: return as is
+        return dateStr;
+      }
       // Fallback: return as is
       return dateStr;
     }
-    // Fallback: return as is
-    return dateStr;
-  }
-  function normalizeSex(sex) {
-    if (!sex) return 'Male';
-    const s = sex.toString().trim().toLowerCase();
-    if (s === 'f' || s === 'female') return 'Female';
-    return 'Male';
-  }
-  try {
-    // Read the Excel file from memory
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    // Convert to JSON
-    const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-    // Skip the header row and process data
-    const students = [];
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      // Skip row if all fields are empty
-      if (!row || row.length < 11 || row.every(cell => cell === undefined || cell === null || cell === '')) continue;
-      if (row[0]) { // Only process if Full Name is present
-        students.push({
-          full_name: row[0] || '',
-          sex: normalizeSex(row[1]),
-          date_of_birth: parseExcelDate(row[2]),
-          place_of_birth: row[3] || '',
-          father_name: row[4] || '',
-          mother_name: row[5] || '',
-          guardian_contact: row[6] || '',
-          vocational_training: row[7] || '',
-          class_id: row[8] || '',
-          year: row[9] || ''
-        });
+    function normalizeSex(sex) {
+      if (!sex) return "Male";
+      const s = sex.toString().trim().toLowerCase();
+      if (s === "f" || s === "female") return "Female";
+      return "Male";
+    }
+    try {
+      // Read the Excel file from memory
+      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      // Convert to JSON
+      const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+      // Skip the header row and process data
+      const students = [];
+      for (let i = 1; i < data.length; i++) {
+        const row = data[i];
+        // Skip row if all fields are empty
+        if (
+          !row ||
+          row.length < 11 ||
+          row.every(
+            (cell) => cell === undefined || cell === null || cell === ""
+          )
+        )
+          continue;
+        if (row[0]) {
+          // Only process if Full Name is present
+          students.push({
+            full_name: row[0] || "",
+            sex: normalizeSex(row[1]),
+            date_of_birth: parseExcelDate(row[2]),
+            place_of_birth: row[3] || "",
+            father_name: row[4] || "",
+            mother_name: row[5] || "",
+            guardian_contact: row[6] || "",
+            vocational_training: row[7] || "",
+            class_id: row[8] || "",
+            year: row[9] || "",
+          });
+        }
       }
-    }
-    if (students.length === 0) {
-      return res.status(400).json({ error: 'No valid student data found in the Excel file' });
-    }
-    // Insert students into database
-    const insertPromises = students.map(student => {
-      return pool.query(
-        `INSERT INTO students (user_id, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training, student_picture, class_id, year)
+      if (students.length === 0) {
+        return res
+          .status(400)
+          .json({ error: "No valid student data found in the Excel file" });
+      }
+      // Insert students into database
+      const insertPromises = students.map((student) => {
+        return pool
+          .query(
+            `INSERT INTO students (user_id, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, guardian_contact, vocational_training, student_picture, class_id, year)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
-        [userId, student.full_name, student.sex, student.date_of_birth, student.place_of_birth, student.father_name, student.mother_name, student.guardian_contact, student.vocational_training, student.student_picture, student.class_id, student.year]
-      ).catch(err => {
-        console.error('Failed to insert row:', student, err.message);
-        throw err;
+            [
+              userId,
+              student.full_name,
+              student.sex,
+              student.date_of_birth,
+              student.place_of_birth,
+              student.father_name,
+              student.mother_name,
+              student.guardian_contact,
+              student.vocational_training,
+              student.student_picture,
+              student.class_id,
+              student.year,
+            ]
+          )
+          .catch((err) => {
+            console.error("Failed to insert row:", student, err.message);
+            throw err;
+          });
       });
-    });
-    const results = await Promise.all(insertPromises);
-    // Clean up the uploaded file
-    const fs = require('fs');
-    fs.unlinkSync(req.file.path);
-    res.json({
-      message: `${results.length} students uploaded successfully`,
-      count: results.length
-    });
-  } catch (error) {
-    console.error('Error uploading students:', error);
-    // Clean up the uploaded file in case of error
-    if (req.file) {
-      const fs = require('fs');
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (unlinkError) {
-        console.error('Error deleting uploaded file:', unlinkError);
+      const results = await Promise.all(insertPromises);
+      // Clean up the uploaded file
+      const fs = require("fs");
+      fs.unlinkSync(req.file.path);
+      res.json({
+        message: `${results.length} students uploaded successfully`,
+        count: results.length,
+      });
+    } catch (error) {
+      console.error("Error uploading students:", error);
+      // Clean up the uploaded file in case of error
+      if (req.file) {
+        const fs = require("fs");
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (unlinkError) {
+          console.error("Error deleting uploaded file:", unlinkError);
+        }
       }
+      res.status(500).json({
+        error: "Error uploading students from Excel file",
+        details: error.message,
+      });
     }
-    res.status(500).json({ error: 'Error uploading students from Excel file', details: error.message });
   }
-});
+);
 // Student analytics endpoint: students added per day for all time
-app.get('/api/students/analytics/daily', async (req, res) => {
+app.get("/api/students/analytics/daily", async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT DATE(created_at) as date, COUNT(*) as count
@@ -566,12 +767,15 @@ app.get('/api/students/analytics/daily', async (req, res) => {
     );
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching student analytics:', error);
-    res.status(500).json({ error: 'Error fetching student analytics', details: error.message });
+    console.error("Error fetching student analytics:", error);
+    res.status(500).json({
+      error: "Error fetching student analytics",
+      details: error.message,
+    });
   }
 });
 // Student analytics endpoint: students added per month (all time)
-app.get('/api/students/analytics/monthly', async (req, res) => {
+app.get("/api/students/analytics/monthly", async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT TO_CHAR(created_at, 'YYYY-MM') as month, COUNT(*) as count
@@ -581,71 +785,135 @@ app.get('/api/students/analytics/monthly', async (req, res) => {
     );
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching student monthly analytics:', error);
-    res.status(500).json({ error: 'Error fetching student monthly analytics', details: error.message });
+    console.error("Error fetching student monthly analytics:", error);
+    res.status(500).json({
+      error: "Error fetching student monthly analytics",
+      details: error.message,
+    });
   }
 });
 // CLASSES ENDPOINTS
-app.get('/api/classes', authenticateToken, async (req, res) => {
+app.get("/api/classes", authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM classes ORDER BY id DESC');
+    const result = await pool.query("SELECT * FROM classes ORDER BY id DESC");
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching classes:', error);
-    res.status(500).json({ error: 'Error fetching classes', details: error.message });
+    console.error("Error fetching classes:", error);
+    res
+      .status(500)
+      .json({ error: "Error fetching classes", details: error.message });
   }
 });
 // Remove authentication for class creation
-app.post('/api/classes', authenticateToken, async (req, res) => {
-  console.log('POST /api/classes called', req.body);
-  const { name, registration_fee, bus_fee, internship_fee, remedial_fee, tuition_fee, pta_fee, total_fee, suspended } = req.body;
+app.post("/api/classes", authenticateToken, async (req, res) => {
+  console.log("POST /api/classes called", req.body);
+  const {
+    name,
+    registration_fee,
+    bus_fee,
+    internship_fee,
+    remedial_fee,
+    tuition_fee,
+    pta_fee,
+    total_fee,
+    suspended,
+  } = req.body;
   try {
     const result = await pool.query(
       `INSERT INTO classes (name, registration_fee, bus_fee, internship_fee, remedial_fee, tuition_fee, pta_fee, total_fee, suspended)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [name, registration_fee, bus_fee, internship_fee, remedial_fee, tuition_fee, pta_fee, total_fee, suspended || false]
+      [
+        name,
+        registration_fee,
+        bus_fee,
+        internship_fee,
+        remedial_fee,
+        tuition_fee,
+        pta_fee,
+        total_fee,
+        suspended || false,
+      ]
     );
-    
+
     // Log activity
-    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
-    await logUserActivity(req.user.id, 'create', `Created class: ${name}`, 'class', result.rows[0].id, name, ipAddress, userAgent);
-    
+    const ipAddress =
+      req.ip ||
+      req.connection.remoteAddress ||
+      req.headers["x-forwarded-for"] ||
+      "unknown";
+    const userAgent = req.headers["user-agent"] || "unknown";
+    await logUserActivity(
+      req.user.id,
+      "create",
+      `Created class: ${name}`,
+      "class",
+      result.rows[0].id,
+      name,
+      ipAddress,
+      userAgent
+    );
+
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error creating class:', error);
-    res.status(500).json({ error: 'Error creating class', details: error.message });
+    console.error("Error creating class:", error);
+    res
+      .status(500)
+      .json({ error: "Error creating class", details: error.message });
   }
 });
-app.put('/api/classes/:id', authenticateToken, async (req, res) => {
+app.put("/api/classes/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
-  const { name, registration_fee, bus_fee, internship_fee, remedial_fee, tuition_fee, pta_fee, total_fee, suspended } = req.body;
+  const {
+    name,
+    registration_fee,
+    bus_fee,
+    internship_fee,
+    remedial_fee,
+    tuition_fee,
+    pta_fee,
+    total_fee,
+    suspended,
+  } = req.body;
   try {
     const result = await pool.query(
       `UPDATE classes SET name=$1, registration_fee=$2, bus_fee=$3, internship_fee=$4, remedial_fee=$5, tuition_fee=$6, pta_fee=$7, total_fee=$8, suspended=$9 WHERE id=$10 RETURNING *`,
-      [name, registration_fee, bus_fee, internship_fee, remedial_fee, tuition_fee, pta_fee, total_fee, suspended || false, id]
+      [
+        name,
+        registration_fee,
+        bus_fee,
+        internship_fee,
+        remedial_fee,
+        tuition_fee,
+        pta_fee,
+        total_fee,
+        suspended || false,
+        id,
+      ]
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Class not found' });
+    if (result.rows.length === 0)
+      return res.status(404).json({ error: "Class not found" });
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating class:', error);
-    res.status(500).json({ error: 'Error updating class', details: error.message });
+    console.error("Error updating class:", error);
+    res
+      .status(500)
+      .json({ error: "Error updating class", details: error.message });
   }
 });
-app.delete('/api/classes/:id', authenticateToken, async (req, res) => {
+app.delete("/api/classes/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
     // Conditionally remove related rows in dependent tables (only if tables exist)
     const dependentTables = [
-      { table: 'timetable_entries', column: 'class_id' },
-      { table: 'class_subjects', column: 'class_id' },
-      { table: 'subject_classifications', column: 'class_id' },
-      { table: 'subject_coefficients', column: 'class_id' },
-      { table: 'specialty_classes', column: 'class_id' },
-      { table: 'attendance_sessions', column: 'class_id' },
+      { table: "timetable_entries", column: "class_id" },
+      { table: "class_subjects", column: "class_id" },
+      { table: "subject_classifications", column: "class_id" },
+      { table: "subject_coefficients", column: "class_id" },
+      { table: "specialty_classes", column: "class_id" },
+      { table: "attendance_sessions", column: "class_id" },
     ];
 
     for (const dep of dependentTables) {
@@ -657,168 +925,225 @@ app.delete('/api/classes/:id', authenticateToken, async (req, res) => {
         [dep.table]
       );
       if (existsRes.rows[0]?.exists) {
-        await client.query(`DELETE FROM ${dep.table} WHERE ${dep.column} = $1`, [id]);
+        await client.query(
+          `DELETE FROM ${dep.table} WHERE ${dep.column} = $1`,
+          [id]
+        );
       }
     }
 
     // Finally delete the class
-    await client.query('DELETE FROM classes WHERE id = $1', [id]);
+    await client.query("DELETE FROM classes WHERE id = $1", [id]);
 
-    await client.query('COMMIT');
+    await client.query("COMMIT");
     res.json({ success: true });
   } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Error deleting class:', error);
-    res.status(500).json({ error: 'Error deleting class', details: error.message });
+    await client.query("ROLLBACK");
+    console.error("Error deleting class:", error);
+    res
+      .status(500)
+      .json({ error: "Error deleting class", details: error.message });
   } finally {
     client.release();
   }
 });
 // Vocational endpoints
-app.post('/api/vocational', authenticateToken, upload.fields([
-  { name: 'picture1', maxCount: 1 },
-  { name: 'picture2', maxCount: 1 },
-  { name: 'picture3', maxCount: 1 },
-  { name: 'picture4', maxCount: 1 }
-]), async (req, res) => {
-  const { title, description, year } = req.body;
-  const userId = req.user.id;
-  // Get file paths from uploaded files
-  let picture1 = undefined, picture2 = undefined, picture3 = undefined, picture4 = undefined;
-  try {
-    if (req.files.picture1 && req.files.picture1[0]) {
-      picture1 = await ftpService.uploadBuffer(req.files.picture1[0].buffer, `vocational/${Date.now()}_${req.files.picture1[0].originalname}`);
+app.post(
+  "/api/vocational",
+  authenticateToken,
+  upload.fields([
+    { name: "picture1", maxCount: 1 },
+    { name: "picture2", maxCount: 1 },
+    { name: "picture3", maxCount: 1 },
+    { name: "picture4", maxCount: 1 },
+  ]),
+  async (req, res) => {
+    const { title, description, year } = req.body;
+    const userId = req.user.id;
+    // Get file paths from uploaded files
+    let picture1 = undefined,
+      picture2 = undefined,
+      picture3 = undefined,
+      picture4 = undefined;
+    try {
+      if (req.files.picture1 && req.files.picture1[0]) {
+        picture1 = await ftpService.uploadBuffer(
+          req.files.picture1[0].buffer,
+          `vocational/${Date.now()}_${req.files.picture1[0].originalname}`
+        );
+      }
+      if (req.files.picture2 && req.files.picture2[0]) {
+        picture2 = await ftpService.uploadBuffer(
+          req.files.picture2[0].buffer,
+          `vocational/${Date.now()}_${req.files.picture2[0].originalname}`
+        );
+      }
+      if (req.files.picture3 && req.files.picture3[0]) {
+        picture3 = await ftpService.uploadBuffer(
+          req.files.picture3[0].buffer,
+          `vocational/${Date.now()}_${req.files.picture3[0].originalname}`
+        );
+      }
+      if (req.files.picture4 && req.files.picture4[0]) {
+        picture4 = await ftpService.uploadBuffer(
+          req.files.picture4[0].buffer,
+          `vocational/${Date.now()}_${req.files.picture4[0].originalname}`
+        );
+      }
+    } catch (e) {
+      console.error("Failed to upload vocational pictures to FTP:", e);
+      return res
+        .status(500)
+        .json({ error: "Failed to upload vocational pictures" });
     }
-    if (req.files.picture2 && req.files.picture2[0]) {
-      picture2 = await ftpService.uploadBuffer(req.files.picture2[0].buffer, `vocational/${Date.now()}_${req.files.picture2[0].originalname}`);
-    }
-    if (req.files.picture3 && req.files.picture3[0]) {
-      picture3 = await ftpService.uploadBuffer(req.files.picture3[0].buffer, `vocational/${Date.now()}_${req.files.picture3[0].originalname}`);
-    }
-    if (req.files.picture4 && req.files.picture4[0]) {
-      picture4 = await ftpService.uploadBuffer(req.files.picture4[0].buffer, `vocational/${Date.now()}_${req.files.picture4[0].originalname}`);
-    }
-  } catch (e) {
-    console.error('Failed to upload vocational pictures to FTP:', e);
-    return res.status(500).json({ error: 'Failed to upload vocational pictures' });
-  }
-  try {
-    const result = await pool.query(
-      `INSERT INTO vocational (user_id, name, description, picture1, picture2, picture3, picture4, year)
+    try {
+      const result = await pool.query(
+        `INSERT INTO vocational (user_id, name, description, picture1, picture2, picture3, picture4, year)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [userId, title, description, picture1, picture2, picture3, picture4, year]
-    );
-    res.status(201).json({ id: result.rows[0].id });
-  } catch (error) {
-    console.error('Error creating vocational department:', error);
-    res.status(500).json({ error: 'Error creating vocational department' });
+        [
+          userId,
+          title,
+          description,
+          picture1,
+          picture2,
+          picture3,
+          picture4,
+          year,
+        ]
+      );
+      res.status(201).json({ id: result.rows[0].id });
+    } catch (error) {
+      console.error("Error creating vocational department:", error);
+      res.status(500).json({ error: "Error creating vocational department" });
+    }
   }
-});
-app.get('/api/vocational', authenticateToken, async (req, res) => {
+);
+app.get("/api/vocational", authenticateToken, async (req, res) => {
   const year = req.query.year ? parseInt(req.query.year) : null;
   try {
-    let query = 'SELECT id, user_id, name as title, description, picture1, picture2, picture3, picture4, year, created_at, updated_at FROM vocational';
+    let query =
+      "SELECT id, user_id, name as title, description, picture1, picture2, picture3, picture4, year, created_at, updated_at FROM vocational";
     let params = [];
     if (year) {
-      query += ' WHERE year = $1';
+      query += " WHERE year = $1";
       params.push(year);
     }
-    query += ' ORDER BY created_at DESC';
+    query += " ORDER BY created_at DESC";
     const resultVoc = await pool.query(query, params);
     res.json(resultVoc.rows);
   } catch (error) {
-    console.error('Error fetching vocational departments:', error);
-    res.status(500).json({ error: 'Error fetching vocational departments' });
+    console.error("Error fetching vocational departments:", error);
+    res.status(500).json({ error: "Error fetching vocational departments" });
   }
 });
-app.put('/api/vocational/:id', authenticateToken, upload.fields([
-  { name: 'picture1', maxCount: 1 },
-  { name: 'picture2', maxCount: 1 },
-  { name: 'picture3', maxCount: 1 },
-  { name: 'picture4', maxCount: 1 }
-]), async (req, res) => {
-  const { title, description, year } = req.body;
-  const userId = req.user.id;
-  const vocationalId = req.params.id;
-  // Get file paths from uploaded files
-  const picture1 = req.files.picture1 ? `/uploads/${req.files.picture1[0].filename}` : undefined;
-  const picture2 = req.files.picture2 ? `/uploads/${req.files.picture2[0].filename}` : undefined;
-  const picture3 = req.files.picture3 ? `/uploads/${req.files.picture3[0].filename}` : undefined;
-  const picture4 = req.files.picture4 ? `/uploads/${req.files.picture4[0].filename}` : undefined;
-  try {
-    // First verify the vocational department belongs to the user
-    const resultVocPut = await pool.query(
-      'SELECT * FROM vocational WHERE id = $1 AND user_id = $2',
-      [vocationalId, userId]
-    );
-    if (resultVocPut.rows.length === 0) {
-      return res.status(404).json({ error: 'Vocational department not found' });
+app.put(
+  "/api/vocational/:id",
+  authenticateToken,
+  upload.fields([
+    { name: "picture1", maxCount: 1 },
+    { name: "picture2", maxCount: 1 },
+    { name: "picture3", maxCount: 1 },
+    { name: "picture4", maxCount: 1 },
+  ]),
+  async (req, res) => {
+    const { title, description, year } = req.body;
+    const userId = req.user.id;
+    const vocationalId = req.params.id;
+    // Get file paths from uploaded files
+    const picture1 = req.files.picture1
+      ? `/uploads/${req.files.picture1[0].filename}`
+      : undefined;
+    const picture2 = req.files.picture2
+      ? `/uploads/${req.files.picture2[0].filename}`
+      : undefined;
+    const picture3 = req.files.picture3
+      ? `/uploads/${req.files.picture3[0].filename}`
+      : undefined;
+    const picture4 = req.files.picture4
+      ? `/uploads/${req.files.picture4[0].filename}`
+      : undefined;
+    try {
+      // First verify the vocational department belongs to the user
+      const resultVocPut = await pool.query(
+        "SELECT * FROM vocational WHERE id = $1 AND user_id = $2",
+        [vocationalId, userId]
+      );
+      if (resultVocPut.rows.length === 0) {
+        return res
+          .status(404)
+          .json({ error: "Vocational department not found" });
+      }
+      // Build update query and values dynamically
+      let updateFields = ["name = $1", "description = $2", "year = $3"];
+      let updateValues = [title, description, year];
+      let paramIndex = 4;
+      if (picture1 !== undefined) {
+        updateFields.push(`picture1 = $${paramIndex}`);
+        updateValues.push(picture1);
+        paramIndex++;
+      }
+      if (picture2 !== undefined) {
+        updateFields.push(`picture2 = $${paramIndex}`);
+        updateValues.push(picture2);
+        paramIndex++;
+      }
+      if (picture3 !== undefined) {
+        updateFields.push(`picture3 = $${paramIndex}`);
+        updateValues.push(picture3);
+        paramIndex++;
+      }
+      if (picture4 !== undefined) {
+        updateFields.push(`picture4 = $${paramIndex}`);
+        updateValues.push(picture4);
+        paramIndex++;
+      }
+      // Add WHERE clause
+      updateFields = updateFields.join(", ");
+      updateValues.push(vocationalId, userId);
+      const updateQuery = `UPDATE vocational SET ${updateFields} WHERE id = $${paramIndex} AND user_id = $${
+        paramIndex + 1
+      }`;
+      // Update the vocational department
+      await pool.query(updateQuery, updateValues);
+      res.json({ message: "Vocational department updated successfully" });
+    } catch (error) {
+      console.error("Error updating vocational department:", error);
+      res.status(500).json({ error: "Error updating vocational department" });
     }
-    // Build update query and values dynamically
-    let updateFields = ['name = $1', 'description = $2', 'year = $3'];
-    let updateValues = [title, description, year];
-    let paramIndex = 4;
-    if (picture1 !== undefined) {
-      updateFields.push(`picture1 = $${paramIndex}`);
-      updateValues.push(picture1);
-      paramIndex++;
-    }
-    if (picture2 !== undefined) {
-      updateFields.push(`picture2 = $${paramIndex}`);
-      updateValues.push(picture2);
-      paramIndex++;
-    }
-    if (picture3 !== undefined) {
-      updateFields.push(`picture3 = $${paramIndex}`);
-      updateValues.push(picture3);
-      paramIndex++;
-    }
-    if (picture4 !== undefined) {
-      updateFields.push(`picture4 = $${paramIndex}`);
-      updateValues.push(picture4);
-      paramIndex++;
-    }
-    // Add WHERE clause
-    updateFields = updateFields.join(', ');
-    updateValues.push(vocationalId, userId);
-    const updateQuery = `UPDATE vocational SET ${updateFields} WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}`;
-    // Update the vocational department
-    await pool.query(updateQuery, updateValues);
-    res.json({ message: 'Vocational department updated successfully' });
-  } catch (error) {
-    console.error('Error updating vocational department:', error);
-    res.status(500).json({ error: 'Error updating vocational department' });
   }
-});
-app.delete('/api/vocational/:id', authenticateToken, async (req, res) => {
+);
+app.delete("/api/vocational/:id", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const vocationalId = req.params.id;
   try {
     // First verify the vocational department belongs to the user
     const resultVocDel = await pool.query(
-      'SELECT * FROM vocational WHERE id = $1 AND user_id = $2',
+      "SELECT * FROM vocational WHERE id = $1 AND user_id = $2",
       [vocationalId, userId]
     );
     if (resultVocDel.rows.length === 0) {
-      return res.status(404).json({ error: 'Vocational department not found' });
+      return res.status(404).json({ error: "Vocational department not found" });
     }
     // Delete the vocational department
-    await pool.query(
-      'DELETE FROM vocational WHERE id = $1 AND user_id = $2',
-      [vocationalId, userId]
-    );
-    res.json({ message: 'Vocational department deleted successfully' });
+    await pool.query("DELETE FROM vocational WHERE id = $1 AND user_id = $2", [
+      vocationalId,
+      userId,
+    ]);
+    res.json({ message: "Vocational department deleted successfully" });
   } catch (error) {
-    console.error('Error deleting vocational department:', error);
-    res.status(500).json({ error: 'Error deleting vocational department' });
+    console.error("Error deleting vocational department:", error);
+    res.status(500).json({ error: "Error deleting vocational department" });
   }
 });
 // Teachers endpoints (Admin: full CRUD, others: only their own if needed)
-app.post('/api/teachers', authenticateToken, async (req, res) => {
-  const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
+app.post("/api/teachers", authenticateToken, async (req, res) => {
+  const { full_name, sex, id_card, dob, pob, subjects, classes, contact } =
+    req.body;
   // Allow only admins to add teachers (or remove this check if all can add)
-  if (!['admin', 'Admin1', 'Admin2', 'Admin3', 'Admin4'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Forbidden' });
+  if (
+    !["admin", "Admin1", "Admin2", "Admin3", "Admin4"].includes(req.user.role)
+  ) {
+    return res.status(403).json({ error: "Forbidden" });
   }
   try {
     const result = await pool.query(
@@ -828,71 +1153,91 @@ app.post('/api/teachers', authenticateToken, async (req, res) => {
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error creating teacher:', error);
-    res.status(500).json({ error: 'Error creating teacher' });
+    console.error("Error creating teacher:", error);
+    res.status(500).json({ error: "Error creating teacher" });
   }
 });
 // Get all teachers (admin) or only own (if needed)
-app.get('/api/teachers', authenticateToken, async (req, res) => {
+app.get("/api/teachers", authenticateToken, async (req, res) => {
   try {
     let result;
-    if (['admin', 'Admin1', 'Admin2', 'Admin3', 'Admin4'].includes(req.user.role)) {
-      result = await pool.query('SELECT * FROM teachers ORDER BY created_at DESC');
+    if (
+      ["admin", "Admin1", "Admin2", "Admin3", "Admin4"].includes(req.user.role)
+    ) {
+      result = await pool.query(
+        "SELECT * FROM teachers ORDER BY created_at DESC"
+      );
     } else {
       // If you want to restrict for non-admins, add logic here
-      result = await pool.query('SELECT * FROM teachers ORDER BY created_at DESC');
+      result = await pool.query(
+        "SELECT * FROM teachers ORDER BY created_at DESC"
+      );
     }
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching teachers:', error);
-    res.status(500).json({ error: 'Error fetching teachers' });
+    console.error("Error fetching teachers:", error);
+    res.status(500).json({ error: "Error fetching teachers" });
   }
 });
-app.put('/api/teachers/:id', authenticateToken, async (req, res) => {
+app.put("/api/teachers/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
-  const { full_name, sex, id_card, dob, pob, subjects, classes, contact } = req.body;
-  if (!['admin', 'Admin1', 'Admin2', 'Admin3', 'Admin4'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Forbidden' });
+  const { full_name, sex, id_card, dob, pob, subjects, classes, contact } =
+    req.body;
+  if (
+    !["admin", "Admin1", "Admin2", "Admin3", "Admin4"].includes(req.user.role)
+  ) {
+    return res.status(403).json({ error: "Forbidden" });
   }
   try {
     const result = await pool.query(
       `UPDATE teachers SET full_name=$1, sex=$2, id_card=$3, dob=$4, pob=$5, subjects=$6, classes=$7, contact=$8 WHERE id=$9 RETURNING *`,
       [full_name, sex, id_card, dob, pob, subjects, classes, contact, id]
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Teacher not found' });
+    if (result.rows.length === 0)
+      return res.status(404).json({ error: "Teacher not found" });
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating teacher:', error);
-    res.status(500).json({ error: 'Error updating teacher' });
+    console.error("Error updating teacher:", error);
+    res.status(500).json({ error: "Error updating teacher" });
   }
 });
-app.delete('/api/teachers/:id', authenticateToken, async (req, res) => {
+app.delete("/api/teachers/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
-  if (!['admin', 'Admin1', 'Admin2', 'Admin3', 'Admin4'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Forbidden' });
+  if (
+    !["admin", "Admin1", "Admin2", "Admin3", "Admin4"].includes(req.user.role)
+  ) {
+    return res.status(403).json({ error: "Forbidden" });
   }
   try {
-    const result = await pool.query('DELETE FROM teachers WHERE id=$1 RETURNING *', [id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Teacher not found' });
-    res.json({ message: 'Teacher deleted successfully' });
+    const result = await pool.query(
+      "DELETE FROM teachers WHERE id=$1 RETURNING *",
+      [id]
+    );
+    if (result.rows.length === 0)
+      return res.status(404).json({ error: "Teacher not found" });
+    res.json({ message: "Teacher deleted successfully" });
   } catch (error) {
-    console.error('Error deleting teacher:', error);
-    res.status(500).json({ error: 'Error deleting teacher' });
+    console.error("Error deleting teacher:", error);
+    res.status(500).json({ error: "Error deleting teacher" });
   }
 });
 // New endpoint for admin to approve/reject teachers
-app.put('/api/teachers/:id/status', authenticateToken, async (req, res) => {
-  console.log('User object for approval:', req.user);
-  if (req.user.role !== 'Admin3') {
-    return res.status(403).json({ error: 'Only Admin3 can approve/reject teachers' });
+app.put("/api/teachers/:id/status", authenticateToken, async (req, res) => {
+  console.log("User object for approval:", req.user);
+  if (req.user.role !== "Admin3") {
+    return res
+      .status(403)
+      .json({ error: "Only Admin3 can approve/reject teachers" });
   }
   const { status } = req.body;
   const userId = req.user.id;
   const teacherId = req.params.id;
   try {
     // Validate status
-    if (!['approved', 'pending', 'rejected'].includes(status)) {
-      return res.status(400).json({ error: 'Invalid status. Must be "approved", "pending", or "rejected"' });
+    if (!["approved", "pending", "rejected"].includes(status)) {
+      return res.status(400).json({
+        error: 'Invalid status. Must be "approved", "pending", or "rejected"',
+      });
     }
     // Update the teacher status
     const result = await pool.query(
@@ -902,96 +1247,105 @@ app.put('/api/teachers/:id/status', authenticateToken, async (req, res) => {
       [status, teacherId]
     );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Teacher not found' });
+      return res.status(404).json({ error: "Teacher not found" });
     }
     res.json({ message: `Teacher ${status} successfully` });
   } catch (error) {
-    console.error('Error updating teacher status:', error);
-    res.status(500).json({ error: 'Error updating teacher status' });
+    console.error("Error updating teacher status:", error);
+    res.status(500).json({ error: "Error updating teacher status" });
   }
 });
 // Teacher analytics endpoint: teachers added per day for the last 30 days
-app.get('/api/teachers/analytics/daily', authenticateToken, async (req, res) => {
-  const userId = req.user.id;
-  const userRole = req.user.role;
-  const year = req.query.year ? parseInt(req.query.year) : null;
-  try {
-    let rows;
-    if (userRole === 'admin') {
-      // Admin can view analytics for all teachers
-      if (year) {
-        [rows] = await pool.query(
-          `SELECT DATE(created_at) as date, COUNT(*) as count
+app.get(
+  "/api/teachers/analytics/daily",
+  authenticateToken,
+  async (req, res) => {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const year = req.query.year ? parseInt(req.query.year) : null;
+    try {
+      let rows;
+      if (userRole === "admin") {
+        // Admin can view analytics for all teachers
+        if (year) {
+          [rows] = await pool.query(
+            `SELECT DATE(created_at) as date, COUNT(*) as count
            FROM teachers
            WHERE EXTRACT(YEAR FROM created_at) = $1 AND created_at >= (CURRENT_DATE - INTERVAL '30 days')
            GROUP BY DATE(created_at)
            ORDER BY date ASC`,
-          [year]
-        );
-      } else {
-        [rows] = await pool.query(
-          `SELECT DATE(created_at) as date, COUNT(*) as count
+            [year]
+          );
+        } else {
+          [rows] = await pool.query(
+            `SELECT DATE(created_at) as date, COUNT(*) as count
            FROM teachers
            WHERE created_at >= (CURRENT_DATE - INTERVAL '30 days')
            GROUP BY DATE(created_at)
            ORDER BY date ASC`
-        );
-      }
-    } else {
-      // Regular users can only view their own teachers' analytics
-      if (year) {
-        [rows] = await pool.query(
-          `SELECT DATE(created_at) as date, COUNT(*) as count
+          );
+        }
+      } else {
+        // Regular users can only view their own teachers' analytics
+        if (year) {
+          [rows] = await pool.query(
+            `SELECT DATE(created_at) as date, COUNT(*) as count
            FROM teachers
            WHERE user_id = $1 AND EXTRACT(YEAR FROM created_at) = $2 AND created_at >= (CURRENT_DATE - INTERVAL '30 days')
            GROUP BY DATE(created_at)
            ORDER BY date ASC`,
-          [userId, year]
-        );
-      } else {
-        [rows] = await pool.query(
-          `SELECT DATE(created_at) as date, COUNT(*) as count
+            [userId, year]
+          );
+        } else {
+          [rows] = await pool.query(
+            `SELECT DATE(created_at) as date, COUNT(*) as count
            FROM teachers
            WHERE user_id = $1 AND created_at >= (CURRENT_DATE - INTERVAL '30 days')
            GROUP BY DATE(created_at)
            ORDER BY date ASC`,
-          [userId]
-        );
+            [userId]
+          );
+        }
       }
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching teacher analytics:", error);
+      res.status(500).json({
+        error: "Error fetching teacher analytics",
+        details: error.message,
+      });
     }
-    res.json(rows);
-  } catch (error) {
-    console.error('Error fetching teacher analytics:', error);
-    res.status(500).json({ error: 'Error fetching teacher analytics', details: error.message });
   }
-});
+);
 // FEES & ID CARDS ENDPOINTS
 // 1. Search students for auto-suggest
-app.get('/api/students/search', authenticateToken, async (req, res) => {
-  const query = req.query.query || '';
+app.get("/api/students/search", authenticateToken, async (req, res) => {
+  const query = req.query.query || "";
   try {
     // All users can search all students by name or student_id
     const result = await pool.query(
-      'SELECT id, full_name, student_id FROM students WHERE LOWER(full_name) LIKE LOWER($1) OR LOWER(student_id) LIKE LOWER($1) ORDER BY full_name ASC LIMIT 10',
+      "SELECT id, full_name, student_id FROM students WHERE LOWER(full_name) LIKE LOWER($1) OR LOWER(student_id) LIKE LOWER($1) ORDER BY full_name ASC LIMIT 10",
       [`%${query}%`]
     );
-    console.log(`[SEARCH DEBUG] Query: '${query}', Found: ${result.rows.length}`);
+    console.log(
+      `[SEARCH DEBUG] Query: '${query}', Found: ${result.rows.length}`
+    );
     if (result.rows.length > 0) {
-      console.log('[SEARCH DEBUG] Results:', result.rows);
+      console.log("[SEARCH DEBUG] Results:", result.rows);
     }
     res.json(result.rows);
   } catch (error) {
-    res.status(500).json({ error: 'Error searching students' });
+    res.status(500).json({ error: "Error searching students" });
   }
 });
 // Add this before startServer or before catch-all
-app.get('/api/fees/total/yearly', authenticateToken, async (req, res) => {
+app.get("/api/fees/total/yearly", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const userRole = req.user.role;
   const year = req.query.year ? parseInt(req.query.year) : null;
   try {
     let result;
-    if (userRole === 'admin') {
+    if (userRole === "admin") {
       // Admin can view total fees for all students
       if (year) {
         result = await pool.query(
@@ -1022,7 +1376,7 @@ app.get('/api/fees/total/yearly', authenticateToken, async (req, res) => {
           `SELECT SUM(amount) as total
            FROM fees f
            JOIN students s ON f.student_id = s.id
-           WHERE s.user_id = $1 AND EXTRACT(YEAR FROM f.paid_at) = EXTRACT(YEAR FROM CURRENT_DATE)` ,
+           WHERE s.user_id = $1 AND EXTRACT(YEAR FROM f.paid_at) = EXTRACT(YEAR FROM CURRENT_DATE)`,
           [userId]
         );
       }
@@ -1030,129 +1384,176 @@ app.get('/api/fees/total/yearly', authenticateToken, async (req, res) => {
     const total = result.rows[0]?.total || 0;
     res.json({ total });
   } catch (error) {
-    console.error('Error fetching yearly total fees:', error);
-    res.status(500).json({ error: 'Error fetching yearly total fees', details: error.message });
+    console.error("Error fetching yearly total fees:", error);
+    res.status(500).json({
+      error: "Error fetching yearly total fees",
+      details: error.message,
+    });
   }
 });
-app.get('/api/student/:id/fees', authenticateToken, async (req, res) => {
+app.get("/api/student/:id/fees", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const userRole = req.user.role;
   const studentId = req.params.id;
   const year = req.query.year ? parseInt(req.query.year) : null;
-  console.log(`[FEE STATS DEBUG] Fetching stats for studentId: ${studentId}, userId: ${userId}, role: ${userRole}`);
+  console.log(
+    `[FEE STATS DEBUG] Fetching stats for studentId: ${studentId}, userId: ${userId}, role: ${userRole}`
+  );
   try {
     // Get student and class with role-based access
     let resultStudent;
-    if (userRole === 'admin' || userRole === 'Admin3' || userRole === 'Admin2' || userRole === 'Admin1' || userRole === 'Admin4') {
+    if (
+      userRole === "admin" ||
+      userRole === "Admin3" ||
+      userRole === "Admin2" ||
+      userRole === "Admin1" ||
+      userRole === "Admin4"
+    ) {
       // Admins can view fees for any student
       resultStudent = await pool.query(
-        'SELECT s.*, c.name as class_name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1',
+        "SELECT s.*, c.name as class_name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1",
         [studentId]
       );
     } else {
       // Regular users can only view their own students' fees
       resultStudent = await pool.query(
-        'SELECT s.*, c.name as class_name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1 AND s.user_id = $2',
+        "SELECT s.*, c.name as class_name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1 AND s.user_id = $2",
         [studentId, userId]
       );
     }
     const student = resultStudent.rows[0];
     if (!student) {
       console.warn(`[FEE STATS DEBUG] Student not found for id: ${studentId}`);
-      return res.status(404).json({ error: 'Student not found' });
+      return res.status(404).json({ error: "Student not found" });
     }
     // Get all fees paid
     let resultFees;
     if (year) {
       resultFees = await pool.query(
-        'SELECT fee_type, SUM(amount) as paid FROM fees WHERE student_id = $1 AND EXTRACT(YEAR FROM paid_at) = $2 GROUP BY fee_type',
+        "SELECT fee_type, SUM(amount) as paid FROM fees WHERE student_id = $1 AND EXTRACT(YEAR FROM paid_at) = $2 GROUP BY fee_type",
         [studentId, year]
       );
     } else {
       resultFees = await pool.query(
-        'SELECT fee_type, SUM(amount) as paid FROM fees WHERE student_id = $1 GROUP BY fee_type',
+        "SELECT fee_type, SUM(amount) as paid FROM fees WHERE student_id = $1 GROUP BY fee_type",
         [studentId]
       );
     }
     // Calculate balances
-    const feeMap = Object.fromEntries(resultFees.rows.map(f => [f.fee_type, parseFloat(f.paid)]));
+    const feeMap = Object.fromEntries(
+      resultFees.rows.map((f) => [f.fee_type, parseFloat(f.paid)])
+    );
     const balance = {
-      Registration: Math.max(0, parseFloat(student.registration_fee) - (feeMap['Registration'] || 0)),
-      Bus: Math.max(0, parseFloat(student.bus_fee) - (feeMap['Bus'] || 0)),
-      Internship: Math.max(0, parseFloat(student.internship_fee) - (feeMap['Internship'] || 0)),
-      Remedial: Math.max(0, parseFloat(student.remedial_fee) - (feeMap['Remedial'] || 0)),
-      Tuition: Math.max(0, parseFloat(student.tuition_fee) - (feeMap['Tuition'] || 0)),
-      PTA: Math.max(0, parseFloat(student.pta_fee) - (feeMap['PTA'] || 0)),
+      Registration: Math.max(
+        0,
+        parseFloat(student.registration_fee) - (feeMap["Registration"] || 0)
+      ),
+      Bus: Math.max(0, parseFloat(student.bus_fee) - (feeMap["Bus"] || 0)),
+      Internship: Math.max(
+        0,
+        parseFloat(student.internship_fee) - (feeMap["Internship"] || 0)
+      ),
+      Remedial: Math.max(
+        0,
+        parseFloat(student.remedial_fee) - (feeMap["Remedial"] || 0)
+      ),
+      Tuition: Math.max(
+        0,
+        parseFloat(student.tuition_fee) - (feeMap["Tuition"] || 0)
+      ),
+      PTA: Math.max(0, parseFloat(student.pta_fee) - (feeMap["PTA"] || 0)),
     };
-    console.log(`[FEE STATS DEBUG] Returning stats for studentId: ${studentId}`, { student, balance });
+    console.log(
+      `[FEE STATS DEBUG] Returning stats for studentId: ${studentId}`,
+      { student, balance }
+    );
     res.json({ student, balance });
   } catch (error) {
-    console.error('[FEE STATS DEBUG] Error fetching student fee stats:', error.stack);
-    res.status(500).json({ error: 'Error fetching student fees', details: error.message });
+    console.error(
+      "[FEE STATS DEBUG] Error fetching student fee stats:",
+      error.stack
+    );
+    res
+      .status(500)
+      .json({ error: "Error fetching student fees", details: error.message });
   }
 });
-app.post('/api/fees', authenticateToken, async (req, res) => {
+app.post("/api/fees", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const { student_id, class_id, fee_type, amount, paid_at } = req.body;
   try {
     // Validate
     const numericAmount = parseFloat(amount);
     if (Number.isNaN(numericAmount) || numericAmount <= 0) {
-      return res.status(400).json({ error: 'Invalid amount' });
+      return res.status(400).json({ error: "Invalid amount" });
     }
 
     // Fetch student's class and expected fees
     const resultStudent = await pool.query(
-      'SELECT s.id as student_id, s.class_id, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1',
+      "SELECT s.id as student_id, s.class_id, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1",
       [student_id]
     );
     if (resultStudent.rows.length === 0) {
-      return res.status(404).json({ error: 'Student not found' });
+      return res.status(404).json({ error: "Student not found" });
     }
     const srow = resultStudent.rows[0];
 
     // Sum already paid for this fee type
     const sumRes = await pool.query(
-      'SELECT COALESCE(SUM(amount),0) as paid FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2)',
+      "SELECT COALESCE(SUM(amount),0) as paid FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2)",
       [student_id, fee_type]
     );
     const alreadyPaid = parseFloat(sumRes.rows[0].paid) || 0;
 
     // Determine expected for this type
     const keyMap = {
-      registration: 'registration_fee',
-      bus: 'bus_fee',
-      internship: 'internship_fee',
-      remedial: 'remedial_fee',
-      tuition: 'tuition_fee',
-      pta: 'pta_fee'
+      registration: "registration_fee",
+      bus: "bus_fee",
+      internship: "internship_fee",
+      remedial: "remedial_fee",
+      tuition: "tuition_fee",
+      pta: "pta_fee",
     };
-    const ft = String(fee_type || '').trim().toLowerCase();
+    const ft = String(fee_type || "")
+      .trim()
+      .toLowerCase();
     const feeKey = keyMap[ft];
-    const expected = feeKey ? parseFloat(String(srow[feeKey] || '0').replace(/,/g, '')) : 0;
+    const expected = feeKey
+      ? parseFloat(String(srow[feeKey] || "0").replace(/,/g, ""))
+      : 0;
     const remaining = Math.max(0, expected - alreadyPaid);
     if (numericAmount > remaining) {
-      return res.status(400).json({ error: 'Amount exceeds remaining balance for this fee type' });
+      return res
+        .status(400)
+        .json({ error: "Amount exceeds remaining balance for this fee type" });
     }
 
     // Insert
     if (paid_at) {
       await pool.query(
-        'INSERT INTO fees (student_id, class_id, fee_type, amount, paid_at) VALUES ($1, $2, $3, $4, $5)',
-        [student_id, class_id || srow.class_id, fee_type, numericAmount, paid_at]
+        "INSERT INTO fees (student_id, class_id, fee_type, amount, paid_at) VALUES ($1, $2, $3, $4, $5)",
+        [
+          student_id,
+          class_id || srow.class_id,
+          fee_type,
+          numericAmount,
+          paid_at,
+        ]
       );
     } else {
       await pool.query(
-        'INSERT INTO fees (student_id, class_id, fee_type, amount) VALUES ($1, $2, $3, $4)',
+        "INSERT INTO fees (student_id, class_id, fee_type, amount) VALUES ($1, $2, $3, $4)",
         [student_id, class_id || srow.class_id, fee_type, numericAmount]
       );
     }
-    res.json({ message: 'Fee payment recorded' });
+    res.json({ message: "Fee payment recorded" });
   } catch (error) {
-    res.status(500).json({ error: 'Error recording fee payment', details: error.message });
+    res
+      .status(500)
+      .json({ error: "Error recording fee payment", details: error.message });
   }
 });
-app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
+app.get("/api/fees/class/:classId", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const userRole = req.user.role;
   const classId = req.params.classId;
@@ -1160,44 +1561,54 @@ app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
   try {
     // First, check if the class exists
     const classCheck = await pool.query(
-      'SELECT id, name FROM classes WHERE id = $1',
+      "SELECT id, name FROM classes WHERE id = $1",
       [classId]
     );
     if (classCheck.rows.length === 0) {
       console.log(`[FEE DEBUG] Class with ID ${classId} not found.`);
-      return res.status(404).json({ error: `Class with ID ${classId} not found` });
+      return res
+        .status(404)
+        .json({ error: `Class with ID ${classId} not found` });
     }
     const className = classCheck.rows[0].name;
     console.log(`[FEE DEBUG] ClassId: ${classId}, ClassName: ${className}`);
 
     // Determine if requester has admin-level visibility
-    const isAdminLike = typeof userRole === 'string' && (
-      userRole.toLowerCase() === 'admin' || ['Admin1','Admin2','Admin3','Admin4'].includes(userRole)
-    );
+    const isAdminLike =
+      typeof userRole === "string" &&
+      (userRole.toLowerCase() === "admin" ||
+        ["Admin1", "Admin2", "Admin3", "Admin4"].includes(userRole));
 
     // Get all students in class (students.user_id does not exist, so no per-user restriction)
     let resultStudents;
     resultStudents = await pool.query(
-      'SELECT s.id, s.full_name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.class_id = $1',
+      "SELECT s.id, s.full_name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.class_id = $1",
       [classId]
     );
     const students = resultStudents.rows;
-    console.log(`[FEE DEBUG] Found ${students.length} students in class ${className} (ID: ${classId})`);
+    console.log(
+      `[FEE DEBUG] Found ${students.length} students in class ${className} (ID: ${classId})`
+    );
     if (students.length > 0) {
-      console.log('[FEE DEBUG] Student IDs:', students.map(s => s.id));
+      console.log(
+        "[FEE DEBUG] Student IDs:",
+        students.map((s) => s.id)
+      );
     }
     if (students.length === 0) {
       return res.json([]);
     }
 
     // Get all fees for these students
-    const studentIds = students.map(s => s.id);
+    const studentIds = students.map((s) => s.id);
     let fees = [];
     if (studentIds.length > 0) {
-      const placeholders = studentIds.map((_, i) => `$${i + 1}`).join(',');
+      const placeholders = studentIds.map((_, i) => `$${i + 1}`).join(",");
       if (year) {
         const params = [...studentIds, year];
-        const query = `SELECT student_id, fee_type, SUM(amount) as paid FROM fees WHERE student_id IN (${placeholders}) AND EXTRACT(YEAR FROM paid_at) = $${studentIds.length + 1} GROUP BY student_id, fee_type`;
+        const query = `SELECT student_id, fee_type, SUM(amount) as paid FROM fees WHERE student_id IN (${placeholders}) AND EXTRACT(YEAR FROM paid_at) = $${
+          studentIds.length + 1
+        } GROUP BY student_id, fee_type`;
         const resultFees = await pool.query(query, params);
         fees = resultFees.rows;
       } else {
@@ -1211,7 +1622,9 @@ app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
     const feeMap = {};
     for (const f of fees) {
       const sid = f.student_id;
-      const key = String(f.fee_type || '').trim().toLowerCase();
+      const key = String(f.fee_type || "")
+        .trim()
+        .toLowerCase();
       if (!feeMap[sid]) feeMap[sid] = {};
       feeMap[sid][key] = parseFloat(f.paid) || 0;
     }
@@ -1219,20 +1632,20 @@ app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
     // Helper to safely parse class fee numbers (handle nulls/commas)
     const safeNum = (v) => {
       if (v === null || v === undefined) return 0;
-      const n = parseFloat(String(v).replace(/,/g, ''));
+      const n = parseFloat(String(v).replace(/,/g, ""));
       return isNaN(n) ? 0 : n;
     };
 
     // Build stats
-    const stats = students.map(s => {
+    const stats = students.map((s) => {
       const paid = feeMap[s.id] || {};
       // Normalize keys
-      const paidReg = paid['registration'] || 0;
-      const paidBus = paid['bus'] || 0;
-      const paidIntern = paid['internship'] || 0;
-      const paidRemedial = paid['remedial'] || 0;
-      const paidTuition = paid['tuition'] || 0;
-      const paidPTA = paid['pta'] || 0;
+      const paidReg = paid["registration"] || 0;
+      const paidBus = paid["bus"] || 0;
+      const paidIntern = paid["internship"] || 0;
+      const paidRemedial = paid["remedial"] || 0;
+      const paidTuition = paid["tuition"] || 0;
+      const paidPTA = paid["pta"] || 0;
 
       // Class fee expectations
       const reg = safeNum(s.registration_fee);
@@ -1243,19 +1656,8 @@ app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
       const pta = safeNum(s.pta_fee);
 
       const total = reg + bus + intern + remedial + tuition + pta;
-      const paidTotal = paidReg + paidBus + paidIntern + paidRemedial + paidTuition + paidPTA;
-
-      // Determine status robustly
-      let status = 'Owing';
-      if (total > 0) {
-        if (paidTotal >= total - 0.0001) status = 'Paid';
-        else if (paidTotal > 0) status = 'Partial';
-        else status = 'Owing';
-      } else {
-        // No configured fees for the class -> treat as Owing unless there is any payment (edge)
-        status = paidTotal > 0 ? 'Paid' : 'Owing';
-      }
-
+      const paidTotal =
+        paidReg + paidBus + paidIntern + paidRemedial + paidTuition + paidPTA;
       return {
         name: s.full_name,
         Registration: paidReg,
@@ -1266,55 +1668,59 @@ app.get('/api/fees/class/:classId', authenticateToken, async (req, res) => {
         PTA: paidPTA,
         Total: paidTotal,
         Balance: Math.max(0, total - paidTotal),
-        Status: status
+        Status: status,
       };
     });
-    console.log('[FEE DEBUG] Fee stats to return:', stats);
+    console.log("[FEE DEBUG] Fee stats to return:", stats);
     res.json(stats);
   } catch (error) {
-    console.error('Error in /api/fees/class/:classId:', error);
-    res.status(500).json({ error: 'Failed to fetch class fee stats' });
+    console.error("Error in /api/fees/class/:classId:", error);
+    res.status(500).json({ error: "Failed to fetch class fee stats" });
   }
 });
 function verifyDatabaseStructure() {
   return new Promise((resolve, reject) => {
     const requiredTables = [
-      'users',
-      'students',
-      'classes',
-      'vocational',
-      'teachers',
-      'fees',
-      'id_cards',
-      'lesson_plans',
-      'subjects'
+      "users",
+      "students",
+      "classes",
+      "vocational",
+      "teachers",
+      "fees",
+      "id_cards",
+      "lesson_plans",
+      "subjects",
     ];
     const checkTable = (tableName) => {
       return new Promise((resolveTable, rejectTable) => {
-        pool.query(`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)`, [tableName], (err, result) => {
-          if (err) {
-            console.error(`Error checking table ${tableName}:`, err);
-            rejectTable(err);
-          } else {
-            if (result.rows[0].exists) {
-              console.log(`Table ${tableName} exists`);
-              resolveTable(true);
+        pool.query(
+          `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)`,
+          [tableName],
+          (err, result) => {
+            if (err) {
+              console.error(`Error checking table ${tableName}:`, err);
+              rejectTable(err);
             } else {
-              console.log(`Table ${tableName} does not exist`);
-              resolveTable(false);
+              if (result.rows[0].exists) {
+                console.log(`Table ${tableName} exists`);
+                resolveTable(true);
+              } else {
+                console.log(`Table ${tableName} does not exist`);
+                resolveTable(false);
+              }
             }
           }
-        });
+        );
       });
     };
     Promise.all(requiredTables.map(checkTable))
       .then((results) => {
-        const allTablesExist = results.every(exists => exists);
+        const allTablesExist = results.every((exists) => exists);
         if (allTablesExist) {
-          console.log('All required tables exist');
+          console.log("All required tables exist");
           resolve(true);
         } else {
-          console.log('Some required tables are missing');
+          console.log("Some required tables are missing");
           resolve(false);
         }
       })
@@ -1323,62 +1729,71 @@ function verifyDatabaseStructure() {
 }
 async function runMigrations() {
   try {
-    console.log('Running migrations...');
+    console.log("Running migrations...");
     // Check if class_id column exists
     const result = await pool.query(
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'students' AND column_name = 'class_id'"
     );
     const columns = result.rows;
     if (columns.length === 0) {
-      console.log('Adding class_id column to students table...');
-      await pool.query('ALTER TABLE students ADD COLUMN class_id INT');
+      console.log("Adding class_id column to students table...");
+      await pool.query("ALTER TABLE students ADD COLUMN class_id INT");
       // Add foreign key constraint
       await pool.query(
-        'ALTER TABLE students ADD CONSTRAINT students_ibfk_2 FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE SET NULL'
+        "ALTER TABLE students ADD CONSTRAINT students_ibfk_2 FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE SET NULL"
       );
-      console.log('class_id column and foreign key added successfully');
+      console.log("class_id column and foreign key added successfully");
     } else {
-      console.log('class_id column already exists');
+      console.log("class_id column already exists");
     }
     // Assign first available class to students with NULL class_id
-    const classResult = await pool.query('SELECT id FROM classes LIMIT 1');
+    const classResult = await pool.query("SELECT id FROM classes LIMIT 1");
     const classes = classResult.rows;
     if (classes.length > 0) {
       const classId = classes[0].id;
-      const updateResult = await pool.query('UPDATE students SET class_id = $1 WHERE class_id IS NULL', [classId]);
-      console.log(`Assigned class_id=${classId} to ${updateResult.rowCount} students with NULL class_id.`);
+      const updateResult = await pool.query(
+        "UPDATE students SET class_id = $1 WHERE class_id IS NULL",
+        [classId]
+      );
+      console.log(
+        `Assigned class_id=${classId} to ${updateResult.rowCount} students with NULL class_id.`
+      );
     }
     // Check if messages table has file attachment columns
     const messagesColumns = await pool.query(
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'messages' AND column_name IN ('file_url', 'file_name', 'file_type')"
     );
-    const existingFileColumns = messagesColumns.rows.map(row => row.column_name);
-    if (!existingFileColumns.includes('file_url')) {
-      console.log('Adding file_url column to messages table...');
-      await pool.query('ALTER TABLE messages ADD COLUMN file_url VARCHAR(255)');
+    const existingFileColumns = messagesColumns.rows.map(
+      (row) => row.column_name
+    );
+    if (!existingFileColumns.includes("file_url")) {
+      console.log("Adding file_url column to messages table...");
+      await pool.query("ALTER TABLE messages ADD COLUMN file_url VARCHAR(255)");
     }
-    if (!existingFileColumns.includes('file_name')) {
-      console.log('Adding file_name column to messages table...');
-      await pool.query('ALTER TABLE messages ADD COLUMN file_name VARCHAR(255)');
+    if (!existingFileColumns.includes("file_name")) {
+      console.log("Adding file_name column to messages table...");
+      await pool.query(
+        "ALTER TABLE messages ADD COLUMN file_name VARCHAR(255)"
+      );
     }
-    if (!existingFileColumns.includes('file_type')) {
-      console.log('Adding file_type column to messages table...');
-      await pool.query('ALTER TABLE messages ADD COLUMN file_type VARCHAR(50)');
+    if (!existingFileColumns.includes("file_type")) {
+      console.log("Adding file_type column to messages table...");
+      await pool.query("ALTER TABLE messages ADD COLUMN file_type VARCHAR(50)");
     }
     // Check if messages table has group_id column
     const groupIdColumn = await pool.query(
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'messages' AND column_name = 'group_id'"
     );
     if (groupIdColumn.rows.length === 0) {
-      console.log('Adding group_id column to messages table...');
-      await pool.query('ALTER TABLE messages ADD COLUMN group_id INTEGER');
+      console.log("Adding group_id column to messages table...");
+      await pool.query("ALTER TABLE messages ADD COLUMN group_id INTEGER");
     }
     // Check if groups table exists
     const groupsTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'groups'"
     );
     if (groupsTable.rows.length === 0) {
-      console.log('Creating groups table...');
+      console.log("Creating groups table...");
       await pool.query(`
         CREATE TABLE groups (
           id SERIAL PRIMARY KEY,
@@ -1393,7 +1808,7 @@ async function runMigrations() {
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'group_participants'"
     );
     if (groupParticipantsTable.rows.length === 0) {
-      console.log('Creating group_participants table...');
+      console.log("Creating group_participants table...");
       await pool.query(`
         CREATE TABLE group_participants (
           id SERIAL PRIMARY KEY,
@@ -1409,7 +1824,7 @@ async function runMigrations() {
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'inventory'"
     );
     if (inventoryTable.rows.length === 0) {
-      console.log('Creating inventory table...');
+      console.log("Creating inventory table...");
       await pool.query(`
         CREATE TABLE inventory (
           id SERIAL PRIMARY KEY,
@@ -1430,7 +1845,7 @@ async function runMigrations() {
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'subjects'"
     );
     if (subjectsTable.rows.length === 0) {
-      console.log('Creating subjects table...');
+      console.log("Creating subjects table...");
       await pool.query(`
         CREATE TABLE subjects (
           id SERIAL PRIMARY KEY,
@@ -1448,22 +1863,30 @@ async function runMigrations() {
       const subjectsColumns = await pool.query(
         "SELECT column_name FROM information_schema.columns WHERE table_name = 'subjects' AND column_name IN ('description', 'credits', 'department', 'updated_at')"
       );
-      const existingSubjectsColumns = subjectsColumns.rows.map(row => row.column_name);
-      if (!existingSubjectsColumns.includes('description')) {
-        console.log('Adding description column to subjects table...');
-        await pool.query('ALTER TABLE subjects ADD COLUMN description TEXT');
+      const existingSubjectsColumns = subjectsColumns.rows.map(
+        (row) => row.column_name
+      );
+      if (!existingSubjectsColumns.includes("description")) {
+        console.log("Adding description column to subjects table...");
+        await pool.query("ALTER TABLE subjects ADD COLUMN description TEXT");
       }
-      if (!existingSubjectsColumns.includes('credits')) {
-        console.log('Adding credits column to subjects table...');
-        await pool.query('ALTER TABLE subjects ADD COLUMN credits INTEGER DEFAULT 0');
+      if (!existingSubjectsColumns.includes("credits")) {
+        console.log("Adding credits column to subjects table...");
+        await pool.query(
+          "ALTER TABLE subjects ADD COLUMN credits INTEGER DEFAULT 0"
+        );
       }
-      if (!existingSubjectsColumns.includes('department')) {
-        console.log('Adding department column to subjects table...');
-        await pool.query('ALTER TABLE subjects ADD COLUMN department VARCHAR(100)');
+      if (!existingSubjectsColumns.includes("department")) {
+        console.log("Adding department column to subjects table...");
+        await pool.query(
+          "ALTER TABLE subjects ADD COLUMN department VARCHAR(100)"
+        );
       }
-      if (!existingSubjectsColumns.includes('updated_at')) {
-        console.log('Adding updated_at column to subjects table...');
-        await pool.query('ALTER TABLE subjects ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+      if (!existingSubjectsColumns.includes("updated_at")) {
+        console.log("Adding updated_at column to subjects table...");
+        await pool.query(
+          "ALTER TABLE subjects ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+        );
       }
     }
     // Check if subject_classifications table exists
@@ -1471,7 +1894,7 @@ async function runMigrations() {
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'subject_classifications'"
     );
     if (subjectClassificationsTable.rows.length === 0) {
-      console.log('Creating subject_classifications table...');
+      console.log("Creating subject_classifications table...");
       await pool.query(`
         CREATE TABLE subject_classifications (
           id SERIAL PRIMARY KEY,
@@ -1489,7 +1912,7 @@ async function runMigrations() {
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'subject_coefficients'"
     );
     if (subjectCoefficientsTable.rows.length === 0) {
-      console.log('Creating subject_coefficients table...');
+      console.log("Creating subject_coefficients table...");
       await pool.query(`
         CREATE TABLE subject_coefficients (
           id SERIAL PRIMARY KEY,
@@ -1507,7 +1930,7 @@ async function runMigrations() {
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'lesson_plans'"
     );
     if (lessonPlansTable.rows.length === 0) {
-      console.log('Creating lesson_plans table...');
+      console.log("Creating lesson_plans table...");
       await pool.query(`
         CREATE TABLE lesson_plans (
           id SERIAL PRIMARY KEY,
@@ -1535,62 +1958,82 @@ async function runMigrations() {
       const lessonPlansColumns = await pool.query(
         "SELECT column_name FROM information_schema.columns WHERE table_name = 'lesson_plans' AND column_name IN ('subject', 'class_name', 'week', 'objectives', 'content', 'activities', 'assessment', 'resources', 'file_url', 'file_name', 'status', 'admin_comment', 'updated_at', 'period_type')"
       );
-      const existingLessonPlansColumns = lessonPlansColumns.rows.map(row => row.column_name);
-      if (!existingLessonPlansColumns.includes('subject')) {
-        console.log('Adding subject column to lesson_plans table...');
-        await pool.query('ALTER TABLE lesson_plans ADD COLUMN subject VARCHAR(100)');
+      const existingLessonPlansColumns = lessonPlansColumns.rows.map(
+        (row) => row.column_name
+      );
+      if (!existingLessonPlansColumns.includes("subject")) {
+        console.log("Adding subject column to lesson_plans table...");
+        await pool.query(
+          "ALTER TABLE lesson_plans ADD COLUMN subject VARCHAR(100)"
+        );
       }
-      if (!existingLessonPlansColumns.includes('class_name')) {
-        console.log('Adding class_name column to lesson_plans table...');
-        await pool.query('ALTER TABLE lesson_plans ADD COLUMN class_name VARCHAR(100)');
+      if (!existingLessonPlansColumns.includes("class_name")) {
+        console.log("Adding class_name column to lesson_plans table...");
+        await pool.query(
+          "ALTER TABLE lesson_plans ADD COLUMN class_name VARCHAR(100)"
+        );
       }
-      if (!existingLessonPlansColumns.includes('week')) {
-        console.log('Adding week column to lesson_plans table...');
-        await pool.query('ALTER TABLE lesson_plans ADD COLUMN week VARCHAR(50)');
+      if (!existingLessonPlansColumns.includes("week")) {
+        console.log("Adding week column to lesson_plans table...");
+        await pool.query(
+          "ALTER TABLE lesson_plans ADD COLUMN week VARCHAR(50)"
+        );
       }
-      if (!existingLessonPlansColumns.includes('objectives')) {
-        console.log('Adding objectives column to lesson_plans table...');
-        await pool.query('ALTER TABLE lesson_plans ADD COLUMN objectives TEXT');
+      if (!existingLessonPlansColumns.includes("objectives")) {
+        console.log("Adding objectives column to lesson_plans table...");
+        await pool.query("ALTER TABLE lesson_plans ADD COLUMN objectives TEXT");
       }
-      if (!existingLessonPlansColumns.includes('content')) {
-        console.log('Adding content column to lesson_plans table...');
-        await pool.query('ALTER TABLE lesson_plans ADD COLUMN content TEXT');
+      if (!existingLessonPlansColumns.includes("content")) {
+        console.log("Adding content column to lesson_plans table...");
+        await pool.query("ALTER TABLE lesson_plans ADD COLUMN content TEXT");
       }
-      if (!existingLessonPlansColumns.includes('activities')) {
-        console.log('Adding activities column to lesson_plans table...');
-        await pool.query('ALTER TABLE lesson_plans ADD COLUMN activities TEXT');
+      if (!existingLessonPlansColumns.includes("activities")) {
+        console.log("Adding activities column to lesson_plans table...");
+        await pool.query("ALTER TABLE lesson_plans ADD COLUMN activities TEXT");
       }
-      if (!existingLessonPlansColumns.includes('assessment')) {
-        console.log('Adding assessment column to lesson_plans table...');
-        await pool.query('ALTER TABLE lesson_plans ADD COLUMN assessment TEXT');
+      if (!existingLessonPlansColumns.includes("assessment")) {
+        console.log("Adding assessment column to lesson_plans table...");
+        await pool.query("ALTER TABLE lesson_plans ADD COLUMN assessment TEXT");
       }
-      if (!existingLessonPlansColumns.includes('resources')) {
-        console.log('Adding resources column to lesson_plans table...');
-        await pool.query('ALTER TABLE lesson_plans ADD COLUMN resources TEXT');
+      if (!existingLessonPlansColumns.includes("resources")) {
+        console.log("Adding resources column to lesson_plans table...");
+        await pool.query("ALTER TABLE lesson_plans ADD COLUMN resources TEXT");
       }
-      if (!existingLessonPlansColumns.includes('file_url')) {
-        console.log('Adding file_url column to lesson_plans table...');
-        await pool.query('ALTER TABLE lesson_plans ADD COLUMN file_url VARCHAR(255)');
+      if (!existingLessonPlansColumns.includes("file_url")) {
+        console.log("Adding file_url column to lesson_plans table...");
+        await pool.query(
+          "ALTER TABLE lesson_plans ADD COLUMN file_url VARCHAR(255)"
+        );
       }
-      if (!existingLessonPlansColumns.includes('file_name')) {
-        console.log('Adding file_name column to lesson_plans table...');
-        await pool.query('ALTER TABLE lesson_plans ADD COLUMN file_name VARCHAR(255)');
+      if (!existingLessonPlansColumns.includes("file_name")) {
+        console.log("Adding file_name column to lesson_plans table...");
+        await pool.query(
+          "ALTER TABLE lesson_plans ADD COLUMN file_name VARCHAR(255)"
+        );
       }
-      if (!existingLessonPlansColumns.includes('status')) {
-        console.log('Adding status column to lesson_plans table...');
-        await pool.query('ALTER TABLE lesson_plans ADD COLUMN status VARCHAR(20) DEFAULT \'pending\'');
+      if (!existingLessonPlansColumns.includes("status")) {
+        console.log("Adding status column to lesson_plans table...");
+        await pool.query(
+          "ALTER TABLE lesson_plans ADD COLUMN status VARCHAR(20) DEFAULT 'pending'"
+        );
       }
-      if (!existingLessonPlansColumns.includes('admin_comment')) {
-        console.log('Adding admin_comment column to lesson_plans table...');
-        await pool.query('ALTER TABLE lesson_plans ADD COLUMN admin_comment TEXT');
+      if (!existingLessonPlansColumns.includes("admin_comment")) {
+        console.log("Adding admin_comment column to lesson_plans table...");
+        await pool.query(
+          "ALTER TABLE lesson_plans ADD COLUMN admin_comment TEXT"
+        );
       }
-      if (!existingLessonPlansColumns.includes('updated_at')) {
-        console.log('Adding updated_at column to lesson_plans table...');
-        await pool.query('ALTER TABLE lesson_plans ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+      if (!existingLessonPlansColumns.includes("updated_at")) {
+        console.log("Adding updated_at column to lesson_plans table...");
+        await pool.query(
+          "ALTER TABLE lesson_plans ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+        );
       }
-      if (!existingLessonPlansColumns.includes('period_type')) {
-        console.log('Adding period_type column to lesson_plans table...');
-        await pool.query('ALTER TABLE lesson_plans ADD COLUMN period_type VARCHAR(50) DEFAULT \'weekly\'');
+      if (!existingLessonPlansColumns.includes("period_type")) {
+        console.log("Adding period_type column to lesson_plans table...");
+        await pool.query(
+          "ALTER TABLE lesson_plans ADD COLUMN period_type VARCHAR(50) DEFAULT 'weekly'"
+        );
       }
     }
     // Check if students table has photo_url column
@@ -1598,29 +2041,34 @@ async function runMigrations() {
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'students' AND column_name = 'photo_url'"
     );
     if (photoUrlColumn.rows.length === 0) {
-      console.log('Adding photo_url column to students table...');
-      await pool.query('ALTER TABLE students ADD COLUMN photo_url VARCHAR(255)');
-      console.log('photo_url column added to students table successfully');
+      console.log("Adding photo_url column to students table...");
+      await pool.query(
+        "ALTER TABLE students ADD COLUMN photo_url VARCHAR(255)"
+      );
+      console.log("photo_url column added to students table successfully");
     } else {
-      console.log('photo_url column already exists in students table');
+      console.log("photo_url column already exists in students table");
     }
     // Ensure users.profile_image_url exists
     const profileImgCol = await pool.query(
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'profile_image_url'"
     );
     if (profileImgCol.rows.length === 0) {
-      console.log('Adding profile_image_url column to users table...');
-      await pool.query('ALTER TABLE users ADD COLUMN profile_image_url VARCHAR(500)');
-      console.log('profile_image_url column added to users table successfully');
+      console.log("Adding profile_image_url column to users table...");
+      await pool.query(
+        "ALTER TABLE users ADD COLUMN profile_image_url VARCHAR(500)"
+      );
+      console.log("profile_image_url column added to users table successfully");
     } else {
-      console.log('profile_image_url column already exists in users table');
+      console.log("profile_image_url column already exists in users table");
     }
+
     // Check if applications table exists
     const applicationsTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'applications'"
     );
     if (applicationsTable.rows.length === 0) {
-      console.log('Creating applications table...');
+      console.log("Creating applications table...");
       await pool.query(`
         CREATE TABLE applications (
           id SERIAL PRIMARY KEY,
@@ -1639,34 +2087,40 @@ async function runMigrations() {
           UNIQUE(applicant_id) -- Ensure only one application per user
         )
       `);
-      console.log('Applications table created successfully');
+      console.log("Applications table created successfully");
     } else {
-      console.log('Applications table already exists');
+      console.log("Applications table already exists");
     }
-    console.log('Messages table file attachment columns migration completed');
-    
+    console.log("Messages table file attachment columns migration completed");
+
     // Check if messages table has read column
     const readColumnCheck = await pool.query(
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'messages' AND column_name = 'read'"
     );
     if (readColumnCheck.rows.length === 0) {
-      console.log('Adding read column to messages table...');
-      await pool.query('ALTER TABLE messages ADD COLUMN read BOOLEAN DEFAULT FALSE');
+      console.log("Adding read column to messages table...");
+      await pool.query(
+        "ALTER TABLE messages ADD COLUMN read BOOLEAN DEFAULT FALSE"
+      );
       // Update existing messages to set read = true where read_at is not null
-      await pool.query('UPDATE messages SET read = true WHERE read_at IS NOT NULL');
+      await pool.query(
+        "UPDATE messages SET read = true WHERE read_at IS NOT NULL"
+      );
       // Create index on read column for better performance
-      await pool.query('CREATE INDEX IF NOT EXISTS idx_messages_read ON messages(read)');
-      console.log('read column added to messages table successfully');
+      await pool.query(
+        "CREATE INDEX IF NOT EXISTS idx_messages_read ON messages(read)"
+      );
+      console.log("read column added to messages table successfully");
     } else {
-      console.log('read column already exists in messages table');
+      console.log("read column already exists in messages table");
     }
-    
+
     // Check if user_sessions table exists
     const userSessionsTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'user_sessions'"
     );
     if (userSessionsTable.rows.length === 0) {
-      console.log('Creating user_sessions table...');
+      console.log("Creating user_sessions table...");
       await pool.query(`
         CREATE TABLE user_sessions (
           id SERIAL PRIMARY KEY,
@@ -1679,17 +2133,17 @@ async function runMigrations() {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      console.log('user_sessions table created successfully');
+      console.log("user_sessions table created successfully");
     } else {
-      console.log('user_sessions table already exists');
+      console.log("user_sessions table already exists");
     }
-    
+
     // Check if user_activities table exists
     const userActivitiesTable = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_name = 'user_activities'"
     );
     if (userActivitiesTable.rows.length === 0) {
-      console.log('Creating user_activities table...');
+      console.log("Creating user_activities table...");
       await pool.query(`
         CREATE TABLE user_activities (
           id SERIAL PRIMARY KEY,
@@ -1704,31 +2158,44 @@ async function runMigrations() {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      console.log('user_activities table created successfully');
+      console.log("user_activities table created successfully");
     } else {
-      console.log('user_activities table already exists');
+      console.log("user_activities table already exists");
     }
-    
+
     // Create indexes for better performance
     try {
-      await pool.query('CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id)');
-      await pool.query('CREATE INDEX IF NOT EXISTS idx_user_sessions_status ON user_sessions(status)');
-      await pool.query('CREATE INDEX IF NOT EXISTS idx_user_activities_user_id ON user_activities(user_id)');
-      await pool.query('CREATE INDEX IF NOT EXISTS idx_user_activities_created_at ON user_activities(created_at)');
-      await pool.query('CREATE INDEX IF NOT EXISTS idx_user_activities_activity_type ON user_activities(activity_type)');
-      console.log('User monitoring indexes created successfully');
+      await pool.query(
+        "CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id)"
+      );
+      await pool.query(
+        "CREATE INDEX IF NOT EXISTS idx_user_sessions_status ON user_sessions(status)"
+      );
+      await pool.query(
+        "CREATE INDEX IF NOT EXISTS idx_user_activities_user_id ON user_activities(user_id)"
+      );
+      await pool.query(
+        "CREATE INDEX IF NOT EXISTS idx_user_activities_created_at ON user_activities(created_at)"
+      );
+      await pool.query(
+        "CREATE INDEX IF NOT EXISTS idx_user_activities_activity_type ON user_activities(activity_type)"
+      );
+      console.log("User monitoring indexes created successfully");
     } catch (error) {
-      console.log('User monitoring indexes already exist or failed to create:', error.message);
+      console.log(
+        "User monitoring indexes already exist or failed to create:",
+        error.message
+      );
     }
   } catch (error) {
-    console.error('Error running migrations:', error);
+    console.error("Error running migrations:", error);
     throw error;
   }
 }
 // Add this before startServer
 const initializeDatabase = async () => {
   try {
-    console.log('Initializing database tables...');
+    console.log("Initializing database tables...");
     // Example: create all required tables if not exist
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
@@ -1924,166 +2391,178 @@ const initializeDatabase = async () => {
           percentage DECIMAL(5,2) NOT NULL CHECK (percentage >= 0 AND percentage <= 100),
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-    console.log('All required tables created or already exist.');
+      );`);
+    console.log("All required tables created or already exist.");
     return true;
   } catch (err) {
-    console.error('Error initializing database:', err);
+    console.error("Error initializing database:", err);
     return false;
   }
 };
-console.log('--- server.js loaded ---');
+console.log("--- server.js loaded ---");
 const startServer = async () => {
   try {
-    console.log('Starting server...');
+    console.log("Starting server...");
     // Kill any process using port 5000
-    if (process.platform === 'win32') {
+    if (process.platform === "win32") {
       try {
-        await execAsync('netstat -ano | findstr :5000');
-        await execAsync('for /f "tokens=5" %a in (\'netstat -aon ^| findstr :5000\') do taskkill /F /PID %a');
-        console.log('Killed existing process on port 5000');
+        await execAsync("netstat -ano | findstr :5000");
+        await execAsync(
+          "for /f \"tokens=5\" %a in ('netstat -aon ^| findstr :5000') do taskkill /F /PID %a"
+        );
+        console.log("Killed existing process on port 5000");
       } catch (error) {
         // No process was found on port 5000, which is fine
       }
     } else {
       try {
-        await execAsync('lsof -i :5000 | grep LISTEN | awk \'{print $2}\' | xargs kill -9');
-        console.log('Killed existing process on port 5000');
+        await execAsync(
+          "lsof -i :5000 | grep LISTEN | awk '{print $2}' | xargs kill -9"
+        );
+        console.log("Killed existing process on port 5000");
       } catch (error) {
         // No process was found on port 5000, which is fine
       }
     }
-    console.log('Connecting to database...');
+    console.log("Connecting to database...");
     await pool.connect();
-    console.log('Connected to database');
+    console.log("Connected to database");
     // Verify database structure
     const structureValid = await verifyDatabaseStructure();
-    console.log('Database structure checked:', structureValid);
+    console.log("Database structure checked:", structureValid);
     if (!structureValid) {
-      console.log('Database structure invalid, initializing...');
+      console.log("Database structure invalid, initializing...");
       const initSuccess = await initializeDatabase();
-      console.log('Database initialized:', initSuccess);
+      console.log("Database initialized:", initSuccess);
       if (!initSuccess) {
-        throw new Error('Failed to initialize database');
+        throw new Error("Failed to initialize database");
       }
     } else {
       // Run migrations even if structure is valid
       await runMigrations();
-      console.log('Migrations complete');
+      console.log("Migrations complete");
     }
     // Find available port
     const availablePort = await findAvailablePort(PORT);
-    console.log('Available port found:', availablePort);
+    console.log("Available port found:", availablePort);
     app.listen(availablePort, () => {
       console.log(`Server running on port ${availablePort}`);
-      console.log(`Frontend should be accessible at: http://localhost:${availablePort}`);
+      console.log(
+        `Frontend should be accessible at: http://localhost:${availablePort}`
+      );
     });
   } catch (error) {
-    console.error('Failed to start server:', error);
+    console.error("Failed to start server:", error);
     process.exit(1);
   }
 };
 startServer();
 // === Specialties endpoints ===
 // Create a new specialty
-app.post('/api/specialties', authenticateToken, async (req, res) => {
+app.post("/api/specialties", authenticateToken, async (req, res) => {
   const { name, abbreviation } = req.body;
   if (!name) {
-    return res.status(400).json({ error: 'Name is required' });
+    return res.status(400).json({ error: "Name is required" });
   }
   try {
     const result = await pool.query(
-      'INSERT INTO specialties (name, abbreviation) VALUES ($1, $2) RETURNING *',
+      "INSERT INTO specialties (name, abbreviation) VALUES ($1, $2) RETURNING *",
       [name, abbreviation || null]
     );
     // Log activity for monitoring
     try {
       const ipAddress = req.ip || req.connection?.remoteAddress || null;
-      const userAgent = req.get ? req.get('User-Agent') : null;
+      const userAgent = req.get ? req.get("User-Agent") : null;
       await logUserActivity(
         req.user?.id,
-        'create',
+        "create",
         `Created specialty: ${name}`,
-        'specialty',
+        "specialty",
         result.rows[0]?.id || null,
         name || null,
         ipAddress,
         userAgent
       );
     } catch (e) {
-      console.error('Failed to log specialty creation activity:', e);
+      console.error("Failed to log specialty creation activity:", e);
     }
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error creating specialty:', error);
-    res.status(500).json({ error: 'Error creating specialty' });
+    console.error("Error creating specialty:", error);
+    res.status(500).json({ error: "Error creating specialty" });
   }
 });
 // Get all specialties (with assigned class_ids)
-app.get('/api/specialties', async (req, res) => {
+app.get("/api/specialties", async (req, res) => {
   try {
     // Get all specialties
-    const result = await pool.query('SELECT * FROM specialties ORDER BY created_at DESC');
+    const result = await pool.query(
+      "SELECT * FROM specialties ORDER BY created_at DESC"
+    );
     const specialties = result.rows;
     // Get all assignments in one query
-    const assignRes = await pool.query('SELECT specialty_id, class_id FROM specialty_classes');
+    const assignRes = await pool.query(
+      "SELECT specialty_id, class_id FROM specialty_classes"
+    );
     const assignments = assignRes.rows;
     // Map specialty_id to class_ids
     const classMap = {};
-    assignments.forEach(a => {
+    assignments.forEach((a) => {
       if (!classMap[a.specialty_id]) classMap[a.specialty_id] = [];
       classMap[a.specialty_id].push(a.class_id);
     });
     // Attach class_ids to each specialty
-    const specialtiesWithClasses = specialties.map(s => ({
+    const specialtiesWithClasses = specialties.map((s) => ({
       ...s,
-      class_ids: classMap[s.id] || []
+      class_ids: classMap[s.id] || [],
     }));
     res.json(specialtiesWithClasses);
   } catch (error) {
-    console.error('Error fetching specialties:', error);
-    res.status(500).json({ error: 'Error fetching specialties' });
+    console.error("Error fetching specialties:", error);
+    res.status(500).json({ error: "Error fetching specialties" });
   }
 });
 // Update a specialty
-app.put('/api/specialties/:id', async (req, res) => {
+app.put("/api/specialties/:id", async (req, res) => {
   const { id } = req.params;
   const { name, abbreviation } = req.body;
   if (!name) {
-    return res.status(400).json({ error: 'Name is required' });
+    return res.status(400).json({ error: "Name is required" });
   }
   try {
     const result = await pool.query(
-      'UPDATE specialties SET name = $1, abbreviation = $2 WHERE id = $3 RETURNING *',
+      "UPDATE specialties SET name = $1, abbreviation = $2 WHERE id = $3 RETURNING *",
       [name, abbreviation || null, id]
     );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Specialty not found' });
+      return res.status(404).json({ error: "Specialty not found" });
     }
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating specialty:', error);
-    res.status(500).json({ error: 'Error updating specialty' });
+    console.error("Error updating specialty:", error);
+    res.status(500).json({ error: "Error updating specialty" });
   }
 });
 // Delete a specialty
-app.delete('/api/specialties/:id', async (req, res) => {
+app.delete("/api/specialties/:id", async (req, res) => {
   const { id } = req.params;
   try {
-    const result = await pool.query('DELETE FROM specialties WHERE id = $1 RETURNING *', [id]);
+    const result = await pool.query(
+      "DELETE FROM specialties WHERE id = $1 RETURNING *",
+      [id]
+    );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Specialty not found' });
+      return res.status(404).json({ error: "Specialty not found" });
     }
-    res.json({ message: 'Specialty deleted successfully' });
+    res.json({ message: "Specialty deleted successfully" });
   } catch (error) {
-    console.error('Error deleting specialty:', error);
-    res.status(500).json({ error: 'Error deleting specialty' });
+    console.error("Error deleting specialty:", error);
+    res.status(500).json({ error: "Error deleting specialty" });
   }
 });
 // === Specialty-Class assignment endpoints ===
 // Assign one or more classes to a specialty
-app.post('/api/specialties/:specialty_id/classes', async (req, res) => {
+app.post("/api/specialties/:specialty_id/classes", async (req, res) => {
   const { specialty_id } = req.params;
   let { class_ids } = req.body;
   if (!Array.isArray(class_ids)) {
@@ -2091,26 +2570,30 @@ app.post('/api/specialties/:specialty_id/classes', async (req, res) => {
     class_ids = [class_ids];
   }
   if (!specialty_id || !class_ids || class_ids.length === 0) {
-    return res.status(400).json({ error: 'specialty_id and class_ids are required' });
+    return res
+      .status(400)
+      .json({ error: "specialty_id and class_ids are required" });
   }
   try {
     // Remove duplicates
     class_ids = [...new Set(class_ids.map(Number))];
     // Insert assignments, ignore duplicates
-    const values = class_ids.map(cid => `(${Number(specialty_id)}, ${Number(cid)})`).join(',');
+    const values = class_ids
+      .map((cid) => `(${Number(specialty_id)}, ${Number(cid)})`)
+      .join(",");
     await pool.query(
       `INSERT INTO specialty_classes (specialty_id, class_id)
        VALUES ${values}
        ON CONFLICT DO NOTHING`
     );
-    res.json({ message: 'Classes assigned to specialty successfully' });
+    res.json({ message: "Classes assigned to specialty successfully" });
   } catch (error) {
-    console.error('Error assigning classes to specialty:', error);
-    res.status(500).json({ error: 'Error assigning classes to specialty' });
+    console.error("Error assigning classes to specialty:", error);
+    res.status(500).json({ error: "Error assigning classes to specialty" });
   }
 });
 // List all classes assigned to a specialty
-app.get('/api/specialties/:specialty_id/classes', async (req, res) => {
+app.get("/api/specialties/:specialty_id/classes", async (req, res) => {
   const { specialty_id } = req.params;
   try {
     const result = await pool.query(
@@ -2122,124 +2605,168 @@ app.get('/api/specialties/:specialty_id/classes', async (req, res) => {
     );
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching classes for specialty:', error);
-    res.status(500).json({ error: 'Error fetching classes for specialty' });
+    console.error("Error fetching classes for specialty:", error);
+    res.status(500).json({ error: "Error fetching classes for specialty" });
   }
 });
 // Remove a class from a specialty
-app.delete('/api/specialties/:specialty_id/classes/:class_id', async (req, res) => {
-  const { specialty_id, class_id } = req.params;
-  try {
-    const result = await pool.query(
-      'DELETE FROM specialty_classes WHERE specialty_id = $1 AND class_id = $2 RETURNING *',
-      [specialty_id, class_id]
-    );
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Assignment not found' });
+app.delete(
+  "/api/specialties/:specialty_id/classes/:class_id",
+  async (req, res) => {
+    const { specialty_id, class_id } = req.params;
+    try {
+      const result = await pool.query(
+        "DELETE FROM specialty_classes WHERE specialty_id = $1 AND class_id = $2 RETURNING *",
+        [specialty_id, class_id]
+      );
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: "Assignment not found" });
+      }
+      res.json({ message: "Class removed from specialty successfully" });
+    } catch (error) {
+      console.error("Error removing class from specialty:", error);
+      res.status(500).json({ error: "Error removing class from specialty" });
     }
-    res.json({ message: 'Class removed from specialty successfully' });
-  } catch (error) {
-    console.error('Error removing class from specialty:', error);
-    res.status(500).json({ error: 'Error removing class from specialty' });
   }
-});
+);
 // Assign classes to a specialty
-app.put('/api/specialties/:id/classes', async (req, res) => {
+app.put("/api/specialties/:id/classes", async (req, res) => {
   const specialtyId = req.params.id;
   const { classIds } = req.body; // expects array of class IDs
   if (!Array.isArray(classIds)) {
-    return res.status(400).json({ error: 'classIds must be an array' });
+    return res.status(400).json({ error: "classIds must be an array" });
   }
   try {
     // Remove existing assignments
-    await pool.query('DELETE FROM specialty_classes WHERE specialty_id = $1', [specialtyId]);
+    await pool.query("DELETE FROM specialty_classes WHERE specialty_id = $1", [
+      specialtyId,
+    ]);
     // Insert new assignments
     for (const classId of classIds) {
-      await pool.query('INSERT INTO specialty_classes (specialty_id, class_id) VALUES ($1, $2)', [specialtyId, classId]);
+      await pool.query(
+        "INSERT INTO specialty_classes (specialty_id, class_id) VALUES ($1, $2)",
+        [specialtyId, classId]
+      );
     }
-    res.json({ message: 'Classes assigned to specialty successfully' });
+    res.json({ message: "Classes assigned to specialty successfully" });
   } catch (error) {
-    console.error('Error assigning classes to specialty:', error);
-    res.status(500).json({ error: 'Error assigning classes to specialty', details: error.message });
+    console.error("Error assigning classes to specialty:", error);
+    res.status(500).json({
+      error: "Error assigning classes to specialty",
+      details: error.message,
+    });
   }
 });
 // Get assigned classes for a specialty
-app.get('/api/specialties/:id/classes', async (req, res) => {
+app.get("/api/specialties/:id/classes", async (req, res) => {
   const specialtyId = req.params.id;
   try {
-    const result = await pool.query('SELECT class_id FROM specialty_classes WHERE specialty_id = $1', [specialtyId]);
-    const classIds = result.rows.map(r => r.class_id);
+    const result = await pool.query(
+      "SELECT class_id FROM specialty_classes WHERE specialty_id = $1",
+      [specialtyId]
+    );
+    const classIds = result.rows.map((r) => r.class_id);
     res.json(classIds);
   } catch (error) {
-    console.error('Error fetching assigned classes for specialty:', error);
-    res.status(500).json({ error: 'Error fetching assigned classes for specialty', details: error.message });
+    console.error("Error fetching assigned classes for specialty:", error);
+    res.status(500).json({
+      error: "Error fetching assigned classes for specialty",
+      details: error.message,
+    });
   }
 });
 // Serve student image from DB
-app.get('/api/students/:id/picture', async (req, res) => {
+app.get("/api/students/:id/picture", async (req, res) => {
   const studentId = req.params.id;
   try {
-    const result = await pool.query('SELECT student_picture, photo_url FROM students WHERE id = $1', [studentId]);
+    const result = await pool.query(
+      "SELECT student_picture, photo_url FROM students WHERE id = $1",
+      [studentId]
+    );
     if (result.rows.length === 0) {
       console.warn(`[IMAGE] No student found for ID: ${studentId}`);
-      return res.status(404).send('No student found');
+      return res.status(404).send("No student found");
     }
     const student = result.rows[0];
     // First try photo_url (new schema)
     if (student.photo_url) {
-      if (student.photo_url.startsWith('http')) {
+      if (student.photo_url.startsWith("http")) {
         return res.redirect(student.photo_url);
       }
-      // If not absolute http(s), do not attempt to serve local path anymore
-      return res.status(404).send('No image');
+      // If it's a local path, serve the file
+      const fs = require("fs");
+      const path = require("path");
+      const filePath = path.join(__dirname, student.photo_url);
+      if (fs.existsSync(filePath)) {
+        return res.sendFile(filePath);
+      }
     }
     // Fallback to student_picture (old schema - BYTEA)
     if (student.student_picture) {
-      console.log(`[IMAGE] Serving student_picture for student ID: ${studentId}`);
-      res.set('Content-Type', 'image/jpeg');
+      console.log(
+        `[IMAGE] Serving student_picture for student ID: ${studentId}`
+      );
+      res.set("Content-Type", "image/jpeg");
       return res.send(student.student_picture);
     }
     console.warn(`[IMAGE] No image found for student ID: ${studentId}`);
-    return res.status(404).send('No image');
+    return res.status(404).send("No image");
   } catch (error) {
-    console.error(`[IMAGE] Error retrieving image for student ID: ${studentId}:`, error);
-    res.status(500).send('Error retrieving image');
+    console.error(
+      `[IMAGE] Error retrieving image for student ID: ${studentId}:`,
+      error
+    );
+    res.status(500).send("Error retrieving image");
   }
 });
 // Check user by username and phone number
-app.post('/api/check-user-details', async (req, res) => {
+app.post("/api/check-user-details", async (req, res) => {
   const { username, contact } = req.body;
   if (!username || !contact) {
-    return res.status(400).json({ error: 'Username and phone number are required' });
+    return res
+      .status(400)
+      .json({ error: "Username and phone number are required" });
   }
   try {
-    const result = await pool.query('SELECT * FROM users WHERE username = $1 AND contact = $2', [username, contact]);
+    const result = await pool.query(
+      "SELECT * FROM users WHERE username = $1 AND contact = $2",
+      [username, contact]
+    );
     if (result.rows.length > 0) {
       return res.json({ exists: true });
     } else {
       return res.json({ exists: false });
     }
   } catch (error) {
-    console.error('Error checking user details:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Error checking user details:", error);
+    res.status(500).json({ error: "Server error" });
   }
 });
 // User management endpoints for Admin3
-app.get('/api/users/all', authenticateToken, async (req, res) => {
-  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+app.get("/api/users/all", authenticateToken, async (req, res) => {
+  if (req.user.role !== "Admin3")
+    return res.status(403).json({ error: "Forbidden" });
   try {
-    const result = await pool.query('SELECT id, name, username, contact, role, suspended FROM users ORDER BY created_at DESC');
+    const result = await pool.query(
+      "SELECT id, name, username, contact, role, suspended FROM users ORDER BY created_at DESC"
+    );
     res.json(result.rows);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch users' });
+    res.status(500).json({ error: "Failed to fetch users" });
   }
 });
-app.put('/api/users/:id', authenticateToken, async (req, res) => {
-  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+app.put("/api/users/:id", authenticateToken, async (req, res) => {
+  if (req.user.role !== "Admin3")
+    return res.status(403).json({ error: "Forbidden" });
   const { id } = req.params;
   const { name, username, contact, password, role } = req.body;
   try {
-    let updateFields = ['name = $1', 'username = $2', 'contact = $3', 'role = $4'];
+    let updateFields = [
+      "name = $1",
+      "username = $2",
+      "contact = $3",
+      "role = $4",
+    ];
     let updateValues = [name, username, contact, role];
     let paramIndex = 5;
     if (password) {
@@ -2249,76 +2776,132 @@ app.put('/api/users/:id', authenticateToken, async (req, res) => {
       paramIndex++;
     }
     updateValues.push(id);
-    const updateQuery = `UPDATE users SET ${updateFields.join(', ')} WHERE id = $${paramIndex}`;
+    const updateQuery = `UPDATE users SET ${updateFields.join(
+      ", "
+    )} WHERE id = $${paramIndex}`;
     await pool.query(updateQuery, updateValues);
-    
+
     // Log activity
-    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
-    await logUserActivity(req.user.id, 'update', `Updated user: ${username}`, 'user', id, username, ipAddress, userAgent);
-    
-    res.json({ message: 'User updated' });
+    const ipAddress =
+      req.ip ||
+      req.connection.remoteAddress ||
+      req.headers["x-forwarded-for"] ||
+      "unknown";
+    const userAgent = req.headers["user-agent"] || "unknown";
+    await logUserActivity(
+      req.user.id,
+      "update",
+      `Updated user: ${username}`,
+      "user",
+      id,
+      username,
+      ipAddress,
+      userAgent
+    );
+
+    res.json({ message: "User updated" });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update user' });
+    res.status(500).json({ error: "Failed to update user" });
   }
 });
-app.delete('/api/users/:id', authenticateToken, async (req, res) => {
-  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+app.delete("/api/users/:id", authenticateToken, async (req, res) => {
+  if (req.user.role !== "Admin3")
+    return res.status(403).json({ error: "Forbidden" });
   const { id } = req.params;
   try {
     // Check if user is Admin3
-    const userResult = await pool.query('SELECT role, username FROM users WHERE id = $1', [id]);
+    const userResult = await pool.query(
+      "SELECT role, username FROM users WHERE id = $1",
+      [id]
+    );
     if (userResult.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: "User not found" });
     }
-    if (userResult.rows[0].role === 'Admin3') {
-      return res.status(403).json({ error: 'You cannot delete Accounts manager.' });
+    if (userResult.rows[0].role === "Admin3") {
+      return res
+        .status(403)
+        .json({ error: "You cannot delete Accounts manager." });
     }
-    
+
     const username = userResult.rows[0].username;
-    await pool.query('DELETE FROM users WHERE id = $1', [id]);
-    
+    await pool.query("DELETE FROM users WHERE id = $1", [id]);
+
     // Log activity
-    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
-    await logUserActivity(req.user.id, 'delete', `Deleted user: ${username}`, 'user', id, username, ipAddress, userAgent);
-    
-    res.json({ message: 'User deleted' });
+    const ipAddress =
+      req.ip ||
+      req.connection.remoteAddress ||
+      req.headers["x-forwarded-for"] ||
+      "unknown";
+    const userAgent = req.headers["user-agent"] || "unknown";
+    await logUserActivity(
+      req.user.id,
+      "delete",
+      `Deleted user: ${username}`,
+      "user",
+      id,
+      username,
+      ipAddress,
+      userAgent
+    );
+
+    res.json({ message: "User deleted" });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to delete user' });
+    res.status(500).json({ error: "Failed to delete user" });
   }
 });
-app.post('/api/users/:id/suspend', authenticateToken, async (req, res) => {
-  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+app.post("/api/users/:id/suspend", authenticateToken, async (req, res) => {
+  if (req.user.role !== "Admin3")
+    return res.status(403).json({ error: "Forbidden" });
   const { id } = req.params;
   try {
     // Get user info before updating
-    const userResult = await pool.query('SELECT username, suspended FROM users WHERE id = $1', [id]);
-    if (userResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-    
+    const userResult = await pool.query(
+      "SELECT username, suspended FROM users WHERE id = $1",
+      [id]
+    );
+    if (userResult.rows.length === 0)
+      return res.status(404).json({ error: "User not found" });
+
     const username = userResult.rows[0].username;
     const currentStatus = userResult.rows[0].suspended;
-    
+
     // Toggle suspended status
-    const result = await pool.query('UPDATE users SET suspended = NOT COALESCE(suspended, false) WHERE id = $1 RETURNING suspended', [id]);
+    const result = await pool.query(
+      "UPDATE users SET suspended = NOT COALESCE(suspended, false) WHERE id = $1 RETURNING suspended",
+      [id]
+    );
     const newStatus = result.rows[0].suspended;
-    
+
     // Log activity
-    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
-    const action = newStatus ? 'suspended' : 'unsuspended';
-    await logUserActivity(req.user.id, action, `${action} user: ${username}`, 'user', id, username, ipAddress, userAgent);
-    
+    const ipAddress =
+      req.ip ||
+      req.connection.remoteAddress ||
+      req.headers["x-forwarded-for"] ||
+      "unknown";
+    const userAgent = req.headers["user-agent"] || "unknown";
+    const action = newStatus ? "suspended" : "unsuspended";
+    await logUserActivity(
+      req.user.id,
+      action,
+      `${action} user: ${username}`,
+      "user",
+      id,
+      username,
+      ipAddress,
+      userAgent
+    );
+
     res.json({ suspended: newStatus });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to suspend user' });
+    res.status(500).json({ error: "Failed to suspend user" });
   }
 });
 // User monitoring endpoints for Admin3
-app.get('/api/monitor/users', authenticateToken, async (req, res) => {
-  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+app.get("/api/monitor/users", authenticateToken, async (req, res) => {
+  if (req.user.role !== "Admin3")
+    return res.status(403).json({ error: "Forbidden" });
   try {
-    console.log('Fetching monitored users...');
+    console.log("Fetching monitored users...");
     // Check if user_sessions table exists
     const tableExists = await pool.query(`
       SELECT EXISTS (
@@ -2327,9 +2910,9 @@ app.get('/api/monitor/users', authenticateToken, async (req, res) => {
         AND table_name = 'user_sessions'
       );
     `);
-    
-    console.log('user_sessions table exists:', tableExists.rows[0].exists);
-    
+
+    console.log("user_sessions table exists:", tableExists.rows[0].exists);
+
     if (!tableExists.rows[0].exists) {
       // If table doesn't exist, return users without session info
       const result = await pool.query(`
@@ -2347,10 +2930,10 @@ app.get('/api/monitor/users', authenticateToken, async (req, res) => {
         FROM users u
         ORDER BY u.created_at DESC
       `);
-      console.log('Returning users without session info:', result.rows.length);
+      console.log("Returning users without session info:", result.rows.length);
       return res.json(result.rows);
     }
-    
+
     const result = await pool.query(`
       SELECT 
         u.id, 
@@ -2378,16 +2961,17 @@ app.get('/api/monitor/users', authenticateToken, async (req, res) => {
       ) us ON u.id = us.user_id
       ORDER BY u.created_at DESC
     `);
-    console.log('Returning users with session info:', result.rows.length);
+    console.log("Returning users with session info:", result.rows.length);
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching monitored users:', error);
-    res.status(500).json({ error: 'Failed to fetch users' });
+    console.error("Error fetching monitored users:", error);
+    res.status(500).json({ error: "Failed to fetch users" });
   }
 });
 
-app.get('/api/monitor/user-activities', authenticateToken, async (req, res) => {
-  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+app.get("/api/monitor/user-activities", authenticateToken, async (req, res) => {
+  if (req.user.role !== "Admin3")
+    return res.status(403).json({ error: "Forbidden" });
   try {
     // Check if user_activities table exists
     const tableExists = await pool.query(`
@@ -2397,11 +2981,11 @@ app.get('/api/monitor/user-activities', authenticateToken, async (req, res) => {
         AND table_name = 'user_activities'
       );
     `);
-    
+
     if (!tableExists.rows[0].exists) {
       return res.json([]);
     }
-    
+
     const { userId, limit = 50, offset = 0 } = req.query;
     let query = `
       SELECT 
@@ -2421,26 +3005,29 @@ app.get('/api/monitor/user-activities', authenticateToken, async (req, res) => {
     `;
     const params = [];
     let paramIndex = 1;
-    
+
     if (userId) {
       query += ` WHERE ua.user_id = $${paramIndex}`;
       params.push(userId);
       paramIndex++;
     }
-    
-    query += ` ORDER BY ua.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+
+    query += ` ORDER BY ua.created_at DESC LIMIT $${paramIndex} OFFSET $${
+      paramIndex + 1
+    }`;
     params.push(parseInt(limit), parseInt(offset));
-    
+
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching user activities:', error);
-    res.status(500).json({ error: 'Failed to fetch user activities' });
+    console.error("Error fetching user activities:", error);
+    res.status(500).json({ error: "Failed to fetch user activities" });
   }
 });
 
-app.get('/api/monitor/user-sessions', authenticateToken, async (req, res) => {
-  if (req.user.role !== 'Admin3') return res.status(403).json({ error: 'Forbidden' });
+app.get("/api/monitor/user-sessions", authenticateToken, async (req, res) => {
+  if (req.user.role !== "Admin3")
+    return res.status(403).json({ error: "Forbidden" });
   try {
     // Check if user_sessions table exists
     const tableExists = await pool.query(`
@@ -2450,11 +3037,11 @@ app.get('/api/monitor/user-sessions', authenticateToken, async (req, res) => {
         AND table_name = 'user_sessions'
       );
     `);
-    
+
     if (!tableExists.rows[0].exists) {
       return res.json([]);
     }
-    
+
     const { userId, limit = 50, offset = 0 } = req.query;
     let query = `
       SELECT 
@@ -2473,47 +3060,77 @@ app.get('/api/monitor/user-sessions', authenticateToken, async (req, res) => {
     `;
     const params = [];
     let paramIndex = 1;
-    
+
     if (userId) {
       query += ` WHERE us.user_id = $${paramIndex}`;
       params.push(userId);
       paramIndex++;
     }
-    
-    query += ` ORDER BY us.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+
+    query += ` ORDER BY us.created_at DESC LIMIT $${paramIndex} OFFSET $${
+      paramIndex + 1
+    }`;
     params.push(parseInt(limit), parseInt(offset));
-    
+
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching user sessions:', error);
-    res.status(500).json({ error: 'Failed to fetch user sessions' });
+    console.error("Error fetching user sessions:", error);
+    res.status(500).json({ error: "Failed to fetch user sessions" });
   }
 });
 
 // Helper function to log user activity
-const logUserActivity = async (userId, activityType, activityDescription, entityType = null, entityId = null, entityName = null, ipAddress = null, userAgent = null) => {
+const logUserActivity = async (
+  userId,
+  activityType,
+  activityDescription,
+  entityType = null,
+  entityId = null,
+  entityName = null,
+  ipAddress = null,
+  userAgent = null
+) => {
   try {
-    await pool.query(`
+    await pool.query(
+      `
       INSERT INTO user_activities (user_id, activity_type, activity_description, entity_type, entity_id, entity_name, ip_address, user_agent)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    `, [userId, activityType, activityDescription, entityType, entityId, entityName, ipAddress, userAgent]);
+    `,
+      [
+        userId,
+        activityType,
+        activityDescription,
+        entityType,
+        entityId,
+        entityName,
+        ipAddress,
+        userAgent,
+      ]
+    );
   } catch (error) {
-    console.error('Error logging user activity:', error);
+    console.error("Error logging user activity:", error);
   }
 };
 
 // Helper function to create user session
-const createUserSession = async (userId, ipAddress = null, userAgent = null) => {
+const createUserSession = async (
+  userId,
+  ipAddress = null,
+  userAgent = null
+) => {
   try {
-    const result = await pool.query(`
+    const result = await pool.query(
+      `
       INSERT INTO user_sessions (user_id, ip_address, user_agent)
       VALUES ($1, $2, $3)
       RETURNING id
-    `, [userId, ipAddress, userAgent]);
+    `,
+      [userId, ipAddress, userAgent]
+    );
     return result.rows[0].id;
   } catch (error) {
-    console.error('Error creating user session:', error);
+    console.error("Error creating user session:", error);
     return null;
   }
 };
@@ -2521,38 +3138,42 @@ const createUserSession = async (userId, ipAddress = null, userAgent = null) => 
 // Helper function to end user session
 const endUserSession = async (userId) => {
   try {
-    await pool.query(`
+    await pool.query(
+      `
       UPDATE user_sessions 
       SET session_end = CURRENT_TIMESTAMP, status = 'ended'
       WHERE user_id = $1 AND session_end IS NULL
-    `, [userId]);
+    `,
+      [userId]
+    );
   } catch (error) {
-    console.error('Error ending user session:', error);
+    console.error("Error ending user session:", error);
   }
 };
 // Chat endpoints
-app.get('/api/users/all-chat', authenticateToken, async (req, res) => {
+app.get("/api/users/all-chat", authenticateToken, async (req, res) => {
   try {
     // Get all users except the current user for chat
     const result = await pool.query(
-      'SELECT id, name, username, role, contact FROM users WHERE id != $1 AND suspended = false ORDER BY name',
+      "SELECT id, name, username, role, contact FROM users WHERE id != $1 AND suspended = false ORDER BY name",
       [req.user.id]
     );
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching users for chat:', error);
-    res.status(500).json({ error: 'Failed to fetch users for chat' });
+    console.error("Error fetching users for chat:", error);
+    res.status(500).json({ error: "Failed to fetch users for chat" });
   }
 });
-app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
+app.get("/api/users/chat-list", authenticateToken, async (req, res) => {
   try {
     // First get all users except current user
     const usersResult = await pool.query(
-      'SELECT id, name, username, role, contact FROM users WHERE id != $1 AND suspended = false ORDER BY name',
+      "SELECT id, name, username, role, contact FROM users WHERE id != $1 AND suspended = false ORDER BY name",
       [req.user.id]
     );
     // Then get the last message for each conversation
-    const lastMessagesResult = await pool.query(`
+    const lastMessagesResult = await pool.query(
+      `
       SELECT
         CASE
           WHEN sender_id = $1 THEN receiver_id
@@ -2564,46 +3185,57 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
       FROM messages
       WHERE sender_id = $1 OR receiver_id = $1
       ORDER BY created_at DESC
-    `, [req.user.id]);
+    `,
+      [req.user.id]
+    );
     // Get unread message counts for individual chats
-    const unreadCountsResult = await pool.query(`
+    const unreadCountsResult = await pool.query(
+      `
       SELECT
         sender_id,
         COUNT(*) as unread_count
       FROM messages
       WHERE receiver_id = $1 AND sender_id != $1 AND read = false
       GROUP BY sender_id
-    `, [req.user.id]);
+    `,
+      [req.user.id]
+    );
     // Create a map of unread counts by user
     const unreadCountsMap = {};
-    unreadCountsResult.rows.forEach(row => {
+    unreadCountsResult.rows.forEach((row) => {
       unreadCountsMap[row.sender_id] = parseInt(row.unread_count);
     });
     // Create a map of last messages by user
     const lastMessagesMap = {};
-    lastMessagesResult.rows.forEach(msg => {
-      if (!lastMessagesMap[msg.other_user_id] ||
-          new Date(msg.last_message_time) > new Date(lastMessagesMap[msg.other_user_id].last_message_time)) {
+    lastMessagesResult.rows.forEach((msg) => {
+      if (
+        !lastMessagesMap[msg.other_user_id] ||
+        new Date(msg.last_message_time) >
+          new Date(lastMessagesMap[msg.other_user_id].last_message_time)
+      ) {
         lastMessagesMap[msg.other_user_id] = msg;
       }
     });
     // Combine user data with last message data
-    const userChatList = usersResult.rows.map(user => ({
+    const userChatList = usersResult.rows.map((user) => ({
       id: user.id,
       name: user.name,
       username: user.username,
       role: user.role,
       contact: user.contact,
-      lastMessage: lastMessagesMap[user.id] ? {
-        content: lastMessagesMap[user.id].last_message,
-        time: lastMessagesMap[user.id].last_message_time,
-        sender_id: lastMessagesMap[user.id].sender_id
-      } : null,
+      lastMessage: lastMessagesMap[user.id]
+        ? {
+            content: lastMessagesMap[user.id].last_message,
+            time: lastMessagesMap[user.id].last_message_time,
+            sender_id: lastMessagesMap[user.id].sender_id,
+          }
+        : null,
       unread: unreadCountsMap[user.id] || 0,
-      type: 'user'
+      type: "user",
     }));
     // Get groups that the current user is a member of
-    const groupsResult = await pool.query(`
+    const groupsResult = await pool.query(
+      `
       SELECT g.*, u.username as creator_name
       FROM groups g
       JOIN users u ON g.creator_id = u.id
@@ -2611,9 +3243,12 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
         SELECT group_id FROM group_participants WHERE user_id = $1
       )
       ORDER BY g.created_at DESC
-    `, [req.user.id]);
+    `,
+      [req.user.id]
+    );
     // Get last message for each group
-    const groupMessagesResult = await pool.query(`
+    const groupMessagesResult = await pool.query(
+      `
       SELECT
         group_id,
         content as last_message,
@@ -2624,9 +3259,12 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
         SELECT group_id FROM group_participants WHERE user_id = $1
       )
       ORDER BY created_at DESC
-    `, [req.user.id]);
+    `,
+      [req.user.id]
+    );
     // Get unread message counts for group chats
-    const groupUnreadCountsResult = await pool.query(`
+    const groupUnreadCountsResult = await pool.query(
+      `
       SELECT
         group_id,
         COUNT(*) as unread_count
@@ -2635,33 +3273,40 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
         SELECT group_id FROM group_participants WHERE user_id = $1
       ) AND sender_id != $1 AND read = false
       GROUP BY group_id
-    `, [req.user.id]);
+    `,
+      [req.user.id]
+    );
     // Create a map of unread counts by group
     const groupUnreadCountsMap = {};
-    groupUnreadCountsResult.rows.forEach(row => {
+    groupUnreadCountsResult.rows.forEach((row) => {
       groupUnreadCountsMap[row.group_id] = parseInt(row.unread_count);
     });
     // Create a map of last messages by group
     const groupMessagesMap = {};
-    groupMessagesResult.rows.forEach(msg => {
-      if (!groupMessagesMap[msg.group_id] ||
-          new Date(msg.last_message_time) > new Date(groupMessagesMap[msg.group_id].last_message_time)) {
+    groupMessagesResult.rows.forEach((msg) => {
+      if (
+        !groupMessagesMap[msg.group_id] ||
+        new Date(msg.last_message_time) >
+          new Date(groupMessagesMap[msg.group_id].last_message_time)
+      ) {
         groupMessagesMap[msg.group_id] = msg;
       }
     });
     // Combine group data with last message data
-    const groupChatList = groupsResult.rows.map(group => ({
+    const groupChatList = groupsResult.rows.map((group) => ({
       id: group.id,
       name: group.name,
       groupName: group.name, // For compatibility with frontend
       creator_name: group.creator_name,
-      lastMessage: groupMessagesMap[group.id] ? {
-        content: groupMessagesMap[group.id].last_message,
-        time: groupMessagesMap[group.id].last_message_time,
-        sender_id: groupMessagesMap[group.id].sender_id
-      } : null,
+      lastMessage: groupMessagesMap[group.id]
+        ? {
+            content: groupMessagesMap[group.id].last_message,
+            time: groupMessagesMap[group.id].last_message_time,
+            sender_id: groupMessagesMap[group.id].sender_id,
+          }
+        : null,
       unread: groupUnreadCountsMap[group.id] || 0,
-      type: 'group'
+      type: "group",
     }));
     // Combine user and group chats
     const allChats = [...userChatList, ...groupChatList];
@@ -2669,8 +3314,8 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
     allChats.sort((a, b) => {
       if (!a.lastMessage?.time && !b.lastMessage?.time) {
         // Both have no messages, sort by name (handle null names)
-        const nameA = a.name || '';
-        const nameB = b.name || '';
+        const nameA = a.name || "";
+        const nameB = b.name || "";
         return nameA.localeCompare(nameB);
       }
       if (!a.lastMessage?.time) return 1;
@@ -2679,61 +3324,231 @@ app.get('/api/users/chat-list', authenticateToken, async (req, res) => {
     });
     res.json(allChats);
   } catch (error) {
-    console.error('Error fetching chat list:', error);
-    res.status(500).json({ error: 'Failed to fetch chat list' });
+    console.error("Error fetching chat list:", error);
+    res.status(500).json({ error: "Failed to fetch chat list" });
   }
 });
 // Student registration endpoint
-app.post('/api/students', authenticateToken, upload.single('photo'), async (req, res) => {
-  console.log('BODY:', req.body);
-  console.log('FILE:', req.file);
+// app.post("/api/students", upload.single("photo"), async (req, res) => {
+//   console.log("BODY:", req.body);
+//   console.log("FILE:", req.file);
+//   try {
+//     const {
+//       studentId,
+//       regDate,
+//       fullName,
+//       sex,
+//       dob,
+//       pob,
+//       father,
+//       mother,
+//       class: className,
+//       dept: specialtyName,
+//       contact,
+//     } = req.body;
+//     // Validate required fields
+//     if (
+//       !studentId ||
+//       !regDate ||
+//       !fullName ||
+//       !sex ||
+//       !dob ||
+//       !pob ||
+//       !className ||
+//       !specialtyName ||
+//       !contact
+//     ) {
+//       return res
+//         .status(400)
+//         .json({ error: "All fields except photo are required." });
+//     }
+//     // Find class_id and specialty_id
+//     const classResult = await pool.query(
+//       "SELECT id FROM classes WHERE name = $1",
+//       [className]
+//     );
+//     const specialtyResult = await pool.query(
+//       "SELECT id FROM specialties WHERE name = $1",
+//       [specialtyName]
+//     );
+//     const class_id = classResult.rows[0] ? classResult.rows[0].id : null;
+//     const specialty_id = specialtyResult.rows[0]
+//       ? specialtyResult.rows[0].id
+//       : null;
+//     // Handle photo upload
+//     let photo_url = null;
+//     if (req.file) {
+//       try {
+//         const filename = `student_${Date.now()}_${req.file.originalname}`;
+//         // Upload to FTP instead of local storage
+//         photo_url = await ftpService.uploadBuffer(req.file.buffer, filename);
+//         console.log("Photo uploaded to FTP:", photo_url);
+//       } catch (error) {
+//         console.error("Failed to upload photo to FTP:", error);
+//         // Fallback to local storage if FTP fails
+//         const fs = require("fs");
+//         const path = require("path");
+//         const uploadsDir = path.join(__dirname, "uploads");
+//         if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+//         const filename = `student_${Date.now()}_${req.file.originalname}`;
+//         const filepath = path.join(uploadsDir, filename);
+//         fs.writeFileSync(filepath, req.file.buffer);
+//         photo_url = `/uploads/${filename}`;
+//         console.log("Photo saved locally as fallback:", photo_url);
+//       }
+//     }
+//     // Insert student into DB
+//     const insertResult = await pool.query(
+//       `INSERT INTO students (student_id, registration_date, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, class_id, specialty_id, guardian_contact, photo_url)
+//        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+//       [
+//         studentId,
+//         regDate,
+//         fullName,
+//         sex,
+//         dob,
+//         pob,
+//         father,
+//         mother,
+//         class_id,
+//         specialty_id,
+//         contact,
+//         photo_url,
+//       ]
+//     );
+//     const student = insertResult.rows[0];
+//     res.status(201).json(student);
+//   } catch (error) {
+//     console.error("Error registering student:", error);
+//     res
+//       .status(500)
+//       .json({ error: "Failed to register student", details: error.message });
+//   }
+// });
+
+app.post("/api/students", upload.single("photo"), async (req, res) => {
+  console.log("BODY:", req.body);
+  console.log("FILE:", req.file);
   try {
     const {
-      studentId, regDate, fullName, sex, dob, pob,
-      father, mother, class: className, dept: specialtyName, contact
+      studentId,
+      regDate,
+      fullName,
+      sex,
+      dob,
+      pob,
+      father,
+      mother,
+      class: className,
+      dept: specialtyName,
+      contact,
+      academicYear, // ✅ added
     } = req.body;
+
     // Validate required fields
-    if (!studentId || !regDate || !fullName || !sex || !dob || !pob || !className || !specialtyName || !contact) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    if (
+      !studentId ||
+      !regDate ||
+      !fullName ||
+      !sex ||
+      !dob ||
+      !pob ||
+      !className ||
+      !specialtyName ||
+      !contact ||
+      !academicYear // ✅ validate academic year
+    ) {
+      return res
+        .status(400)
+        .json({ error: "All fields except photo are required." });
     }
+
     // Find class_id and specialty_id
-    const classResult = await pool.query('SELECT id FROM classes WHERE name = $1', [className]);
-    const specialtyResult = await pool.query('SELECT id FROM specialties WHERE name = $1', [specialtyName]);
+    const classResult = await pool.query(
+      "SELECT id FROM classes WHERE name = $1",
+      [className]
+    );
+    const specialtyResult = await pool.query(
+      "SELECT id FROM specialties WHERE name = $1",
+      [specialtyName]
+    );
     const class_id = classResult.rows[0] ? classResult.rows[0].id : null;
-    const specialty_id = specialtyResult.rows[0] ? specialtyResult.rows[0].id : null;
+    const specialty_id = specialtyResult.rows[0]
+      ? specialtyResult.rows[0].id
+      : null;
+
     // Handle photo upload
     let photo_url = null;
     if (req.file) {
       try {
         const filename = `student_${Date.now()}_${req.file.originalname}`;
         photo_url = await ftpService.uploadBuffer(req.file.buffer, filename);
-        console.log('Photo uploaded to FTP:', photo_url);
+        console.log("Photo uploaded to FTP:", photo_url);
       } catch (error) {
-        console.error('Failed to upload photo to FTP:', error);
-        return res.status(500).json({ error: 'Failed to upload photo' });
+        console.error("Failed to upload photo to FTP:", error);
+        const fs = require("fs");
+        const path = require("path");
+        const uploadsDir = path.join(__dirname, "uploads");
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+        const filename = `student_${Date.now()}_${req.file.originalname}`;
+        const filepath = path.join(uploadsDir, filename);
+        fs.writeFileSync(filepath, req.file.buffer);
+        photo_url = `/uploads/${filename}`;
+        console.log("Photo saved locally as fallback:", photo_url);
       }
     }
-    // Insert student into database
+
+    // Insert student into DB including academic_year_id
     const insertResult = await pool.query(
       `INSERT INTO students (student_id, registration_date, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, class_id, specialty_id, guardian_contact, photo_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-      [studentId, regDate, fullName, sex, dob, pob, father, mother, class_id, specialty_id, contact, photo_url]
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [
+        studentId,
+        regDate,
+        fullName,
+        sex,
+        dob,
+        pob,
+        father,
+        mother,
+        class_id,
+        specialty_id,
+        contact,
+        photo_url,
+      ]
     );
+
     const student = insertResult.rows[0];
-    
+
     // Log activity
-    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
-    await logUserActivity(req.user.id, 'create', `Created student: ${fullName} (${studentId})`, 'student', student.id, fullName, ipAddress, userAgent);
-    
+    const ipAddress =
+      req.ip ||
+      req.connection.remoteAddress ||
+      req.headers["x-forwarded-for"] ||
+      "unknown";
+    const userAgent = req.headers["user-agent"] || "unknown";
+    await logUserActivity(
+      req.user.id,
+      "create",
+      `Created student: ${fullName} (${studentId})`,
+      "student",
+      student.id,
+      fullName,
+      ipAddress,
+      userAgent
+    );
+
     res.status(201).json(student);
   } catch (error) {
-    console.error('Error registering student:', error);
-    res.status(500).json({ error: 'Failed to register student', details: error.message });
+    console.error("Error registering student:", error);
+    res
+      .status(500)
+      .json({ error: "Failed to register student", details: error.message });
   }
 });
+
 // GET /api/students - List all students with class/specialty names
-app.get('/api/students', async (req, res) => {
+app.get("/api/students", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT s.*, c.name AS class_name, sp.name AS specialty_name
@@ -2744,59 +3559,77 @@ app.get('/api/students', async (req, res) => {
     `);
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching students:', error);
-    res.status(500).json({ error: 'Failed to fetch students' });
+    res.status(500).json({ error: "Failed to fetch students" });
   }
 });
 // Add Multer error handler at the end, before app.listen or module.exports
 app.use(function (err, req, res, next) {
-  if (err instanceof require('multer').MulterError) {
+  if (err instanceof require("multer").MulterError) {
     return res.status(400).json({ error: err.message });
   }
   next(err);
 });
 // Permanently delete a student by id
-app.delete('/api/students/:id', async (req, res) => {
+app.delete("/api/students/:id", async (req, res) => {
   const { id } = req.params;
   try {
     // Get student info before deleting
-    const studentResult = await pool.query('SELECT full_name, student_id FROM students WHERE id = $1', [id]);
+    const studentResult = await pool.query(
+      "SELECT full_name, student_id FROM students WHERE id = $1",
+      [id]
+    );
     if (studentResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Student not found' });
+      return res.status(404).json({ error: "Student not found" });
     }
-    
+
     const studentName = studentResult.rows[0].full_name;
     const studentId = studentResult.rows[0].student_id;
-    
-    const result = await pool.query('DELETE FROM students WHERE id = $1 RETURNING *', [id]);
+
+    const result = await pool.query(
+      "DELETE FROM students WHERE id = $1 RETURNING *",
+      [id]
+    );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Student not found' });
+      return res.status(404).json({ error: "Student not found" });
     }
-    
+
     // Log activity if user is authenticated
     if (req.user) {
-      const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
-      const userAgent = req.headers['user-agent'] || 'unknown';
-      await logUserActivity(req.user.id, 'delete', `Deleted student: ${studentName} (${studentId})`, 'student', id, studentName, ipAddress, userAgent);
+      const ipAddress =
+        req.ip ||
+        req.connection.remoteAddress ||
+        req.headers["x-forwarded-for"] ||
+        "unknown";
+      const userAgent = req.headers["user-agent"] || "unknown";
+      await logUserActivity(
+        req.user.id,
+        "delete",
+        `Deleted student: ${studentName} (${studentId})`,
+        "student",
+        id,
+        studentName,
+        ipAddress,
+        userAgent
+      );
     }
-    
-    res.json({ message: 'Student deleted successfully' });
+
+    res.json({ message: "Student deleted successfully" });
   } catch (error) {
-    console.error('Error deleting student:', error);
-    res.status(500).json({ error: 'Failed to delete student' });
+    console.error("Error deleting student:", error);
+    res.status(500).json({ error: "Failed to delete student" });
   }
 });
 const uploadMany = multer({ storage: storage });
 // Helper to parse Excel serial date or string to yyyy-mm-dd
 function parseExcelDate(excelDate) {
   if (!excelDate) return null;
-  if (typeof excelDate === 'number') {
+  if (typeof excelDate === "number") {
     // Excel's epoch starts at 1900-01-01
     const excelEpoch = new Date(Date.UTC(1899, 11, 30));
     const d = new Date(excelEpoch.getTime() + excelDate * 86400000);
     return d.toISOString().slice(0, 10);
   }
-  if (typeof excelDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(excelDate)) {
+  if (typeof excelDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(excelDate)) {
     return excelDate;
   }
   // Try to parse as date string
@@ -2805,122 +3638,183 @@ function parseExcelDate(excelDate) {
   return null;
 }
 // Bulk student registration from Excel (Upload Many)
-app.post('/api/students/upload-many', uploadMany.single('file'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No Excel file uploaded' });
-    }
-    const XLSX = require('xlsx');
-    const workbook = XLSX.readFile(req.file.path);
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-    // Remove header row
-    const rows = data.slice(1);
-    if (!rows.length) {
-      return res.status(400).json({ error: 'Excel file is empty' });
-    }
-    // Expected columns: Full Name, Sex, Date of Birth, Place of Birth, Father's Name, Mother's Name, Class, Department/Specialty, Contact
-    const today = new Date().toISOString().slice(0, 10);
-    let created = 0;
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      if (!row[0]) continue; // skip if no full name
-      const [fullName, sex, dob, pob, father, mother, className, dept, contact] = row;
-      // Find class_id and specialty_id
-      const classResult = await pool.query('SELECT id FROM classes WHERE name = $1', [className]);
-      const specialtyResult = await pool.query('SELECT id FROM specialties WHERE name = $1', [dept]);
-      const class_id = classResult.rows[0] ? classResult.rows[0].id : null;
-      const specialty_id = specialtyResult.rows[0] ? specialtyResult.rows[0].id : null;
-      // Generate student ID
-      const first = (fullName.split(' ')[0] || '').slice(0, 2).toUpperCase();
-      const last = (fullName.split(' ').slice(-1)[0] || '').slice(-2).toUpperCase();
-      const year = today.slice(2, 4);
-      const seq = (i + 1).toString().padStart(3, '0');
-      const studentId = `${year}-VOT-${first}${last}-${seq}`;
-      await pool.query(
-        `INSERT INTO students (student_id, registration_date, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, class_id, specialty_id, guardian_contact, photo_url)
+app.post(
+  "/api/students/upload-many",
+  uploadMany.single("file"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No Excel file uploaded" });
+      }
+      const XLSX = require("xlsx");
+      const workbook = XLSX.readFile(req.file.path);
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+      // Remove header row
+      const rows = data.slice(1);
+      if (!rows.length) {
+        return res.status(400).json({ error: "Excel file is empty" });
+      }
+      // Expected columns: Full Name, Sex, Date of Birth, Place of Birth, Father's Name, Mother's Name, Class, Department/Specialty, Contact
+      const today = new Date().toISOString().slice(0, 10);
+      let created = 0;
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row[0]) continue; // skip if no full name
+        const [
+          fullName,
+          sex,
+          dob,
+          pob,
+          father,
+          mother,
+          className,
+          dept,
+          contact,
+        ] = row;
+        // Find class_id and specialty_id
+        const classResult = await pool.query(
+          "SELECT id FROM classes WHERE name = $1",
+          [className]
+        );
+        const specialtyResult = await pool.query(
+          "SELECT id FROM specialties WHERE name = $1",
+          [dept]
+        );
+        const class_id = classResult.rows[0] ? classResult.rows[0].id : null;
+        const specialty_id = specialtyResult.rows[0]
+          ? specialtyResult.rows[0].id
+          : null;
+        // Generate student ID
+        const first = (fullName.split(" ")[0] || "").slice(0, 2).toUpperCase();
+        const last = (fullName.split(" ").slice(-1)[0] || "")
+          .slice(-2)
+          .toUpperCase();
+        const year = today.slice(2, 4);
+        const seq = (i + 1).toString().padStart(3, "0");
+        const studentId = `${year}-VOT-${first}${last}-${seq}`;
+        await pool.query(
+          `INSERT INTO students (student_id, registration_date, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, class_id, specialty_id, guardian_contact, photo_url)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [studentId, today, fullName, sex, parseExcelDate(dob), pob, father, mother, class_id, specialty_id, contact, null]
-      );
-      created++;
+          [
+            studentId,
+            today,
+            fullName,
+            sex,
+            parseExcelDate(dob),
+            pob,
+            father,
+            mother,
+            class_id,
+            specialty_id,
+            contact,
+            null,
+          ]
+        );
+        created++;
+      }
+      // Clean up the uploaded file
+      const fs = require("fs");
+      fs.unlinkSync(req.file.path);
+      res.json({ message: `${created} students uploaded successfully` });
+    } catch (error) {
+      console.error("Error in upload-many:", error);
+      res.status(500).json({
+        error: "Error uploading students from Excel",
+        details: error.message,
+      });
     }
-    // Clean up the uploaded file
-    const fs = require('fs');
-    fs.unlinkSync(req.file.path);
-    res.json({ message: `${created} students uploaded successfully` });
-  } catch (error) {
-    console.error('Error in upload-many:', error);
-    res.status(500).json({ error: 'Error uploading students from Excel', details: error.message });
   }
-});
+);
 // === MESSAGES ENDPOINTS ===
 // Send a message
-app.post('/api/messages', authenticateToken, async (req, res) => {
+app.post("/api/messages", authenticateToken, async (req, res) => {
   const sender_id = req.user.id;
   const { receiver_id, content } = req.body;
   if (!receiver_id || !content) {
-    return res.status(400).json({ error: 'receiver_id and content are required' });
+    return res
+      .status(400)
+      .json({ error: "receiver_id and content are required" });
   }
   try {
     const result = await pool.query(
-      'INSERT INTO messages (sender_id, receiver_id, content) VALUES ($1, $2, $3) RETURNING *',
+      "INSERT INTO messages (sender_id, receiver_id, content) VALUES ($1, $2, $3) RETURNING *",
       [sender_id, receiver_id, content]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error sending message:', error);
-    res.status(500).json({ error: 'Failed to send message' });
+    console.error("Error sending message:", error);
+    res.status(500).json({ error: "Failed to send message" });
   }
 });
 // Send a message with file attachment
-app.post('/api/messages/with-file', authenticateToken, upload.single('file'), async (req, res) => {
-  const sender_id = req.user.id;
-  const { receiver_id, content } = req.body;
-  const file = req.file;
-  if (!receiver_id || (!content && !file)) {
-    return res.status(400).json({ error: 'receiver_id and either content or file are required' });
-  }
-  try {
-    let fileUrl = null;
-    let fileName = null;
-    let fileType = null;
-    if (file) {
-      // Validate file type
-      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'application/pdf'];
-      if (!allowedTypes.includes(file.mimetype)) {
-        return res.status(400).json({ error: 'Only images (JPEG, PNG, GIF) and PDF files are allowed' });
-      }
-      // Validate file size (5MB limit)
-      if (file.size > 5 * 1024 * 1024) {
-        return res.status(400).json({ error: 'File size must be less than 5MB' });
-      }
-      // Generate unique filename
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      const fileExtension = path.extname(file.originalname);
-      fileName = `message_${uniqueSuffix}${fileExtension}`;
-      // Upload file to FTP
-      try {
-        fileUrl = await ftpService.uploadBuffer(file.buffer, fileName);
-        console.log('Message file uploaded to FTP:', fileUrl);
-      } catch (error) {
-        console.error('Failed to upload message file to FTP:', error);
-        return res.status(500).json({ error: 'Failed to upload message file' });
-      }
-      fileType = file.mimetype;
+app.post(
+  "/api/messages/with-file",
+  authenticateToken,
+  upload.single("file"),
+  async (req, res) => {
+    const sender_id = req.user.id;
+    const { receiver_id, content } = req.body;
+    const file = req.file;
+    if (!receiver_id || (!content && !file)) {
+      return res
+        .status(400)
+        .json({ error: "receiver_id and either content or file are required" });
     }
-    const result = await pool.query(
-      'INSERT INTO messages (sender_id, receiver_id, content, file_url, file_name, file_type) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-      [sender_id, receiver_id, content || '', fileUrl, fileName, fileType]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Error sending message with file:', error);
-    res.status(500).json({ error: 'Failed to send message' });
+    try {
+      let fileUrl = null;
+      let fileName = null;
+      let fileType = null;
+      if (file) {
+        // Validate file type
+        const allowedTypes = [
+          "image/jpeg",
+          "image/jpg",
+          "image/png",
+          "image/gif",
+          "application/pdf",
+        ];
+        if (!allowedTypes.includes(file.mimetype)) {
+          return res.status(400).json({
+            error: "Only images (JPEG, PNG, GIF) and PDF files are allowed",
+          });
+        }
+        // Validate file size (5MB limit)
+        if (file.size > 5 * 1024 * 1024) {
+          return res
+            .status(400)
+            .json({ error: "File size must be less than 5MB" });
+        }
+        // Generate unique filename
+        const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+        const fileExtension = path.extname(file.originalname);
+        fileName = `message_${uniqueSuffix}${fileExtension}`;
+        // Upload file to FTP
+        try {
+          fileUrl = await ftpService.uploadBuffer(file.buffer, fileName);
+          console.log("Message file uploaded to FTP:", fileUrl);
+        } catch (error) {
+          console.error("Failed to upload message file to FTP:", error);
+          return res
+            .status(500)
+            .json({ error: "Failed to upload message file" });
+        }
+        fileType = file.mimetype;
+      }
+      const result = await pool.query(
+        "INSERT INTO messages (sender_id, receiver_id, content, file_url, file_name, file_type) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
+        [sender_id, receiver_id, content || "", fileUrl, fileName, fileType]
+      );
+      res.status(201).json(result.rows[0]);
+    } catch (error) {
+      console.error("Error sending message with file:", error);
+      res.status(500).json({ error: "Failed to send message" });
+    }
   }
-});
+);
 // Get all messages between logged-in user and another user
-app.get('/api/messages/:userId', authenticateToken, async (req, res) => {
+app.get("/api/messages/:userId", authenticateToken, async (req, res) => {
   const user1 = req.user.id;
   const user2 = parseInt(req.params.userId);
   try {
@@ -2938,12 +3832,12 @@ app.get('/api/messages/:userId', authenticateToken, async (req, res) => {
     );
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching messages:', error);
-    res.status(500).json({ error: 'Failed to fetch messages' });
+    console.error("Error fetching messages:", error);
+    res.status(500).json({ error: "Failed to fetch messages" });
   }
 });
 // Mark messages as read
-app.post('/api/messages/:userId/read', authenticateToken, async (req, res) => {
+app.post("/api/messages/:userId/read", authenticateToken, async (req, res) => {
   const user1 = req.user.id;
   const user2 = parseInt(req.params.userId);
   try {
@@ -2955,90 +3849,108 @@ app.post('/api/messages/:userId/read', authenticateToken, async (req, res) => {
     `);
     if (columnCheck.rows.length > 0) {
       await pool.query(
-        'UPDATE messages SET read = TRUE WHERE sender_id = $1 AND receiver_id = $2 AND read = FALSE',
+        "UPDATE messages SET read = TRUE WHERE sender_id = $1 AND receiver_id = $2 AND read = FALSE",
         [user2, user1]
       );
     }
     res.json({ success: true });
   } catch (error) {
-    console.error('Error marking messages as read:', error);
-    res.status(500).json({ error: 'Failed to mark messages as read' });
+    console.error("Error marking messages as read:", error);
+    res.status(500).json({ error: "Failed to mark messages as read" });
   }
 });
 // === SUBJECTS ENDPOINTS ===
 // Get all subjects
-app.get('/api/subjects', authenticateToken, async (req, res) => {
+app.get("/api/subjects", authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM subjects ORDER BY name');
+    const result = await pool.query("SELECT * FROM subjects ORDER BY name");
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching subjects:', error);
-    res.status(500).json({ error: 'Failed to fetch subjects' });
+    console.error("Error fetching subjects:", error);
+    res.status(500).json({ error: "Failed to fetch subjects" });
   }
 });
 // Create a new subject
-app.post('/api/subjects', authenticateToken, async (req, res) => {
+app.post("/api/subjects", authenticateToken, async (req, res) => {
   const { name, code, description, credits, department } = req.body;
   if (!name) {
-    return res.status(400).json({ error: 'Subject name is required' });
+    return res.status(400).json({ error: "Subject name is required" });
   }
   try {
     const result = await pool.query(
-      'INSERT INTO subjects (name, code, description, credits, department) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [name, code || null, description || null, credits || 0, department || null]
+      "INSERT INTO subjects (name, code, description, credits, department) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+      [
+        name,
+        code || null,
+        description || null,
+        credits || 0,
+        department || null,
+      ]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error creating subject:', error);
-    if (error.code === '23505') { // Unique violation
-      res.status(400).json({ error: 'Subject code already exists' });
+    console.error("Error creating subject:", error);
+    if (error.code === "23505") {
+      // Unique violation
+      res.status(400).json({ error: "Subject code already exists" });
     } else {
-      res.status(500).json({ error: 'Failed to create subject' });
+      res.status(500).json({ error: "Failed to create subject" });
     }
   }
 });
 // Update a subject
-app.put('/api/subjects/:id', authenticateToken, async (req, res) => {
+app.put("/api/subjects/:id", authenticateToken, async (req, res) => {
   const id = parseInt(req.params.id);
   const { name, code, description, credits, department } = req.body;
   if (!name) {
-    return res.status(400).json({ error: 'Subject name is required' });
+    return res.status(400).json({ error: "Subject name is required" });
   }
   try {
     const result = await pool.query(
-      'UPDATE subjects SET name = $1, code = $2, description = $3, credits = $4, department = $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6 RETURNING *',
-      [name, code || null, description || null, credits || 0, department || null, id]
+      "UPDATE subjects SET name = $1, code = $2, description = $3, credits = $4, department = $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6 RETURNING *",
+      [
+        name,
+        code || null,
+        description || null,
+        credits || 0,
+        department || null,
+        id,
+      ]
     );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Subject not found' });
+      return res.status(404).json({ error: "Subject not found" });
     }
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating subject:', error);
-    if (error.code === '23505') { // Unique violation
-      res.status(400).json({ error: 'Subject code already exists' });
+    console.error("Error updating subject:", error);
+    if (error.code === "23505") {
+      // Unique violation
+      res.status(400).json({ error: "Subject code already exists" });
     } else {
-      res.status(500).json({ error: 'Failed to update subject' });
+      res.status(500).json({ error: "Failed to update subject" });
     }
   }
 });
 // Delete a subject
-app.delete('/api/subjects/:id', authenticateToken, async (req, res) => {
+app.delete("/api/subjects/:id", authenticateToken, async (req, res) => {
   const id = parseInt(req.params.id);
   try {
-    const result = await pool.query('DELETE FROM subjects WHERE id = $1 RETURNING *', [id]);
+    const result = await pool.query(
+      "DELETE FROM subjects WHERE id = $1 RETURNING *",
+      [id]
+    );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Subject not found' });
+      return res.status(404).json({ error: "Subject not found" });
     }
-    res.json({ message: 'Subject deleted successfully' });
+    res.json({ message: "Subject deleted successfully" });
   } catch (error) {
-    console.error('Error deleting subject:', error);
-    res.status(500).json({ error: 'Failed to delete subject' });
+    console.error("Error deleting subject:", error);
+    res.status(500).json({ error: "Failed to delete subject" });
   }
 });
 // === SUBJECT CLASSIFICATION AND COEFFICIENT MANAGEMENT ===
 // Get subject classifications for all classes
-app.get('/api/subject-classifications', authenticateToken, async (req, res) => {
+app.get("/api/subject-classifications", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
@@ -3052,7 +3964,7 @@ app.get('/api/subject-classifications', authenticateToken, async (req, res) => {
     `);
     // Group by class_id for easier frontend consumption
     const classifications = {};
-    result.rows.forEach(row => {
+    result.rows.forEach((row) => {
       if (!classifications[row.class_id]) {
         classifications[row.class_id] = {};
       }
@@ -3060,47 +3972,58 @@ app.get('/api/subject-classifications', authenticateToken, async (req, res) => {
     });
     res.json(classifications);
   } catch (error) {
-    console.error('Error fetching subject classifications:', error);
-    res.status(500).json({ error: 'Failed to fetch subject classifications' });
+    console.error("Error fetching subject classifications:", error);
+    res.status(500).json({ error: "Failed to fetch subject classifications" });
   }
 });
 // Save subject classifications for a class
-app.post('/api/subject-classifications', authenticateToken, async (req, res) => {
-  const { classId, classifications } = req.body;
-  if (!classId || !classifications) {
-    return res.status(400).json({ error: 'Class ID and classifications are required' });
-  }
-  try {
-    // Start a transaction
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      // Delete existing classifications for this class
-      await client.query('DELETE FROM subject_classifications WHERE class_id = $1', [classId]);
-      // Insert new classifications
-      for (const [subjectId, classificationType] of Object.entries(classifications)) {
-        if (classificationType) {
-          await client.query(
-            'INSERT INTO subject_classifications (class_id, subject_id, classification_type) VALUES ($1, $2, $3)',
-            [classId, subjectId, classificationType]
-          );
-        }
-      }
-      await client.query('COMMIT');
-      res.json({ message: 'Subject classifications saved successfully' });
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+app.post(
+  "/api/subject-classifications",
+  authenticateToken,
+  async (req, res) => {
+    const { classId, classifications } = req.body;
+    if (!classId || !classifications) {
+      return res
+        .status(400)
+        .json({ error: "Class ID and classifications are required" });
     }
-  } catch (error) {
-    console.error('Error saving subject classifications:', error);
-    res.status(500).json({ error: 'Failed to save subject classifications' });
+    try {
+      // Start a transaction
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        // Delete existing classifications for this class
+        await client.query(
+          "DELETE FROM subject_classifications WHERE class_id = $1",
+          [classId]
+        );
+        // Insert new classifications
+        for (const [subjectId, classificationType] of Object.entries(
+          classifications
+        )) {
+          if (classificationType) {
+            await client.query(
+              "INSERT INTO subject_classifications (class_id, subject_id, classification_type) VALUES ($1, $2, $3)",
+              [classId, subjectId, classificationType]
+            );
+          }
+        }
+        await client.query("COMMIT");
+        res.json({ message: "Subject classifications saved successfully" });
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error("Error saving subject classifications:", error);
+      res.status(500).json({ error: "Failed to save subject classifications" });
+    }
   }
-});
+);
 // Get subject coefficients for all classes
-app.get('/api/subject-coefficients', authenticateToken, async (req, res) => {
+app.get("/api/subject-coefficients", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
@@ -3114,7 +4037,7 @@ app.get('/api/subject-coefficients', authenticateToken, async (req, res) => {
     `);
     // Group by class_id for easier frontend consumption
     const coefficients = {};
-    result.rows.forEach(row => {
+    result.rows.forEach((row) => {
       if (!coefficients[row.class_id]) {
         coefficients[row.class_id] = {};
       }
@@ -3122,48 +4045,53 @@ app.get('/api/subject-coefficients', authenticateToken, async (req, res) => {
     });
     res.json(coefficients);
   } catch (error) {
-    console.error('Error fetching subject coefficients:', error);
-    res.status(500).json({ error: 'Failed to fetch subject coefficients' });
+    console.error("Error fetching subject coefficients:", error);
+    res.status(500).json({ error: "Failed to fetch subject coefficients" });
   }
 });
 // Save subject coefficients for a class
-app.post('/api/subject-coefficients', authenticateToken, async (req, res) => {
+app.post("/api/subject-coefficients", authenticateToken, async (req, res) => {
   const { classId, coefficients } = req.body;
   if (!classId || !coefficients) {
-    return res.status(400).json({ error: 'Class ID and coefficients are required' });
+    return res
+      .status(400)
+      .json({ error: "Class ID and coefficients are required" });
   }
   try {
     // Start a transaction
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
       // Delete existing coefficients for this class
-      await client.query('DELETE FROM subject_coefficients WHERE class_id = $1', [classId]);
+      await client.query(
+        "DELETE FROM subject_coefficients WHERE class_id = $1",
+        [classId]
+      );
       // Insert new coefficients
       for (const [subjectId, coefficient] of Object.entries(coefficients)) {
         if (coefficient && coefficient > 0) {
           await client.query(
-            'INSERT INTO subject_coefficients (class_id, subject_id, coefficient) VALUES ($1, $2, $3)',
+            "INSERT INTO subject_coefficients (class_id, subject_id, coefficient) VALUES ($1, $2, $3)",
             [classId, subjectId, coefficient]
           );
         }
       }
-      await client.query('COMMIT');
-      res.json({ message: 'Subject coefficients saved successfully' });
+      await client.query("COMMIT");
+      res.json({ message: "Subject coefficients saved successfully" });
     } catch (error) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
     }
   } catch (error) {
-    console.error('Error saving subject coefficients:', error);
-    res.status(500).json({ error: 'Failed to save subject coefficients' });
+    console.error("Error saving subject coefficients:", error);
+    res.status(500).json({ error: "Failed to save subject coefficients" });
   }
 });
 // === INVENTORY ENDPOINTS ===
 // Get inventory items with type filter
-app.get('/api/inventory', authenticateToken, async (req, res) => {
+app.get("/api/inventory", authenticateToken, async (req, res) => {
   try {
     const { type } = req.query;
     let query = `
@@ -3177,44 +4105,55 @@ app.get('/api/inventory', authenticateToken, async (req, res) => {
     `;
     let params = [];
     if (type) {
-      query += ' WHERE i.type = $1';
+      query += " WHERE type = $1";
       params.push(type);
     }
-    query += ' ORDER BY i.created_at DESC';
+    query += " ORDER BY created_at DESC";
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching inventory:', error);
-    res.status(500).json({ error: 'Failed to fetch inventory' });
+    console.error("Error fetching inventory:", error);
+    res.status(500).json({ error: "Failed to fetch inventory" });
   }
 });
 
 // Register new inventory item
-app.post('/api/inventory', authenticateToken, async (req, res) => {
+app.post("/api/inventory", authenticateToken, async (req, res) => {
   try {
-    const { 
-      date, item_name, department, quantity, estimated_cost, type, 
-      depreciation_rate, budget_head_id, asset_category, purchase_date,
-      supplier, warranty_expiry, location, condition 
+    const {
+      date,
+      item_name,
+      department,
+      quantity,
+      estimated_cost,
+      type,
+      depreciation_rate,
     } = req.body;
-    
-    if (!date || !item_name || !department || !quantity || !estimated_cost || !type) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    if (
+      !date ||
+      !item_name ||
+      !department ||
+      !quantity ||
+      !estimated_cost ||
+      !type
+    ) {
+      return res.status(400).json({ error: "Missing required fields" });
     }
-    
+
     const result = await pool.query(
-      `INSERT INTO inventory (
-        date, item_name, department, quantity, estimated_cost, type, 
-        depreciation_rate, budget_head_id, asset_category, purchase_date,
-        supplier, warranty_expiry, location, condition
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) 
-      RETURNING *`,
-      [date, item_name, department, quantity, estimated_cost, type, 
-       depreciation_rate || null, budget_head_id || null, asset_category || null,
-       purchase_date || null, supplier || null, warranty_expiry || null,
-       location || null, condition || 'new']
+      `INSERT INTO inventory (date, item_name, department, quantity, estimated_cost, type, depreciation_rate)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [
+        date,
+        item_name,
+        department,
+        quantity,
+        estimated_cost,
+        type,
+        depreciation_rate || null,
+      ]
     );
-    
+
     // Create financial transaction record
     if (result.rows[0]) {
       await pool.query(
@@ -3222,298 +4161,634 @@ app.post('/api/inventory', authenticateToken, async (req, res) => {
           transaction_date, type, amount, budget_head_id, description, 
           reference_type, reference_id, department, created_by
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [date, type, estimated_cost, budget_head_id || null, 
-         `Inventory: ${item_name}`, 'inventory', result.rows[0].id, 
-         department, req.user.id]
+        [
+          date,
+          type,
+          estimated_cost,
+          budget_head_id || null,
+          `Inventory: ${item_name}`,
+          "inventory",
+          result.rows[0].id,
+          department,
+          req.user.id,
+        ]
       );
     }
-    
+
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error registering inventory item:', error);
-    res.status(500).json({ error: 'Failed to register inventory item' });
+    console.error("Error registering inventory item:", error);
+    res.status(500).json({ error: "Failed to register inventory item" });
   }
 });
 
 // Update inventory item
-app.put('/api/inventory/:id', authenticateToken, async (req, res) => {
+app.put("/api/inventory/:id", authenticateToken, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { 
-      date, item_name, department, quantity, estimated_cost, type, 
-      depreciation_rate, budget_head_id, asset_category, purchase_date,
-      supplier, warranty_expiry, location, condition 
+    const {
+      date,
+      item_name,
+      department,
+      quantity,
+      estimated_cost,
+      type,
+      depreciation_rate,
     } = req.body;
-    
     const result = await pool.query(
       `UPDATE inventory SET
         date = $1, item_name = $2, department = $3, quantity = $4,
-        estimated_cost = $5, type = $6, depreciation_rate = $7, 
-        budget_head_id = $8, asset_category = $9, purchase_date = $10,
-        supplier = $11, warranty_expiry = $12, location = $13, 
-        condition = $14, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $15 RETURNING *`,
-      [date, item_name, department, quantity, estimated_cost, type, 
-       depreciation_rate || null, budget_head_id || null, asset_category || null,
-       purchase_date || null, supplier || null, warranty_expiry || null,
-       location || null, condition || 'new', id]
+        estimated_cost = $5, type = $6, depreciation_rate = $7, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $8 RETURNING *`,
+      [
+        date,
+        item_name,
+        department,
+        quantity,
+        estimated_cost,
+        type,
+        depreciation_rate || null,
+        id,
+      ]
     );
-    
+
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Inventory item not found' });
+      return res.status(404).json({ error: "Inventory item not found" });
     }
-    
+
     // Update financial transaction record
     await pool.query(
       `UPDATE financial_transactions SET
         transaction_date = $1, amount = $2, budget_head_id = $3,
         description = $4, department = $5, updated_at = CURRENT_TIMESTAMP
        WHERE reference_type = 'inventory' AND reference_id = $6`,
-      [date, estimated_cost, budget_head_id || null, 
-       `Inventory: ${item_name}`, department, id]
+      [
+        date,
+        estimated_cost,
+        budget_head_id || null,
+        `Inventory: ${item_name}`,
+        department,
+        id,
+      ]
     );
-    
+
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating inventory item:', error);
-    res.status(500).json({ error: 'Failed to update inventory item' });
+    console.error("Error updating inventory item:", error);
+    res.status(500).json({ error: "Failed to update inventory item" });
   }
 });
 
 // Delete inventory item
-app.delete('/api/inventory/:id', authenticateToken, async (req, res) => {
+app.delete("/api/inventory/:id", authenticateToken, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    
-    // Delete related financial transaction first
-    await pool.query(
-      'DELETE FROM financial_transactions WHERE reference_type = $1 AND reference_id = $2',
-      ['inventory', id]
-    );
-    
-    const result = await pool.query('DELETE FROM inventory WHERE id = $1 RETURNING *', [id]);
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Inventory item not found' });
-    }
-    res.json({ message: 'Inventory item deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting inventory item:', error);
-    res.status(500).json({ error: 'Failed to delete inventory item' });
-  }
-});
-
-// === BUDGET HEADS ENDPOINTS ===
-// Get all budget heads
-app.get('/api/budget-heads', authenticateToken, async (req, res) => {
-  try {
     const result = await pool.query(
-      'SELECT * FROM budget_heads WHERE is_active = true ORDER BY category, name'
-    );
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching budget heads:', error);
-    res.status(500).json({ error: 'Failed to fetch budget heads' });
-  }
-});
-
-// Create new budget head
-app.post('/api/budget-heads', authenticateToken, async (req, res) => {
-  try {
-    const { name, code, category, description, allocated_amount } = req.body;
-    
-    if (!name || !category) {
-      return res.status(400).json({ error: 'Name and category are required' });
-    }
-    
-    const result = await pool.query(
-      `INSERT INTO budget_heads (name, code, category, description, allocated_amount)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [name, code || null, category, description || null, allocated_amount || 0]
-    );
-    
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Error creating budget head:', error);
-    if (error.code === '23505') { // Unique violation
-      res.status(400).json({ error: 'Budget head with this name or code already exists' });
-    } else {
-      res.status(500).json({ error: 'Failed to create budget head' });
-    }
-  }
-});
-
-// Update budget head
-app.put('/api/budget-heads/:id', authenticateToken, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-    const { name, code, category, description, allocated_amount, is_active } = req.body;
-    
-    const result = await pool.query(
-      `UPDATE budget_heads SET
-        name = $1, code = $2, category = $3, description = $4, 
-        allocated_amount = $5, is_active = $6, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $7 RETURNING *`,
-      [name, code || null, category, description || null, 
-       allocated_amount || 0, is_active !== false, id]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Budget head not found' });
-    }
-    
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error updating budget head:', error);
-    res.status(500).json({ error: 'Failed to update budget head' });
-  }
-});
-
-// Delete budget head
-app.delete('/api/budget-heads/:id', authenticateToken, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-    
-    // Check if budget head is being used in any transactions
-    const usageCheck = await pool.query(
-      'SELECT COUNT(*) as count FROM financial_transactions WHERE budget_head_id = $1',
+      "DELETE FROM inventory WHERE id = $1 RETURNING *",
       [id]
     );
-    
-    if (parseInt(usageCheck.rows[0].count) > 0) {
-      return res.status(400).json({ 
-        error: 'Cannot delete budget head. It is being used in financial transactions.' 
-      });
-    }
-    
-    const result = await pool.query('DELETE FROM budget_heads WHERE id = $1 RETURNING *', [id]);
-    
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Budget head not found' });
+      return res.status(404).json({ error: "Inventory item not found" });
     }
-    
-    res.json({ message: 'Budget head deleted successfully' });
+    res.json({ message: "Inventory item deleted successfully" });
   } catch (error) {
-    console.error('Error deleting budget head:', error);
-    res.status(500).json({ error: 'Failed to delete budget head' });
+    console.error("Error deleting inventory item:", error);
+    res.status(500).json({ error: "Failed to delete inventory item" });
   }
 });
-
-// === ASSET CATEGORIES ENDPOINTS ===
-// Get all asset categories
-app.get('/api/asset-categories', authenticateToken, async (req, res) => {
+// === DEPARTMENTS ENDPOINTS ===
+// Get all departments
+app.get("/api/departments", authenticateToken, async (req, res) => {
+  try {
+    // Get departments from specialties table (since that's where departments are stored)
+    const result = await pool.query(
+      "SELECT DISTINCT name as department FROM specialties ORDER BY name"
+    );
+    // Also include any departments from inventory table
+    const inventoryDepartments = await pool.query(
+      "SELECT DISTINCT department FROM inventory WHERE department IS NOT NULL ORDER BY department"
+    );
+    // Combine and deduplicate departments
+    const allDepartments = new Set();
+    result.rows.forEach((row) => allDepartments.add(row.department));
+    inventoryDepartments.rows.forEach((row) =>
+      allDepartments.add(row.department)
+    );
+    const departments = Array.from(allDepartments).sort();
+    res.json(departments.map((dept) => ({ name: dept })));
+  } catch (error) {
+    console.error("Error fetching departments:", error);
+    res.status(500).json({ error: "Failed to fetch departments" });
+  }
+});
+// ===== TEACHER APPLICATION ENDPOINTS =====
+// Submit teacher application
+app.post(
+  "/api/teacher-application",
+  authenticateToken,
+  upload.fields([
+    { name: "certificate", maxCount: 1 },
+    { name: "cv", maxCount: 1 },
+    { name: "photo", maxCount: 1 },
+  ]),
+  async (req, res) => {
+    try {
+      console.log("Teacher application submission started");
+      console.log("User ID:", req.user.id);
+      console.log("Request body:", req.body);
+      console.log(
+        "Request files:",
+        req.files ? Object.keys(req.files) : "No files"
+      );
+      const userId = req.user.id;
+      const { full_name, sex, id_card, dob, pob, subjects, classes, contact } =
+        req.body;
+      // Validate required fields
+      if (
+        !full_name ||
+        !sex ||
+        !id_card ||
+        !dob ||
+        !pob ||
+        !subjects ||
+        !classes ||
+        !contact
+      ) {
+        console.log("Missing required fields:", {
+          full_name,
+          sex,
+          id_card,
+          dob,
+          pob,
+          subjects,
+          classes,
+          contact,
+        });
+        return res.status(400).json({ error: "All fields are required" });
+      }
+      console.log("All required fields present");
+      // Upload files to FTP and get URLs
+      let certificate_url = null;
+      let cv_url = null;
+      let photo_url = null;
+      if (req.files && req.files.certificate && req.files.certificate[0]) {
+        console.log(
+          "Processing certificate file:",
+          req.files.certificate[0].originalname
+        );
+        try {
+          const filename = `certificate_${Date.now()}_${
+            req.files.certificate[0].originalname
+          }`;
+          certificate_url = await ftpService.uploadBuffer(
+            req.files.certificate[0].buffer,
+            filename
+          );
+          console.log("Certificate uploaded to FTP:", certificate_url);
+        } catch (error) {
+          console.error("Failed to upload certificate to FTP:", error);
+          // Fallback to local storage
+          const fs = require("fs");
+          const path = require("path");
+          const uploadsDir = path.join(__dirname, "uploads");
+          if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+          const filename = `certificate_${Date.now()}_${
+            req.files.certificate[0].originalname
+          }`;
+          const filepath = path.join(uploadsDir, filename);
+          fs.writeFileSync(filepath, req.files.certificate[0].buffer);
+          certificate_url = `/uploads/${filename}`;
+          console.log("Certificate saved locally:", certificate_url);
+        }
+      }
+      if (req.files && req.files.cv && req.files.cv[0]) {
+        console.log("Processing CV file:", req.files.cv[0].originalname);
+        try {
+          const filename = `cv_${Date.now()}_${req.files.cv[0].originalname}`;
+          cv_url = await ftpService.uploadBuffer(
+            req.files.cv[0].buffer,
+            filename
+          );
+          console.log("CV uploaded to FTP:", cv_url);
+        } catch (error) {
+          console.error("Failed to upload CV to FTP:", error);
+          // Fallback to local storage
+          const fs = require("fs");
+          const path = require("path");
+          const uploadsDir = path.join(__dirname, "uploads");
+          if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+          const filename = `cv_${Date.now()}_${req.files.cv[0].originalname}`;
+          const filepath = path.join(uploadsDir, filename);
+          fs.writeFileSync(filepath, req.files.cv[0].buffer);
+          cv_url = `/uploads/${filename}`;
+          console.log("CV saved locally:", cv_url);
+        }
+      }
+      if (req.files && req.files.photo && req.files.photo[0]) {
+        console.log("Processing photo file:", req.files.photo[0].originalname);
+        try {
+          const filename = `photo_${Date.now()}_${
+            req.files.photo[0].originalname
+          }`;
+          photo_url = await ftpService.uploadBuffer(
+            req.files.photo[0].buffer,
+            filename
+          );
+          console.log("Photo uploaded to FTP:", photo_url);
+        } catch (error) {
+          console.error("Failed to upload photo to FTP:", error);
+          // Fallback to local storage
+          const fs = require("fs");
+          const path = require("path");
+          const uploadsDir = path.join(__dirname, "uploads");
+          if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+          const filename = `photo_${Date.now()}_${
+            req.files.photo[0].originalname
+          }`;
+          const filepath = path.join(uploadsDir, filename);
+          fs.writeFileSync(filepath, req.files.photo[0].buffer);
+          photo_url = `/uploads/${filename}`;
+          console.log("Photo saved locally:", photo_url);
+        }
+      }
+      console.log("File processing completed");
+      // Check if teacher application already exists for this user
+      console.log("Checking for existing teacher application");
+      const existingResult = await pool.query(
+        "SELECT * FROM teachers WHERE user_id = $1",
+        [userId]
+      );
+      if (existingResult.rows.length > 0) {
+        console.log("Teacher application already exists for user:", userId);
+        return res
+          .status(400)
+          .json({ error: "Teacher application already exists for this user" });
+      }
+      console.log("Creating new teacher application");
+      // Create new teacher application
+      const result = await pool.query(
+        `INSERT INTO teachers (user_id, full_name, sex, id_card, dob, pob, subjects, classes, contact, certificate_url, cv_url, photo_url, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending') RETURNING *`,
+        [
+          userId,
+          full_name,
+          sex,
+          id_card,
+          dob,
+          pob,
+          subjects,
+          classes,
+          contact,
+          certificate_url,
+          cv_url,
+          photo_url,
+        ]
+      );
+      console.log(
+        "Teacher application created successfully:",
+        result.rows[0].id
+      );
+      res.status(201).json(result.rows[0]);
+    } catch (error) {
+      console.error("Error submitting teacher application:", error);
+      console.error("Error stack:", error.stack);
+      res.status(500).json({
+        error: "Failed to submit teacher application: " + error.message,
+      });
+    }
+  }
+);
+// Edit teacher application
+app.put(
+  "/api/teacher-application/:id",
+  authenticateToken,
+  upload.fields([
+    { name: "certificate", maxCount: 1 },
+    { name: "cv", maxCount: 1 },
+    { name: "photo", maxCount: 1 },
+  ]),
+  async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const teacherId = parseInt(req.params.id);
+      const { full_name, sex, id_card, dob, pob, subjects, classes, contact } =
+        req.body;
+      // Validate required fields
+      if (
+        !full_name ||
+        !sex ||
+        !id_card ||
+        !dob ||
+        !pob ||
+        !subjects ||
+        !classes ||
+        !contact
+      ) {
+        return res.status(400).json({ error: "All fields are required" });
+      }
+      // Upload files to FTP and get URLs
+      let certificate_url = undefined;
+      let cv_url = undefined;
+      let photo_url = undefined;
+      if (req.files && req.files.certificate && req.files.certificate[0]) {
+        try {
+          const filename = `certificate_${Date.now()}_${
+            req.files.certificate[0].originalname
+          }`;
+          certificate_url = await ftpService.uploadBuffer(
+            req.files.certificate[0].buffer,
+            filename
+          );
+          console.log("Certificate uploaded to FTP:", certificate_url);
+        } catch (error) {
+          console.error("Failed to upload certificate to FTP:", error);
+          // Fallback to local storage
+          const fs = require("fs");
+          const path = require("path");
+          const uploadsDir = path.join(__dirname, "uploads");
+          if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+          const filename = `certificate_${Date.now()}_${
+            req.files.certificate[0].originalname
+          }`;
+          const filepath = path.join(uploadsDir, filename);
+          fs.writeFileSync(filepath, req.files.certificate[0].buffer);
+          certificate_url = `/uploads/${filename}`;
+        }
+      }
+      if (req.files && req.files.cv && req.files.cv[0]) {
+        try {
+          const filename = `cv_${Date.now()}_${req.files.cv[0].originalname}`;
+          cv_url = await ftpService.uploadBuffer(
+            req.files.cv[0].buffer,
+            filename
+          );
+          console.log("CV uploaded to FTP:", cv_url);
+        } catch (error) {
+          console.error("Failed to upload CV to FTP:", error);
+          // Fallback to local storage
+          const fs = require("fs");
+          const path = require("path");
+          const uploadsDir = path.join(__dirname, "uploads");
+          if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+          const filename = `cv_${Date.now()}_${req.files.cv[0].originalname}`;
+          const filepath = path.join(uploadsDir, filename);
+          fs.writeFileSync(filepath, req.files.cv[0].buffer);
+          cv_url = `/uploads/${filename}`;
+        }
+      }
+      if (req.files && req.files.photo && req.files.photo[0]) {
+        try {
+          const filename = `photo_${Date.now()}_${
+            req.files.photo[0].originalname
+          }`;
+          photo_url = await ftpService.uploadBuffer(
+            req.files.photo[0].buffer,
+            filename
+          );
+          console.log("Photo uploaded to FTP:", photo_url);
+        } catch (error) {
+          console.error("Failed to upload photo to FTP:", error);
+          // Fallback to local storage
+          const fs = require("fs");
+          const path = require("path");
+          const uploadsDir = path.join(__dirname, "uploads");
+          if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+          const filename = `photo_${Date.now()}_${
+            req.files.photo[0].originalname
+          }`;
+          const filepath = path.join(uploadsDir, filename);
+          fs.writeFileSync(filepath, req.files.photo[0].buffer);
+          photo_url = `/uploads/${filename}`;
+        }
+      }
+      // Verify the teacher application belongs to the user
+      const existingResult = await pool.query(
+        "SELECT * FROM teachers WHERE id = $1 AND user_id = $2",
+        [teacherId, userId]
+      );
+      if (existingResult.rows.length === 0) {
+        return res.status(404).json({ error: "Teacher application not found" });
+      }
+      // Build update query dynamically
+      let updateFields = [
+        "full_name = $1",
+        "sex = $2",
+        "id_card = $3",
+        "dob = $4",
+        "pob = $5",
+        "subjects = $6",
+        "classes = $7",
+        "contact = $8",
+      ];
+      let updateValues = [
+        full_name,
+        sex,
+        id_card,
+        dob,
+        pob,
+        subjects,
+        classes,
+        contact,
+      ];
+      let paramIndex = 9;
+      if (certificate_url !== undefined) {
+        updateFields.push(`certificate_url = $${paramIndex}`);
+        updateValues.push(certificate_url);
+        paramIndex++;
+      }
+      if (cv_url !== undefined) {
+        updateFields.push(`cv_url = $${paramIndex}`);
+        updateValues.push(cv_url);
+        paramIndex++;
+      }
+      if (photo_url !== undefined) {
+        updateFields.push(`photo_url = $${paramIndex}`);
+        updateValues.push(photo_url);
+        paramIndex++;
+      }
+      updateValues.push(teacherId);
+      const updateQuery = `UPDATE teachers SET ${updateFields.join(
+        ", "
+      )} WHERE id = $${paramIndex} RETURNING *`;
+      const result = await pool.query(updateQuery, updateValues);
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error("Error updating teacher application:", error);
+      res.status(500).json({
+        error: "Failed to update teacher application: " + error.message,
+      });
+    }
+  }
+);
+// Delete teacher application
+app.delete(
+  "/api/teacher-application/:id",
+  authenticateToken,
+  async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const teacherId = parseInt(req.params.id);
+      // Verify the teacher application belongs to the user
+      const existingResult = await pool.query(
+        "SELECT * FROM teachers WHERE id = $1 AND user_id = $2",
+        [teacherId, userId]
+      );
+      if (existingResult.rows.length === 0) {
+        return res.status(404).json({ error: "Teacher application not found" });
+      }
+      // Delete the teacher application
+      await pool.query("DELETE FROM teachers WHERE id = $1 AND user_id = $2", [
+        teacherId,
+        userId,
+      ]);
+      res.json({ message: "Teacher application deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting teacher application:", error);
+      res.status(500).json({ error: "Failed to delete teacher application" });
+    }
+  }
+);
+// Get teacher application for current user
+app.get("/api/teacher-application", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT * FROM asset_categories WHERE is_active = true ORDER BY name'
+      "SELECT * FROM asset_categories WHERE is_active = true ORDER BY name"
     );
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching asset categories:', error);
-    res.status(500).json({ error: 'Failed to fetch asset categories' });
+    console.error("Error fetching asset categories:", error);
+    res.status(500).json({ error: "Failed to fetch asset categories" });
   }
 });
 
 // Create new asset category
-app.post('/api/asset-categories', authenticateToken, async (req, res) => {
+app.post("/api/asset-categories", authenticateToken, async (req, res) => {
   try {
-    const { name, description, default_depreciation_rate, useful_life_years } = req.body;
-    
+    const { name, description, default_depreciation_rate, useful_life_years } =
+      req.body;
+
     if (!name) {
-      return res.status(400).json({ error: 'Name is required' });
+      return res.status(400).json({ error: "Name is required" });
     }
-    
+
     const result = await pool.query(
       `INSERT INTO asset_categories (name, description, default_depreciation_rate, useful_life_years)
        VALUES ($1, $2, $3, $4) RETURNING *`,
-      [name, description || null, default_depreciation_rate || 0, useful_life_years || 5]
+      [
+        name,
+        description || null,
+        default_depreciation_rate || 0,
+        useful_life_years || 5,
+      ]
     );
-    
+
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error creating asset category:', error);
-    if (error.code === '23505') { // Unique violation
-      res.status(400).json({ error: 'Asset category with this name already exists' });
+    console.error("Error creating asset category:", error);
+    if (error.code === "23505") {
+      // Unique violation
+      res
+        .status(400)
+        .json({ error: "Asset category with this name already exists" });
     } else {
-      res.status(500).json({ error: 'Failed to create asset category' });
+      res.status(500).json({ error: "Failed to create asset category" });
     }
   }
 });
 
 // Update asset category
-app.put('/api/asset-categories/:id', authenticateToken, async (req, res) => {
+app.put("/api/asset-categories/:id", authenticateToken, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { name, description, default_depreciation_rate, useful_life_years, is_active } = req.body;
-    
+    const {
+      name,
+      description,
+      default_depreciation_rate,
+      useful_life_years,
+      is_active,
+    } = req.body;
+
     const result = await pool.query(
       `UPDATE asset_categories SET
         name = $1, description = $2, default_depreciation_rate = $3, 
         useful_life_years = $4, is_active = $5, updated_at = CURRENT_TIMESTAMP
        WHERE id = $6 RETURNING *`,
-      [name, description || null, default_depreciation_rate || 0, 
-       useful_life_years || 5, is_active !== false, id]
+      [
+        name,
+        description || null,
+        default_depreciation_rate || 0,
+        useful_life_years || 5,
+        is_active !== false,
+        id,
+      ]
     );
-    
+
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Asset category not found' });
+      return res.status(404).json({ error: "Asset category not found" });
     }
-    
+
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating asset category:', error);
-    res.status(500).json({ error: 'Failed to update asset category' });
+    console.error("Error updating asset category:", error);
+    res.status(500).json({ error: "Failed to update asset category" });
   }
 });
 
 // Delete asset category
-app.delete('/api/asset-categories/:id', authenticateToken, async (req, res) => {
+app.delete("/api/asset-categories/:id", authenticateToken, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    
+
     // Check if asset category is being used in any inventory items
     const usageCheck = await pool.query(
-      'SELECT COUNT(*) as count FROM inventory WHERE asset_category = (SELECT name FROM asset_categories WHERE id = $1)',
+      "SELECT COUNT(*) as count FROM inventory WHERE asset_category = (SELECT name FROM asset_categories WHERE id = $1)",
       [id]
     );
-    
+
     if (parseInt(usageCheck.rows[0].count) > 0) {
-      return res.status(400).json({ 
-        error: 'Cannot delete asset category. It is being used in inventory items.' 
+      return res.status(400).json({
+        error:
+          "Cannot delete asset category. It is being used in inventory items.",
       });
     }
-    
-    const result = await pool.query('DELETE FROM asset_categories WHERE id = $1 RETURNING *', [id]);
-    
+
+    const result = await pool.query(
+      "DELETE FROM asset_categories WHERE id = $1 RETURNING *",
+      [id]
+    );
+
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Asset category not found' });
+      return res.status(404).json({ error: "Asset category not found" });
     }
-    
-    res.json({ message: 'Asset category deleted successfully' });
+
+    res.json({ message: "Asset category deleted successfully" });
   } catch (error) {
-    console.error('Error deleting asset category:', error);
-    res.status(500).json({ error: 'Failed to delete asset category' });
+    console.error("Error deleting asset category:", error);
+    res.status(500).json({ error: "Failed to delete asset category" });
   }
 });
 
 // === FINANCIAL REPORTS ENDPOINTS ===
 // Get financial summary for reporting
-app.get('/api/financial-summary', authenticateToken, async (req, res) => {
+app.get("/api/financial-summary", authenticateToken, async (req, res) => {
   try {
     const { period, start_date, end_date, month, year } = req.query;
-    
-    let dateFilter = '';
+
+    let dateFilter = "";
     let params = [];
-    
-    if (period === 'date' && start_date && end_date) {
-      dateFilter = 'WHERE transaction_date BETWEEN $1 AND $2';
+
+    if (period === "date" && start_date && end_date) {
+      dateFilter = "WHERE transaction_date BETWEEN $1 AND $2";
       params = [start_date, end_date];
-    } else if (period === 'month' && month && year) {
-      dateFilter = 'WHERE EXTRACT(MONTH FROM transaction_date) = $1 AND EXTRACT(YEAR FROM transaction_date) = $2';
+    } else if (period === "month" && month && year) {
+      dateFilter =
+        "WHERE EXTRACT(MONTH FROM transaction_date) = $1 AND EXTRACT(YEAR FROM transaction_date) = $2";
       params = [parseInt(month), parseInt(year)];
-    } else if (period === 'year' && year) {
-      dateFilter = 'WHERE EXTRACT(YEAR FROM transaction_date) = $1';
+    } else if (period === "year" && year) {
+      dateFilter = "WHERE EXTRACT(YEAR FROM transaction_date) = $1";
       params = [parseInt(year)];
     }
-    
+
     const query = `
       SELECT 
         type,
@@ -3524,9 +4799,9 @@ app.get('/api/financial-summary', authenticateToken, async (req, res) => {
       GROUP BY type
       ORDER BY type
     `;
-    
+
     const result = await pool.query(query, params);
-    
+
     // Calculate totals
     const summary = {
       income: 0,
@@ -3534,32 +4809,39 @@ app.get('/api/financial-summary', authenticateToken, async (req, res) => {
       asset_purchase: 0,
       net_balance: 0,
       period: period,
-      period_value: period === 'date' ? `${start_date} to ${end_date}` : 
-                   period === 'month' ? `${month}/${year}` : year,
-      transactions: result.rows
+      period_value:
+        period === "date"
+          ? `${start_date} to ${end_date}`
+          : period === "month"
+          ? `${month}/${year}`
+          : year,
+      transactions: result.rows,
     };
-    
-    result.rows.forEach(row => {
-      if (row.type === 'income') summary.income = parseFloat(row.total_amount);
-      else if (row.type === 'expenditure') summary.expenditure = parseFloat(row.total_amount);
-      else if (row.type === 'asset_purchase') summary.asset_purchase = parseFloat(row.total_amount);
+
+    result.rows.forEach((row) => {
+      if (row.type === "income") summary.income = parseFloat(row.total_amount);
+      else if (row.type === "expenditure")
+        summary.expenditure = parseFloat(row.total_amount);
+      else if (row.type === "asset_purchase")
+        summary.asset_purchase = parseFloat(row.total_amount);
     });
-    
-    summary.net_balance = summary.income - summary.expenditure - summary.asset_purchase;
-    
+
+    summary.net_balance =
+      summary.income - summary.expenditure - summary.asset_purchase;
+
     res.json(summary);
   } catch (error) {
-    console.error('Error fetching financial summary:', error);
-    res.status(500).json({ error: 'Failed to fetch financial summary' });
+    console.error("Error fetching financial summary:", error);
+    res.status(500).json({ error: "Failed to fetch financial summary" });
   }
 });
 
 // Get balance sheet
-app.get('/api/balance-sheet', authenticateToken, async (req, res) => {
+app.get("/api/balance-sheet", authenticateToken, async (req, res) => {
   try {
     const { as_of_date } = req.query;
-    const date = as_of_date || new Date().toISOString().split('T')[0];
-    
+    const date = as_of_date || new Date().toISOString().split("T")[0];
+
     // Get total assets (inventory items that are assets - typically equipment/equipment purchases)
     const assetsQuery = `
       SELECT 
@@ -3568,18 +4850,18 @@ app.get('/api/balance-sheet', authenticateToken, async (req, res) => {
       FROM inventory 
       WHERE type = 'expenditure' AND estimated_cost > 0
     `;
-    
+
     const assetsResult = await pool.query(assetsQuery);
-    
+
     // Get total liabilities (expenditures that are not assets)
     const liabilitiesQuery = `
       SELECT SUM(amount) as total_liabilities
       FROM financial_transactions 
       WHERE type = 'expenditure' AND transaction_date <= $1
     `;
-    
+
     const liabilitiesResult = await pool.query(liabilitiesQuery, [date]);
-    
+
     // Get total equity (income - expenditures)
     const equityQuery = `
         SELECT 
@@ -3588,70 +4870,83 @@ app.get('/api/balance-sheet', authenticateToken, async (req, res) => {
       FROM financial_transactions 
       WHERE transaction_date <= $1
     `;
-    
+
     const equityResult = await pool.query(equityQuery, [date]);
-    
+
     const totalAssets = parseFloat(assetsResult.rows[0]?.total_assets || 0);
     const currentValue = parseFloat(assetsResult.rows[0]?.current_value || 0);
-    const totalLiabilities = parseFloat(liabilitiesResult.rows[0]?.total_liabilities || 0);
+    const totalLiabilities = parseFloat(
+      liabilitiesResult.rows[0]?.total_liabilities || 0
+    );
     const totalIncome = parseFloat(equityResult.rows[0]?.total_income || 0);
-    const totalExpenditures = parseFloat(equityResult.rows[0]?.total_expenditures || 0);
-    
+    const totalExpenditures = parseFloat(
+      equityResult.rows[0]?.total_expenditures || 0
+    );
+
     const balanceSheet = {
       as_of_date: date,
       assets: {
         total_assets: totalAssets,
         current_value: currentValue,
-        depreciation: 0 // Simplified for now
+        depreciation: 0, // Simplified for now
       },
       liabilities: {
-        total_liabilities: totalLiabilities
+        total_liabilities: totalLiabilities,
       },
       equity: {
         total_income: totalIncome,
         total_expenditures: totalExpenditures,
-        net_equity: totalIncome - totalExpenditures
+        net_equity: totalIncome - totalExpenditures,
       },
       totals: {
         assets_plus_equity: currentValue + (totalIncome - totalExpenditures),
-        liabilities_plus_equity: totalLiabilities + (totalIncome - totalExpenditures)
-      }
+        liabilities_plus_equity:
+          totalLiabilities + (totalIncome - totalExpenditures),
+      },
     };
-    
+
     res.json(balanceSheet);
   } catch (error) {
-    console.error('Error generating balance sheet:', error);
-    res.status(500).json({ error: 'Failed to generate balance sheet', details: error.message });
+    console.error("Error generating balance sheet:", error);
+    res.status(500).json({
+      error: "Failed to generate balance sheet",
+      details: error.message,
+    });
   }
 });
 
 // Calculate monthly depreciation for all assets
-app.post('/api/calculate-depreciation', authenticateToken, async (req, res) => {
+app.post("/api/calculate-depreciation", authenticateToken, async (req, res) => {
   try {
     const { month, year } = req.body;
     const calculationDate = new Date(year, month - 1, 1);
-    
+
     // Get all expenditure items (assets) with depreciation rates
     const assetsQuery = `
       SELECT id, item_name, estimated_cost, depreciation_rate, purchase_date
       FROM inventory 
       WHERE type = 'expenditure' AND depreciation_rate > 0 AND purchase_date IS NOT NULL
     `;
-    
+
     const assetsResult = await pool.query(assetsQuery);
-    
+
     const depreciationRecords = [];
-    
+
     for (const asset of assetsResult.rows) {
       const purchaseDate = new Date(asset.purchase_date);
-      const monthsSincePurchase = (calculationDate.getFullYear() - purchaseDate.getFullYear()) * 12 + 
-                                 (calculationDate.getMonth() - purchaseDate.getMonth());
-      
+      const monthsSincePurchase =
+        (calculationDate.getFullYear() - purchaseDate.getFullYear()) * 12 +
+        (calculationDate.getMonth() - purchaseDate.getMonth());
+
       if (monthsSincePurchase > 0) {
-        const monthlyDepreciation = (parseFloat(asset.estimated_cost) * parseFloat(asset.depreciation_rate)) / 100;
+        const monthlyDepreciation =
+          (parseFloat(asset.estimated_cost) *
+            parseFloat(asset.depreciation_rate)) /
+          100;
         const totalDepreciation = monthlyDepreciation * monthsSincePurchase;
-        const currentValue = parseFloat(asset.estimated_cost) - totalDepreciation;
-        
+        const currentValue =
+          parseFloat(asset.estimated_cost) - totalDepreciation;
+
         // Insert or update depreciation record
         await pool.query(
           `INSERT INTO asset_depreciation (
@@ -3663,30 +4958,86 @@ app.post('/api/calculate-depreciation', authenticateToken, async (req, res) => {
             current_value = EXCLUDED.current_value,
             total_depreciation = EXCLUDED.total_depreciation,
             updated_at = CURRENT_TIMESTAMP`,
-          [asset.id, asset.item_name, asset.estimated_cost, currentValue,
-           asset.depreciation_rate, monthlyDepreciation, totalDepreciation, calculationDate]
+          [
+            asset.id,
+            asset.item_name,
+            asset.estimated_cost,
+            currentValue,
+            asset.depreciation_rate,
+            monthlyDepreciation,
+            totalDepreciation,
+            calculationDate,
+          ]
         );
-        
+
         depreciationRecords.push({
           asset_name: asset.item_name,
           original_cost: asset.estimated_cost,
           current_value: currentValue,
           monthly_depreciation: monthlyDepreciation,
-          total_depreciation: totalDepreciation
+          total_depreciation: totalDepreciation,
         });
       }
     }
-    
+
     res.json({
-      message: 'Depreciation calculated successfully',
+      message: "Depreciation calculated successfully",
       month: month,
       year: year,
       records_processed: depreciationRecords.length,
-      records: depreciationRecords
+      records: depreciationRecords,
     });
-    
   } catch (error) {
-    console.error('Error calculating depreciation:', error);
-    res.status(500).json({ error: 'Failed to calculate depreciation' });
+    console.error("Error updating application status:", error);
+    res.status(500).json({ error: "Failed to update application status" });
   }
 });
+// Delete application
+app.delete("/api/applications/:id", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const authUser = req.user;
+    // Get the application
+    const appResult = await pool.query(
+      `
+      SELECT * FROM applications WHERE id = $1
+    `,
+      [id]
+    );
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ error: "Application not found" });
+    }
+    const application = appResult.rows[0];
+    // Check permissions
+    const canDelete =
+      authUser.role === "Admin1" ||
+      authUser.role === "Admin4" ||
+      (application.applicant_id === authUser.id &&
+        application.status === "pending");
+    if (!canDelete) {
+      return res
+        .status(403)
+        .json({ error: "You cannot delete this application" });
+    }
+    await pool.query("DELETE FROM applications WHERE id = $1", [id]);
+    res.json({ message: "Application deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting application:", error);
+    res.status(500).json({ error: "Failed to delete application" });
+    console.error("Error calculating depreciation:", error);
+    res.status(500).json({ error: "Failed to calculate depreciation" });
+  }
+});
+
+app.use(globalErrorController);
+
+app.all("*", (req, res, next) => {
+  const error = new Error(
+    `No route exists for '${req.originalUrl}' with ${req.method} request`
+  );
+  error.statusCode = 404;
+  next(error);
+});
+// === End Applications API ===
+// Export pool for use in other modules
+module.exports = { pool };
