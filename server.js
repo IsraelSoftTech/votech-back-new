@@ -31,6 +31,7 @@ const casesRouter = require('./routes/cases');
 const createAttendanceRouter = require('./routes/attendance');
 const createDisciplineCasesRouter = require('./routes/discipline_cases');
 const createEventsRouter = require('./routes/events');
+const applicationsRouter = require('./routes/applications');
 // Import FTP service at the top of the file
 const ftpService = require('./ftp-service');
 const app = express();
@@ -127,6 +128,7 @@ const corsOptions = {
       'https://votechs7academygroup.com', // Production frontend
       'https://votech-latest-front.onrender.com', // Keep for backup
       'http://localhost:3000',             // local development
+      'http://localhost:3001',             // local development (frontend port)
       'http://localhost:3004'              // local development (alternate port)
     ];
     // Allow requests with no origin (like mobile apps or curl requests)
@@ -164,6 +166,7 @@ app.use('/api/cases', casesRouter);
 app.use('/api/attendance', createAttendanceRouter(pool, authenticateToken));
 app.use('/api/discipline-cases', createDisciplineCasesRouter(pool, authenticateToken));
 app.use('/api/events', createEventsRouter(pool, authenticateToken));
+app.use('/api/applications', applicationsRouter);
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err);
@@ -1629,11 +1632,19 @@ async function runMigrations() {
           classes TEXT NOT NULL, -- Comma-separated class names
           subjects TEXT NOT NULL, -- Comma-separated subject names
           contact VARCHAR(50) NOT NULL,
+          experience_years INTEGER,
+          education_level VARCHAR(100),
+          current_salary DECIMAL(10,2),
+          expected_salary DECIMAL(10,2),
+          availability TEXT,
+          additional_info TEXT,
           certificate_url VARCHAR(500),
           certificate_name VARCHAR(255),
           status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
           admin_comment TEXT,
           submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           reviewed_at TIMESTAMP,
           reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
           UNIQUE(applicant_id) -- Ensure only one application per user
@@ -1642,6 +1653,35 @@ async function runMigrations() {
       console.log('Applications table created successfully');
     } else {
       console.log('Applications table already exists');
+    }
+    
+    // Add missing columns to applications table if they don't exist
+    const missingColumns = [
+      'experience_years',
+      'education_level', 
+      'current_salary',
+      'expected_salary',
+      'availability',
+      'additional_info',
+      'created_at',
+      'updated_at'
+    ];
+    
+    for (const column of missingColumns) {
+      const columnExists = await pool.query(`
+        SELECT column_name FROM information_schema.columns 
+        WHERE table_name = 'applications' AND column_name = $1
+      `, [column]);
+      
+      if (columnExists.rows.length === 0) {
+        let columnType = 'TEXT';
+        if (column === 'experience_years') columnType = 'INTEGER';
+        if (column === 'current_salary' || column === 'expected_salary') columnType = 'DECIMAL(10,2)';
+        if (column === 'created_at' || column === 'updated_at') columnType = 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP';
+        
+        await pool.query(`ALTER TABLE applications ADD COLUMN ${column} ${columnType}`);
+        console.log(`Added column ${column} to applications table`);
+      }
     }
     console.log('Messages table file attachment columns migration completed');
     
