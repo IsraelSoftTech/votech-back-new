@@ -1,5 +1,5 @@
 /* controllers/bulkReportCards.controller.js */
-const { Op } = require("sequelize");
+const { Op, where } = require("sequelize");
 const catchAsync = require("../utils/catchAsync");
 const AppError = require("../utils/AppError");
 const models = require("../models/index.model");
@@ -25,16 +25,27 @@ const administrationFormat = {
 const round = (n, d = 1) => Number(n.toFixed(d));
 
 // Shared builder: builds report cards and computes per-term + annual totals, ranks, and class stats
-function buildReportCardsFromMarks(marks) {
+function buildReportCardsFromMarks(marks, classMaster) {
   // placeholders (keep them identical to bulk)
   const sequences = { ...sequencesFormat };
-  const administration = { ...administrationFormat };
+  const administration = { ...administrationFormat, classMaster };
 
   const map = new Map();
 
   for (const m of marks) {
     const stId = m?.student?.id;
     if (!stId) continue;
+
+    // const student = await models.students.findByPk(stId);
+
+    // let parents = [];
+
+    // if (student?.father_name) parents.push(student.father_name);
+    // if (student?.mother_name) parents.push(student.mother_name);
+
+    // administration.parents = parents.length > 0 ? parents.join(", ") : "N/A";
+
+    // administration.parents = parents.join(", ");
 
     // Create the student skeleton once
     if (!map.has(stId)) {
@@ -210,6 +221,21 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
     );
   }
 
+  const reportCardClass = await models.Class.findByPk(classId, {
+    include: [
+      {
+        model: models.users,
+        as: "classMaster",
+        attributes: ["name", "username"],
+      },
+    ],
+  });
+
+  const classMaster =
+    reportCardClass?.classMaster?.name ||
+    reportCardClass?.classMaster?.username ||
+    "";
+
   const marks = await models.marks.findAll({
     where: {
       academic_year_id: academicYearId,
@@ -273,7 +299,7 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
 
   if (!marks.length) return next(new AppError("No data found", 404));
 
-  const reportCards = buildReportCardsFromMarks(marks);
+  const reportCards = await buildReportCardsFromMarks(marks, classMaster);
 
   appResponder(
     StatusCodes.OK,
@@ -362,9 +388,24 @@ const singleReportCard = catchAsync(async (req, res, next) => {
 
   if (!marks.length) return next(new AppError("No data found", 404));
 
-  console.log(marks.map((el) => el.toJSON()));
+  // console.log(marks.map((el) => el.toJSON()));
 
-  const reportCards = buildReportCardsFromMarks(marks);
+  const reportCardClass = await models.Class.findByPk(classId, {
+    include: [
+      {
+        model: models.users,
+        as: "classMaster",
+        attributes: ["name", "username"],
+      },
+    ],
+  });
+
+  const classMaster =
+    reportCardClass?.classMaster?.name ||
+    reportCardClass?.classMaster?.username ||
+    "";
+
+  const reportCards = await buildReportCardsFromMarks(marks, classMaster);
 
   const reportCard = reportCards.find(
     (rc) => String(rc.student.id) === String(studentId)

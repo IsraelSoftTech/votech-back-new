@@ -14,7 +14,7 @@ module.exports = (sequelizeInstance = sequelize) => {
         primaryKey: true,
       },
       band_min: {
-        type: DataTypes.INTEGER,
+        type: DataTypes.DOUBLE,
         allowNull: false,
         validate: {
           min: {
@@ -27,7 +27,7 @@ module.exports = (sequelizeInstance = sequelize) => {
         },
       },
       band_max: {
-        type: DataTypes.INTEGER,
+        type: DataTypes.DOUBLE,
         allowNull: false,
         validate: {
           min: {

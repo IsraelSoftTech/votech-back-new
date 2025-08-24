@@ -218,11 +218,11 @@ const saveMarksBatch = catchAsync(async (req, res, next) => {
 });
 
 const readAllTerms = catchAsync(async (req, res) => {
-  await CRUDTerms.readAll(res, req, "", 1, 100);
+  await CRUDTerms.readAll(res, req, "", 1, 1000000000000);
 });
 
 const readAllSequences = catchAsync(async (req, res) => {
-  await CRUDSequences.readAll(res, req, "", 1, 100);
+  await CRUDSequences.readAll(res, req, "", 1, 100000000000);
 });
 
 // function transformMarks(marks) {
