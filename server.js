@@ -22,6 +22,7 @@ console.log("DATABASE_URL:", process.env.DATABASE_URL);
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
+
 // Import routes
 const lessonPlansRouter = require("./routes/lessonPlans");
 const lessonsRouter = require("./routes/lessons");
@@ -155,6 +156,7 @@ const marksRouter = require("./src/routes/mark.route");
 const studentRouter = require("./src/routes/students.route");
 const reportCardRouter = require("./src/routes/reportCard.route");
 const globalErrorController = require("./src/controllers/error.controller");
+const { protect } = require("./src/controllers/auth.controller");
 if (!fs.existsSync("uploads")) {
   fs.mkdirSync("uploads");
 }
@@ -221,6 +223,7 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use("/uploads", express.static("uploads")); // Serve uploaded files
+app.use("/public", express.static(path.join(__dirname, "public")));
 app.options("*", cors(corsOptions));
 // Use routes
 app.use("/api/lesson-plans", lessonPlansRouter);
@@ -3692,9 +3695,10 @@ app.get("/api/users/chat-list", authenticateToken, async (req, res) => {
 //   }
 // });
 
-app.post("/api/students", upload.single("photo"), async (req, res) => {
+app.post("/api/students", protect, upload.single("photo"), async (req, res) => {
   console.log("BODY:", req.body);
   console.log("FILE:", req.file);
+
   try {
     const {
       studentId,
@@ -3705,10 +3709,10 @@ app.post("/api/students", upload.single("photo"), async (req, res) => {
       pob,
       father,
       mother,
-      class: className,
-      dept: specialtyName,
+      class: classId,
+      dept: specialtyId,
       contact,
-      academicYear, // ✅ added
+      academicYear,
     } = req.body;
 
     // Validate required fields
@@ -3719,39 +3723,52 @@ app.post("/api/students", upload.single("photo"), async (req, res) => {
       !sex ||
       !dob ||
       !pob ||
-      !className ||
-      !specialtyName ||
+      !classId ||
+      !specialtyId ||
       !contact ||
-      !academicYear // ✅ validate academic year
+      !academicYear
     ) {
       return res
         .status(400)
         .json({ error: "All fields except photo are required." });
     }
 
-    // Find class_id and specialty_id
+    // Validate that IDs exist in DB
     const classResult = await pool.query(
-      "SELECT id FROM classes WHERE name = $1",
-      [className]
+      "SELECT id FROM classes WHERE id = $1",
+      [Number(classId)]
     );
-    const specialtyResult = await pool.query(
-      "SELECT id FROM specialties WHERE name = $1",
-      [specialtyName]
-    );
-    const class_id = classResult.rows[0] ? classResult.rows[0].id : null;
-    const specialty_id = specialtyResult.rows[0]
-      ? specialtyResult.rows[0].id
-      : null;
+    if (!classResult.rows[0])
+      return res
+        .status(400)
+        .json({ error: `Class ID "${classId}" not found.` });
 
-    // Handle photo upload
+    const specialtyResult = await pool.query(
+      "SELECT id FROM specialties WHERE id = $1",
+      [Number(specialtyId)]
+    );
+    if (!specialtyResult.rows[0])
+      return res
+        .status(400)
+        .json({ error: `Specialty ID "${specialtyId}" not found.` });
+
+    const ayResult = await pool.query(
+      'SELECT id FROM "academicYears" WHERE id = $1',
+      [Number(academicYear)]
+    );
+    if (!ayResult.rows[0])
+      return res
+        .status(400)
+        .json({ error: `Academic year ID "${academicYear}" not found.` });
+
+    // Handle photo upload (FTP + fallback)
     let photo_url = null;
     if (req.file) {
       try {
         const filename = `student_${Date.now()}_${req.file.originalname}`;
         photo_url = await ftpService.uploadBuffer(req.file.buffer, filename);
-        console.log("Photo uploaded to FTP:", photo_url);
       } catch (error) {
-        console.error("Failed to upload photo to FTP:", error);
+        console.error("FTP upload failed, saving locally:", error);
         const fs = require("fs");
         const path = require("path");
         const uploadsDir = path.join(__dirname, "uploads");
@@ -3760,14 +3777,16 @@ app.post("/api/students", upload.single("photo"), async (req, res) => {
         const filepath = path.join(uploadsDir, filename);
         fs.writeFileSync(filepath, req.file.buffer);
         photo_url = `/uploads/${filename}`;
-        console.log("Photo saved locally as fallback:", photo_url);
       }
     }
 
-    // Insert student into DB including academic_year_id
+    // Insert student
     const insertResult = await pool.query(
-      `INSERT INTO students (student_id, registration_date, full_name, sex, date_of_birth, place_of_birth, father_name, mother_name, class_id, specialty_id, guardian_contact, photo_url)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      `INSERT INTO students (
+        student_id, registration_date, full_name, sex, date_of_birth, place_of_birth,
+        father_name, mother_name, class_id, specialty_id, guardian_contact, photo_url, academic_year_id
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
       [
         studentId,
         regDate,
@@ -3777,10 +3796,11 @@ app.post("/api/students", upload.single("photo"), async (req, res) => {
         pob,
         father,
         mother,
-        class_id,
-        specialty_id,
+        Number(classId),
+        Number(specialtyId),
         contact,
         photo_url,
+        Number(academicYear),
       ]
     );
 
@@ -5306,4 +5326,4 @@ app.all("*", (req, res, next) => {
 });
 // === End Applications API ===
 // Export pool for use in other modules
-module.exports = { pool }
+module.exports = { pool };

@@ -44,7 +44,7 @@ async function validateAcademicBandData(data, partial = false) {
   if (!partial || "band_min" in data) {
     if (
       data.band_min === undefined ||
-      !Number.isInteger(data.band_min) ||
+      typeof data.band_min !== "number" ||
       data.band_min < 0 ||
       data.band_min > 20
     ) {
@@ -55,7 +55,7 @@ async function validateAcademicBandData(data, partial = false) {
   if (!partial || "band_max" in data) {
     if (
       data.band_max === undefined ||
-      !Number.isInteger(data.band_max) ||
+      typeof data.band_max !== "number" ||
       data.band_max < 0 ||
       data.band_max > 20
     ) {

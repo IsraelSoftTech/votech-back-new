@@ -10,5 +10,8 @@ reportCardRouter.use(restrictTo("Admin1", "Admin3"));
 
 reportCardRouter.route("/bulk").get(reportCardControllers.bulkReportCards);
 reportCardRouter.route("/single").get(reportCardControllers.singleReportCard);
+reportCardRouter
+  .route("/bulk-pdfs")
+  .get(reportCardControllers.bulkReportCardsPdf);
 
 module.exports = reportCardRouter;
