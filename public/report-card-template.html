@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Report Cards</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      /* ===============================
+         Report Card Styles
+      =============================== */
+
+      /* Container for the report card */
+      .report-card-container {
+        width: 100%;
+        min-height: 100vh;
+        background: #f5f5f5;
+        padding: 20px;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+      }
+
+      /* Main Report Card Container */
+      .report-card {
+        width: 100%;
+        max-width: 1200px;
+        background: white;
+        border: 2px solid #204080;
+        padding: 20px;
+        margin: 0 auto;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+        position: relative;
+        overflow: hidden;
+        font-family: "Arial", sans-serif;
+        line-height: 1.3;
+        font-size: 12px;
+      }
+
+      /* Document Header */
+      .document-header {
+        border-bottom: 2px solid #204080;
+        padding: 15px;
+        margin-bottom: 15px;
+        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+        border-radius: 6px;
+      }
+
+      .header-content {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+      }
+
+      .left-section,
+      .right-section {
+        flex: 1;
+        text-align: center;
+        font-size: 10px;
+        line-height: 1.4;
+      }
+
+      .center-emblem {
+        flex: 0 0 100px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      .report-card-logo {
+        height: 5rem;
+        width: 5rem;
+        object-fit: cover;
+      }
+
+      /* Header Text */
+      .republic-text {
+        font-weight: bold;
+        font-size: 11px;
+        margin-bottom: 3px;
+        text-transform: uppercase;
+        color: #204080;
+      }
+
+      .motto {
+        font-style: italic;
+        font-size: 9px;
+        margin-bottom: 3px;
+        color: #c9a96e;
+        font-weight: 600;
+      }
+
+      .ministry {
+        font-weight: bold;
+        font-size: 9px;
+        margin-bottom: 3px;
+        text-transform: uppercase;
+        color: #204080;
+      }
+
+      /* School Info */
+      .school-info {
+        text-align: center;
+        margin: 15px 0;
+        padding: 10px;
+        border-top: 1px solid #204080;
+        border-bottom: 1px solid #204080;
+        background: linear-gradient(
+          90deg,
+          #f8f9ff 0%,
+          #ffffff 50%,
+          #f8f9ff 100%
+        );
+      }
+
+      .school-name {
+        font-size: 16px;
+        font-weight: bold;
+        text-transform: uppercase;
+        color: #204080;
+        letter-spacing: 2px;
+        margin-bottom: 3px;
+      }
+
+      .school-location {
+        font-size: 10px;
+        color: #666;
+        margin-bottom: 3px;
+      }
+
+      .school-motto {
+        font-size: 9px;
+        font-style: italic;
+        font-weight: 600;
+        color: #c9a96e;
+      }
+
+      /* Document Title */
+      .document-title {
+        text-align: center;
+        margin-top: 15px;
+      }
+
+      .document-title h1 {
+        font-size: 18px;
+        font-weight: bold;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        margin-bottom: 5px;
+        color: #204080;
+      }
+
+      .term-info {
+        font-size: 12px;
+        color: #666;
+      }
+
+      /* Student Information */
+      .student-info {
+        margin-bottom: 15px;
+        padding: 10px;
+        border-radius: 4px;
+        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+        border: 1px solid #204080;
+      }
+
+      .info-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 15px 5px;
+      }
+
+      .info-table td {
+        padding: 4px 8px;
+        font-size: 11px;
+        vertical-align: middle;
+      }
+
+      .info-table .label {
+        font-weight: bold;
+        width: 120px;
+        color: #204080;
+        white-space: nowrap;
+      }
+
+      .info-table .value {
+        border-bottom: 1px solid #204080;
+        min-width: 150px;
+        font-weight: 600;
+        color: #333;
+      }
+
+      /* Subjects Section */
+      .subjects-section {
+        margin-bottom: 15px;
+        break-inside: avoid;
+      }
+
+      .section-header {
+        background: linear-gradient(135deg, #204080 0%, #3a5a9a 100%);
+        color: #fff;
+        text-align: center;
+        padding: 8px;
+        margin-bottom: 0;
+        border-radius: 4px 4px 0 0;
+      }
+
+      .section-header h3 {
+        font-size: 13px;
+        font-weight: bold;
+        text-transform: uppercase;
+        margin: 0;
+      }
+
+      .subjects-table {
+        width: 100%;
+        border-collapse: collapse;
+        border: 1px solid #204080;
+        border-radius: 0 0 4px 4px;
+        overflow: hidden;
+      }
+
+      /* Any mark or average below 10 in red */
+
+      .subjects-table th,
+      .subjects-table td {
+        border: 1px solid #204080;
+        padding: 4px 3px;
+        font-size: 9px;
+        text-align: center;
+        vertical-align: middle;
+        line-height: 1.2;
+      }
+
+      .subjects-table th {
+        background: linear-gradient(135deg, #e8eeff 0%, #f0f4ff 100%);
+        font-weight: bold;
+        text-transform: uppercase;
+        color: #204080;
+        height: 30px;
+        font-size: 8px;
+      }
+
+      .code-cell {
+        font-weight: bold;
+        color: #204080;
+        width: 40px;
+      }
+
+      .subject-cell {
+        text-align: left;
+        padding-left: 6px;
+        font-weight: normal;
+        color: #333;
+        min-width: 140px;
+        font-size: 8px;
+      }
+
+      .score-cell,
+      .avg-cell,
+      .coef-cell,
+      .total-cell {
+        font-weight: bold;
+        color: #333;
+        width: 35px;
+      }
+
+      .avg-cell,
+      .total-cell {
+        font-weight: bold;
+        color: #204080;
+        font-size: 9px;
+      }
+
+      .remark-cell {
+        width: 70px;
+      }
+
+      .remark-cell span {
+        font-size: 8px;
+        font-weight: bold;
+        display: inline-block;
+        min-width: 50px;
+        color: #333;
+      }
+
+      /* Grade Colors */
+      .remark-excellent {
+        color: #0d5f0d;
+      }
+      .remark-vgood {
+        color: #1a5f1a;
+      }
+      .remark-good {
+        color: #204080;
+      }
+      .remark-fairly-good {
+        color: #b8860b;
+      }
+      .remark-average {
+        color: #ff8c00;
+      }
+      .remark-weak {
+        color: #cc0000;
+      }
+
+      .teacher-cell {
+        text-align: left;
+        padding-left: 4px;
+        font-size: 7px;
+        color: #666;
+        min-width: 80px;
+      }
+
+      .subtotal-row {
+        background: linear-gradient(135deg, #e8eeff 0%, #f0f4ff 100%);
+        font-weight: bold;
+        border-top: 2px solid #204080;
+      }
+
+      .subtotal-label {
+        text-transform: uppercase;
+        font-size: 9px;
+        color: #204080;
+        text-align: right;
+        padding-right: 10px;
+      }
+
+      .subtotal-value {
+        font-size: 10px;
+        font-weight: bold;
+        color: #204080;
+      }
+
+      .subtotal-remark {
+        font-weight: bold;
+        color: #204080;
+      }
+
+      /* Performance Summary */
+      .performance-summary {
+        margin-bottom: 15px;
+        padding: 10px;
+        border-radius: 4px;
+        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+        border: 1px solid #204080;
+      }
+
+      .summary-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 15px 6px;
+      }
+
+      .summary-table td {
+        padding: 4px 10px;
+        font-size: 11px;
+        font-weight: bold;
+      }
+
+      .summary-label {
+        color: #204080;
+        text-transform: uppercase;
+      }
+
+      .summary-value {
+        color: #333;
+        border-bottom: 1px solid #204080;
+        min-width: 80px;
+      }
+
+      /* Bottom Section */
+      .bottom-section {
+        display: flex;
+        gap: 15px;
+        margin-bottom: 15px;
+      }
+
+      .left-column,
+      .center-column,
+      .right-column {
+        flex: 1;
+      }
+
+      .conduct-section,
+      .grading-scale,
+      .admin-section {
+        padding: 10px;
+        border-radius: 4px;
+        border: 1px solid #204080;
+        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+        height: 100%;
+      }
+
+      .conduct-section h4,
+      .grading-scale h4,
+      .admin-section h4 {
+        text-align: center;
+        font-weight: bold;
+        font-size: 11px;
+        color: #204080;
+        border-bottom: 1px solid #204080;
+        padding-bottom: 5px;
+        margin-bottom: 10px;
+      }
+
+      .conduct-table,
+      .scale-table,
+      .admin-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0 4px;
+      }
+
+      .conduct-table td,
+      .scale-table td,
+      .admin-table td {
+        padding: 3px 5px;
+        font-size: 9px;
+      }
+
+      .conduct-table td:first-child,
+      .scale-table td:first-child,
+      .admin-table td:first-child {
+        font-weight: bold;
+        color: #204080;
+      }
+
+      .conduct-table td:last-child,
+      .scale-table td:last-child,
+      .admin-table td:last-child {
+        text-align: right;
+        font-weight: bold;
+        color: #333;
+      }
+
+      /* Signature Section */
+      .signature-section {
+        display: flex;
+        gap: 15px;
+        margin-bottom: 15px;
+      }
+
+      .signature-box {
+        flex: 1;
+        padding: 15px 10px;
+        border-radius: 4px;
+        border: 1px solid #204080;
+        text-align: center;
+        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+        min-height: 80px;
+      }
+
+      .signature-title {
+        font-weight: bold;
+        text-transform: uppercase;
+        font-size: 10px;
+        margin-bottom: 10px;
+        color: #204080;
+      }
+
+      .signature-line {
+        background-color: #204080;
+        margin: 15px 0;
+        height: 1px;
+        width: 100%;
+      }
+
+      .signature-name {
+        font-weight: bold;
+        font-size: 9px;
+        color: #333;
+        margin-bottom: 3px;
+      }
+
+      .signature-date {
+        font-size: 8px;
+        font-style: italic;
+        color: #666;
+      }
+
+      .report-card::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) rotate(-15deg);
+        width: 550px;
+        height: 550px;
+        background: url("./logo.png") no-repeat center;
+        background-size: contain;
+        z-index: 10;
+        pointer-events: none;
+        opacity: 0.04;
+        /* filter: grayscale(100%); */
+      }
+
+      .section-header {
+        display: flex !important;
+        justify-content: center !important;
+      }
+
+      .footer-text {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        justify-content: center;
+        font-size: 12px;
+        color: rgb(102, 102, 102);
+        display: none;
+      }
+
+      .low-score {
+        color: #cc0000;
+        /* font-weight: 700; */
+      }
+
+      .conduct-section h4,
+      .grading-scale h4,
+      .admin-section h4 {
+        font-size: 0.8rem !important;
+      }
+
+      .signature-section {
+        /* flex-direction: column; */
+        margin-top: 2rem;
+      }
+
+      /* ===============================
+           PROFESSIONAL PRINT STYLES
+        =============================== */
+
+      @media print {
+        /* Critical: Force single page */
+        @page {
+          size: A4;
+          margin: 0.4in;
+          background: white;
+          margin: 10mm;
+        }
+
+        .footer-text {
+          display: flex;
+        }
+
+        .report-card::before {
+          content: "";
+          position: absolute;
+          top: 60%;
+          left: 50%;
+          transform: translate(-50%, -50%) rotate(-15deg);
+          width: 400px;
+          height: 400px;
+          background: url("./logo.png") no-repeat center;
+          background-size: contain;
+          z-index: 10;
+          pointer-events: none;
+          opacity: 0.08;
+          /* filter: grayscale(100%); */
+        }
+
+        * {
+          -webkit-print-color-adjust: exact !important;
+          color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+
+        html,
+        body {
+          overflow: visible !important;
+          background: #fff !important;
+          display: flex;
+          align-items: start;
+        }
+
+        body {
+          margin: 0 !important;
+          padding: 0 !important;
+          background: white !important;
+          overflow: hidden !important;
+        }
+
+        .report-card-container {
+          background: white !important;
+          padding: 0 !important;
+          min-height: auto !important;
+          height: auto !important;
+          visibility: visible !important;
+          box-shadow: none !important;
+          width: 100% !important;
+          font-size: 11px !important;
+          line-height: 1.12 !important;
+        }
+
+        .report-card-container * {
+          visibility: visible !important;
+        }
+
+        .report-card {
+          width: 100% !important;
+          max-width: 100% !important;
+          box-shadow: none !important;
+          border: 1px solid #204080 !important;
+          border: none !important;
+          padding: 8px !important;
+          margin: 0 !important;
+          overflow: visible !important;
+          font-size: 15px !important;
+          line-height: 1.1 !important;
+
+          /* Critical: Force everything to fit on one page */
+          height: auto !important;
+          max-height: none !important;
+          page-break-inside: avoid !important;
+          break-inside: avoid !important;
+        }
+
+        .remark-cell span {
+          font-size: 9px;
+        }
+
+        /* Compact header */
+        .document-header {
+          padding: 6px !important;
+          margin-bottom: 8px !important;
+          background: white !important;
+        }
+
+        .header-content {
+          margin-bottom: 8px !important;
+        }
+
+        .report-card-logo {
+          width: 90px !important;
+          height: 90px !important;
+        }
+
+        .school-info {
+          margin: 8px 0 !important;
+          padding: 6px !important;
+          background: white !important;
+        }
+
+        .school-name {
+          font-size: 21px !important;
+          margin-bottom: 2px !important;
+        }
+
+        .document-title h1 {
+          font-size: 21px !important;
+          margin-bottom: 3px !important;
+        }
+
+        .term-info {
+          font-size: 16px !important;
+        }
+
+        /* Compact student info */
+        .student-info {
+          margin-bottom: 10px !important;
+          padding: 6px !important;
+          background: white !important;
+        }
+
+        .info-table {
+          border-spacing: 8px 2px !important;
+        }
+
+        .info-table td {
+          font-size: 15px !important;
+          padding: 2px 4px !important;
+        }
+
+        /* Ultra-compact subjects tables */
+        .subjects-section {
+          margin-bottom: 8px !important;
+        }
+
+        .section-header {
+          padding: 4px !important;
+          background: #204080 !important;
+          color: white !important;
+          display: flex !important;
+          justify-content: center !important;
+        }
+
+        .section-header h3 {
+          font-size: 16px !important;
+        }
+
+        .subjects-table th,
+        .subjects-table td {
+          font-size: 13px !important;
+          padding: 1px 2px !important;
+          line-height: 1.1 !important;
+        }
+
+        .subjects-table th {
+          height: 20px !important;
+          background: #e8eeff !important;
+          color: #204080 !important;
+        }
+
+        .subject-cell {
+          font-size: 73px !important;
+          padding-left: 3px !important;
+        }
+
+        .teacher-cell {
+          font-size: 12px !important;
+          padding-left: 2px !important;
+        }
+
+        .subtotal-row {
+          background: #e8eeff !important;
+        }
+
+        /* Compact performance summary */
+        .performance-summary {
+          margin-bottom: 8px !important;
+          padding: 6px !important;
+          background: white !important;
+        }
+
+        .summary-table {
+          border-spacing: 8px 3px !important;
+        }
+
+        .summary-table td {
+          font-size: 15px !important;
+          padding: 2px 6px !important;
+        }
+
+        /* Ultra-compact bottom section */
+        .bottom-section {
+          gap: 8px !important;
+          margin-bottom: 8px !important;
+        }
+
+        .conduct-section,
+        .grading-scale,
+        .admin-section {
+          padding: 6px !important;
+          background: white !important;
+        }
+
+        .conduct-section h4,
+        .grading-scale h4,
+        .admin-section h4 {
+          font-size: 14px !important;
+          margin-bottom: 6px !important;
+          padding-bottom: 3px !important;
+        }
+
+        .conduct-table td,
+        .scale-table td,
+        .admin-table td {
+          font-size: 13px !important;
+          padding: 1px 3px !important;
+        }
+
+        .conduct-table,
+        .scale-table,
+        .admin-table {
+          border-spacing: 0 2px !important;
+        }
+
+        /* Compact signatures */
+        .signature-section {
+          gap: 8px !important;
+          margin-bottom: 0 !important;
+        }
+
+        .signature-box {
+          padding: 8px 6px !important;
+          min-height: 50px !important;
+          background: white !important;
+        }
+
+        .signature-title {
+          font-size: 14px !important;
+          margin-bottom: 6px !important;
+        }
+
+        .signature-line {
+          margin: 8px 0 !important;
+          height: 1px !important;
+          width: 100% !important;
+        }
+
+        .signature-name {
+          font-size: 11px !important;
+          margin-bottom: 2px !important;
+        }
+
+        .signature-date {
+          font-size: 12px !important;
+        }
+
+        /* Force no page breaks */
+        .document-header,
+        .student-info,
+        .subjects-section,
+        .performance-summary,
+        .bottom-section,
+        .signature-section {
+          page-break-inside: avoid !important;
+          break-inside: avoid !important;
+        }
+
+        /* Remove all gradients and backgrounds for clean print */
+        .document-header,
+        .student-info,
+        .performance-summary,
+        .conduct-section,
+        .grading-scale,
+        .admin-section,
+        .signature-box {
+          background: white !important;
+          box-shadow: none !important;
+        }
+
+        .school-info {
+          background: white !important;
+        }
+
+        /* Ensure borders print correctly */
+        .document-header,
+        .student-info,
+        .subjects-section,
+        .performance-summary,
+        .conduct-section,
+        .grading-scale,
+        .admin-section,
+        .signature-box {
+          border-color: #204080 !important;
+        }
+
+        /* Hide non-essential elements */
+        .no-print {
+          display: none !important;
+        }
+
+        .low-score {
+          color: #cc0000 !important;
+          /* font-weight: 700; */
+        }
+
+        .summary-table {
+          width: 100%;
+          border-collapse: separate;
+          border-spacing: 4px 4px;
+        }
+
+        .summary-table td {
+          padding: 4px 4px;
+          font-size: 8px;
+          font-weight: bold;
+        }
+
+        .summary-label {
+          color: #204080;
+          text-transform: uppercase;
+        }
+
+        .summary-value {
+          color: #333;
+          border-bottom: 1px solid #204080;
+          min-width: 80px;
+        }
+      }
+
+      /* Responsive design for smaller screens */
+      @media (max-width: 768px) {
+        .report-card-container {
+          padding: 10px;
+        }
+
+        .report-card {
+          padding: 15px;
+          max-width: 100%;
+        }
+
+        .header-content {
+          /* flex-direction: column; */
+          text-align: center;
+        }
+
+        .left-section,
+        .right-section,
+        .center-emblem {
+          margin-bottom: 10px;
+        }
+
+        .info-table {
+          border-spacing: 8px 4px;
+        }
+
+        .subjects-table th,
+        .subjects-table td {
+          font-size: 8px;
+          padding: 3px 2px;
+        }
+
+        .bottom-section {
+          /* flex-direction: column; */
+          gap: 10px;
+        }
+
+        .signature-section {
+          /* flex-direction: column; */
+
+          gap: 10px;
+        }
+      }
+
+      /* ========== AUTO-FIT TO ONE PAGE (A4) ========== */
+      @media print {
+        :root {
+          --page-width-mm: 210;
+          --page-height-mm: 297;
+          --page-margin-mm: 10; /* must match your @page margin */
+          --print-scale: 1; /* JS sets this before printing */
+        }
+
+        @page {
+          size: A4 portrait;
+          margin: calc(var(--page-margin-mm) * 1mm);
+        }
+
+        /* Keep the outer container sized to the printable width */
+        .report-card-container {
+          width: calc(
+            (var(--page-width-mm) - 2 * var(--page-margin-mm)) * 1mm
+          ) !important;
+          margin: 0 auto !important;
+        }
+
+        /* Scale the report to fit in height while keeping printable width */
+        #reportCard {
+          /* Pre-scale width so after transform it visually equals printable width */
+          width: calc(
+            ((var(--page-width-mm) - 2 * var(--page-margin-mm)) * 1mm) /
+              var(--print-scale)
+          ) !important;
+          transform: scale(var(--print-scale)) !important;
+          transform-origin: top center !important;
+        }
+
+        /* Tighter, consistent print type (also fixes the 73px typo) */
+        .report-card {
+          font-size: 11px !important;
+          line-height: 1.12 !important;
+        }
+        .subjects-table th,
+        .subjects-table td {
+          font-size: 10px !important;
+          line-height: 1.1 !important;
+          padding: 1px 2px !important;
+        }
+        .subject-cell {
+          font-size: 10px !important;
+          padding-left: 3px !important;
+        } /* FIXED from 73px */
+        .teacher-cell {
+          font-size: 9px !important;
+          padding-left: 2px !important;
+        }
+        .summary-table td {
+          font-size: 11px !important;
+        }
+
+        /* Avoid extra borders and backgrounds to maximize space */
+        .document-header,
+        .student-info,
+        .subjects-section,
+        .performance-summary,
+        .conduct-section,
+        .grading-scale,
+        .admin-section,
+        .signature-box {
+          background: white !important;
+          box-shadow: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="batch-wrapper">
+      {{#each reportCards}}
+      <section class="report-card">
+        <div class="document-header">
+          <div class="header-content">
+            <div class="left-section">
+              <div class="republic-text">REPUBLIC OF CAMEROON</div>
+              <div class="motto">Peace • Work • Fatherland</div>
+              <div class="ministry">
+                MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING
+              </div>
+            </div>
+            <div class="center-emblem">
+              <img src="./logo.png" alt="Logo" class="report-card-logo" />
+            </div>
+            <div class="right-section">
+              <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
+              <div class="motto">Paix • Travail • Patrie</div>
+              <div class="ministry">
+                MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE
+              </div>
+            </div>
+          </div>
+
+          <div class="school-info">
+            <div class="school-name">VOTECH (S7) ACADEMY</div>
+            <div class="school-location">Azire, Mankon - Bamenda</div>
+            <div class="school-motto">
+              Excellence • Productivity • Self Actualization
+            </div>
+          </div>
+
+          <div class="document-title">
+            <h1>ACADEMIC REPORT CARD</h1>
+            <div class="term-info">
+              {{student.term}} • {{student.academicYear}}
+            </div>
+          </div>
+        </div>
+
+        <div class="student-info">
+          <table class="info-table">
+            <tbody>
+              <tr>
+                <td class="label">Student Name:</td>
+                <td class="value">{{student.name}}</td>
+                <td class="label">Class:</td>
+                <td class="value">{{student.class}}</td>
+              </tr>
+              <tr>
+                <td class="label">Registration No:</td>
+                <td class="value">{{student.registrationNumber}}</td>
+                <td class="label">Specialty:</td>
+                <td class="value">{{student.option}}</td>
+              </tr>
+              <tr>
+                <td class="label">Date of Birth:</td>
+                <td class="value">{{student.dateOfBirth}}</td>
+                <td class="label">Academic Year:</td>
+                <td class="value">{{student.academicYear}}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- General Subjects -->
+        <div class="subjects-section">
+          <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
+          <table class="subjects-table">
+            <thead>
+              <tr>
+                <th>CODE</th>
+                <th>SUBJECT TITLE</th>
+                {{#each ../columns}}
+                <th>{{label}}</th>
+                {{/each}}
+                <th>COEF</th>
+                <th>TOTAL</th>
+                <th>REMARK</th>
+                <th>TEACHER</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{#each generalSubjects}}
+              <tr class="subject-row">
+                <td class="code-cell">{{code}}</td>
+                <td class="subject-cell">{{title}}</td>
+
+                {{#each ../../columns}} {{!-- Expect scores to contain the key
+                (precompute termAvg/yearAvg/finalAvg on server) --}} {{#with
+                (lookup ../scores key) as |val|}} {{!-- Score/Avg cell: red if
+                <10 handled via server (optional) --}}
+                <td
+                  class="{{#if (lt val 10)}}low-score{{/if}} {{#if (or (eq ../key 'term1Avg') (eq ../key 'term2Avg') (eq ../key 'term3Avg') (eq ../key 'finalAvg'))}}avg-cell{{else}}score-cell{{/if}}"
+                >
+                  {{val}}
+                </td>
+                {{/with}} {{/each}}
+
+                <td class="coef-cell">{{coef}}</td>
+                <td class="total-cell">{{total}}</td>
+                <td class="remark-cell">
+                  <span class="{{remarkClass}}">{{remark}}</span>
+                </td>
+                <td class="teacher-cell">{{teacher}}</td>
+              </tr>
+              {{/each}}
+
+              <!-- General Subtotal -->
+              <tr class="subtotal-row">
+                <td
+                  colspan="{{add (length ../columns) 3}}"
+                  class="subtotal-label"
+                >
+                  SUB TOTAL:
+                </td>
+                <td class="subtotal-value">
+                  {{subtotals.general.totalWeighted}}
+                </td>
+                <td class="subtotal-remark">
+                  <span class="{{subtotals.general.remarkClass}}"
+                    >{{subtotals.general.remark}}</span
+                  >
+                </td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Professional Subjects -->
+        <div class="subjects-section">
+          <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
+          <table class="subjects-table">
+            <thead>
+              <tr>
+                <th>CODE</th>
+                <th>SUBJECT TITLE</th>
+                {{#each ../columns}}
+                <th>{{label}}</th>
+                {{/each}}
+                <th>COEF</th>
+                <th>TOTAL</th>
+                <th>REMARK</th>
+                <th>TEACHER</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{#each professionalSubjects}}
+              <tr class="subject-row">
+                <td class="code-cell">{{code}}</td>
+                <td class="subject-cell">{{title}}</td>
+
+                {{#each ../../columns}} {{#with (lookup ../scores key) as
+                |val|}}
+                <td
+                  class="{{#if (lt val 10)}}low-score{{/if}} {{#if (or (eq ../key 'term1Avg') (eq ../key 'term2Avg') (eq ../key 'term3Avg') (eq ../key 'finalAvg'))}}avg-cell{{else}}score-cell{{/if}}"
+                >
+                  {{val}}
+                </td>
+                {{/with}} {{/each}}
+
+                <td class="coef-cell">{{coef}}</td>
+                <td class="total-cell">{{total}}</td>
+                <td class="remark-cell">
+                  <span class="{{remarkClass}}">{{remark}}</span>
+                </td>
+                <td class="teacher-cell">{{teacher}}</td>
+              </tr>
+              {{/each}}
+
+              <!-- Professional Subtotal -->
+              <tr class="subtotal-row">
+                <td
+                  colspan="{{add (length ../columns) 3}}"
+                  class="subtotal-label"
+                >
+                  SUB TOTAL:
+                </td>
+                <td class="subtotal-value">
+                  {{subtotals.professional.totalWeighted}}
+                </td>
+                <td class="subtotal-remark">
+                  <span class="{{subtotals.professional.remarkClass}}"
+                    >{{subtotals.professional.remark}}</span
+                  >
+                </td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Performance Summary -->
+        <div class="performance-summary">
+          <table class="summary-table">
+            <tbody>
+              <tr>
+                <td class="summary-label">GRAND TOTAL:</td>
+                <td class="summary-value">{{termTotals.total}}</td>
+                <td class="summary-label">STUDENT AVERAGE:</td>
+                <td class="summary-value">{{termTotals.average}}/20</td>
+              </tr>
+              <tr>
+                <td class="summary-label">CLASS AVERAGE:</td>
+                <td class="summary-value">
+                  {{classStatistics.classAverage}}/20
+                </td>
+                <td class="summary-label">CLASS RANK:</td>
+                <td class="summary-value">
+                  {{termTotals.rank}}° of {{termTotals.outOf}}
+                </td>
+              </tr>
+              <tr>
+                <td class="summary-label">CUMULATIVE AVERAGE:</td>
+                <td class="summary-value">{{cumulativeAverage}}/20</td>
+                <td></td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Bottom Section -->
+        <div class="bottom-section">
+          <div class="left-column">
+            <div class="conduct-section">
+              <h4>CONDUCT & ATTENDANCE</h4>
+              <table class="conduct-table">
+                <tbody>
+                  <tr>
+                    <td>Days Present:</td>
+                    <td>
+                      <!-- {{conduct.attendanceDays}}/{{conduct.totalDays}} -->
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Times Late:</td>
+                    <td>
+                      <!-- {{conduct.timesLate}} -->
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Disciplinary Actions:</td>
+                    <td>
+                      <!-- {{conduct.disciplinaryActions}} -->
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="center-column">
+            <div class="grading-scale">
+              <h4>GRADING SCALE</h4>
+              <table class="scale-table">
+                <tbody>
+                  {{#each gradingScale}}
+                  <tr>
+                    <td>{{band_min}}-{{band_max}}:</td>
+                    <td><span class="{{remarkClass}}">{{comment}}</span></td>
+                  </tr>
+                  {{/each}}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="right-column">
+            <div class="admin-section">
+              <h4>ADMINISTRATION</h4>
+              <table class="admin-table">
+                <tbody>
+                  <tr>
+                    <td>Class Master:</td>
+                    <td>{{uppercase administration.classMaster}}</td>
+                  </tr>
+                  <tr>
+                    <td>Decision:</td>
+                    <td>
+                      <span class="remark-good">
+                        <!-- {{administration.decision}} -->
+                      </span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Next Term:</td>
+                    <td>
+                      <!-- {{administration.nextTermStarts}} -->
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Signatures -->
+        <div class="signature-section">
+          <div class="signature-box">
+            <div class="signature-title">CLASS MASTER</div>
+            <div class="signature-line"></div>
+            <div class="signature-name">
+              {{uppercase administration.classMaster}}
+            </div>
+            <div class="signature-date">Date & Signature</div>
+          </div>
+          <div class="signature-box">
+            <div class="signature-title">PRINCIPAL</div>
+            <div class="signature-line"></div>
+            <div class="signature-name">
+              {{uppercase administration.principal}}
+            </div>
+            <div class="signature-date">Date, Signature & Seal</div>
+          </div>
+          <div class="signature-box">
+            <div class="signature-title">PARENT/GUARDIAN</div>
+            <div class="signature-line"></div>
+            <div class="signature-name">
+              {{uppercase administration.parents}}
+            </div>
+            <div class="signature-date">Date & Signature</div>
+          </div>
+        </div>
+
+        <span class="footer-text"
+          >© {{year}} Izzy Tech Team – Official Document | Votech (S7)
+          Academy</span
+        >
+      </section>
+      {{/each}}
+    </div>
+  </body>
+</html>

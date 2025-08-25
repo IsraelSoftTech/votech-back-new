@@ -22,6 +22,7 @@ console.log("DATABASE_URL:", process.env.DATABASE_URL);
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
+
 // Import routes
 const lessonPlansRouter = require("./routes/lessonPlans");
 const lessonsRouter = require("./routes/lessons");
@@ -222,6 +223,7 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use("/uploads", express.static("uploads")); // Serve uploaded files
+app.use("/public", express.static(path.join(__dirname, "public")));
 app.options("*", cors(corsOptions));
 // Use routes
 app.use("/api/lesson-plans", lessonPlansRouter);
