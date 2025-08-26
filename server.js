@@ -3349,6 +3349,108 @@ app.get("/api/monitor/user-sessions", authenticateToken, async (req, res) => {
   }
 });
 
+// Clear all monitoring data endpoint
+app.delete("/api/monitor/clear-all", authenticateToken, async (req, res) => {
+  if (req.user.role !== "Admin3")
+    return res.status(403).json({ error: "Forbidden" });
+  try {
+    console.log("Clearing all monitoring data...");
+    
+    // First, check if tables exist
+    const activitiesTableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'user_activities'
+      );
+    `);
+    
+    const sessionsTableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'user_sessions'
+      );
+    `);
+    
+    console.log('user_activities table exists:', activitiesTableExists.rows[0].exists);
+    console.log('user_sessions table exists:', sessionsTableExists.rows[0].exists);
+    
+    // Clear user activities if table exists
+    if (activitiesTableExists.rows[0].exists) {
+      await pool.query('DELETE FROM user_activities');
+      console.log('User activities cleared');
+    } else {
+      console.log('user_activities table does not exist, skipping');
+    }
+    
+    // Clear user sessions if table exists
+    if (sessionsTableExists.rows[0].exists) {
+      await pool.query('DELETE FROM user_sessions');
+      console.log('User sessions cleared');
+    } else {
+      console.log('user_sessions table does not exist, skipping');
+    }
+    
+    // Reset user status to 'Logged Out' for all users (if columns exist)
+    try {
+      await pool.query('UPDATE users SET last_login = NULL, last_ip = NULL');
+      console.log('User statuses reset');
+    } catch (updateError) {
+      console.log('Could not update user statuses (columns may not exist):', updateError.message);
+      // This is not critical, continue with success response
+    }
+    
+    res.json({ message: 'All monitoring data cleared successfully' });
+  } catch (error) {
+    console.error('Error clearing monitoring data:', error);
+    res.status(500).json({ error: 'Failed to clear monitoring data', details: error.message });
+  }
+});
+
+// Database health check endpoint
+app.get("/api/monitor/health", async (req, res) => {
+  try {
+    // Test database connection
+    const result = await pool.query('SELECT NOW() as current_time');
+    console.log('Database connection test successful:', result.rows[0]);
+    
+    // Check if monitoring tables exist
+    const activitiesTableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'user_activities'
+      );
+    `);
+    
+    const sessionsTableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'user_sessions'
+      );
+    `);
+    
+    res.json({
+      status: 'healthy',
+      database: 'connected',
+      current_time: result.rows[0].current_time,
+      tables: {
+        user_activities: activitiesTableExists.rows[0].exists,
+        user_sessions: sessionsTableExists.rows[0].exists
+      }
+    });
+  } catch (error) {
+    console.error('Database health check failed:', error);
+    res.status(500).json({
+      status: 'unhealthy',
+      database: 'disconnected',
+      error: error.message
+    });
+  }
+});
+
 // Helper function to log user activity
 const logUserActivity = async (
   userId,
@@ -5278,42 +5380,7 @@ app.post("/api/calculate-depreciation", authenticateToken, async (req, res) => {
     res.status(500).json({ error: "Failed to update application status" });
   }
 });
-// Delete application
-app.delete("/api/applications/:id", authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const authUser = req.user;
-    // Get the application
-    const appResult = await pool.query(
-      `
-      SELECT * FROM applications WHERE id = $1
-    `,
-      [id]
-    );
-    if (appResult.rows.length === 0) {
-      return res.status(404).json({ error: "Application not found" });
-    }
-    const application = appResult.rows[0];
-    // Check permissions
-    const canDelete =
-      authUser.role === "Admin1" ||
-      authUser.role === "Admin4" ||
-      (application.applicant_id === authUser.id &&
-        application.status === "pending");
-    if (!canDelete) {
-      return res
-        .status(403)
-        .json({ error: "You cannot delete this application" });
-    }
-    await pool.query("DELETE FROM applications WHERE id = $1", [id]);
-    res.json({ message: "Application deleted successfully" });
-  } catch (error) {
-    console.error("Error deleting application:", error);
-    res.status(500).json({ error: "Failed to delete application" });
-    console.error("Error calculating depreciation:", error);
-    res.status(500).json({ error: "Failed to calculate depreciation" });
-  }
-});
+// Applications endpoints are now handled by the applications router
 
 app.use(globalErrorController);
 

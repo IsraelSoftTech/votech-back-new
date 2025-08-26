@@ -375,5 +375,55 @@ router.get('/monitor/user-sessions', authenticateToken, requireAdmin, async (req
   }
 });
 
+// Get user assigned data
+router.get('/assigned-data/:userId', authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    // Get user's assigned classes, subjects, students, etc.
+    const assignedData = {
+      classes: [],
+      subjects: [],
+      students: [],
+      applications: []
+    };
+    
+    // Get assigned classes
+    const classesResult = await pool.query(`
+      SELECT c.* FROM classes c 
+      WHERE c.teacher_id = $1
+    `, [userId]);
+    assignedData.classes = classesResult.rows;
+    
+    // Get assigned subjects
+    const subjectsResult = await pool.query(`
+      SELECT s.* FROM subjects s 
+      JOIN teacher_subjects ts ON s.id = ts.subject_id 
+      WHERE ts.teacher_id = $1
+    `, [userId]);
+    assignedData.subjects = subjectsResult.rows;
+    
+    // Get assigned students (for class teachers)
+    const studentsResult = await pool.query(`
+      SELECT s.* FROM students s 
+      JOIN classes c ON s.class_id = c.id 
+      WHERE c.teacher_id = $1
+    `, [userId]);
+    assignedData.students = studentsResult.rows;
+    
+    // Get assigned applications
+    const applicationsResult = await pool.query(`
+      SELECT a.* FROM applications a 
+      WHERE a.assigned_to = $1
+    `, [userId]);
+    assignedData.applications = applicationsResult.rows;
+    
+    res.json(assignedData);
+  } catch (error) {
+    console.error('Error fetching user assigned data:', error);
+    res.status(500).json({ error: 'Failed to fetch user assigned data' });
+  }
+});
+
 module.exports = router;
 

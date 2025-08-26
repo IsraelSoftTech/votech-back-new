@@ -40,24 +40,53 @@ function authenticateToken(req, res, next) {
   }
 }
 
-// Get all applications
-router.get('/', async (req, res) => {
+// Get all applications with role-based access control
+router.get('/', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT 
-        a.*,
-        u.name as user_name,
-        u.email as user_email,
-        u.contact as user_contact
-      FROM applications a
-      LEFT JOIN users u ON a.applicant_id = u.id
-      ORDER BY a.submitted_at DESC
-    `);
+    const authUser = req.user;
+    console.log('Fetching applications for user:', authUser.username, 'Role:', authUser.role);
+    
+    let result;
+    
+    // Admin4 can see all applications
+    if (authUser.role === 'Admin4') {
+      console.log('Admin4 user - fetching all applications');
+      result = await pool.query(`
+        SELECT 
+          a.*,
+          u.name as user_name,
+          u.email as user_email,
+          u.contact as user_contact,
+          u.username as applicant_username,
+          u.role as applicant_role
+        FROM applications a
+        LEFT JOIN users u ON a.applicant_id = u.id
+        ORDER BY a.submitted_at DESC
+      `);
+    } else {
+      // Other users can only see their own applications
+      console.log('Regular user - fetching only own applications');
+      result = await pool.query(`
+        SELECT 
+          a.*,
+          u.name as user_name,
+          u.email as user_email,
+          u.contact as user_contact,
+          u.username as applicant_username,
+          u.role as applicant_role
+        FROM applications a
+        LEFT JOIN users u ON a.applicant_id = u.id
+        WHERE a.applicant_id = $1
+        ORDER BY a.submitted_at DESC
+      `, [authUser.id]);
+    }
     
     res.json({
       success: true,
       data: result.rows,
-      count: result.rows.length
+      count: result.rows.length,
+      userRole: authUser.role,
+      canViewAll: authUser.role === 'Admin4'
     });
   } catch (error) {
     console.error('Error fetching applications:', error);
@@ -69,32 +98,48 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Get application by ID
-router.get('/:id', async (req, res) => {
+// Get application by ID with access control
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    const authUser = req.user;
     
-    const result = await pool.query(`
+    // First get the application to check ownership
+    const appResult = await pool.query(`
       SELECT 
         a.*,
         u.name as user_name,
         u.email as user_email,
-        u.contact as user_contact
+        u.contact as user_contact,
+        u.username as applicant_username,
+        u.role as applicant_role
       FROM applications a
       LEFT JOIN users u ON a.applicant_id = u.id
       WHERE a.id = $1
     `, [id]);
     
-    if (result.rows.length === 0) {
+    if (appResult.rows.length === 0) {
       return res.status(404).json({ 
         success: false, 
         error: 'Application not found' 
       });
     }
     
+    const application = appResult.rows[0];
+    
+    // Check access: Admin4 can see all, others can only see their own
+    if (authUser.role !== 'Admin4' && application.applicant_id !== authUser.id) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Access denied. You can only view your own applications.' 
+      });
+    }
+    
     res.json({
       success: true,
-      data: result.rows[0]
+      data: application,
+      canEdit: authUser.role === 'Admin4' || (application.applicant_id === authUser.id && application.status === 'pending'),
+      canDelete: authUser.role === 'Admin4' || (application.applicant_id === authUser.id && application.status === 'pending')
     });
   } catch (error) {
     console.error('Error fetching application:', error);
@@ -106,17 +151,28 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Get applications by user ID
-router.get('/user/:userId', async (req, res) => {
+// Get applications by user ID with access control
+router.get('/user/:userId', authenticateToken, async (req, res) => {
   try {
     const { userId } = req.params;
+    const authUser = req.user;
+    
+    // Check access: Admin4 can see any user's applications, others can only see their own
+    if (authUser.role !== 'Admin4' && authUser.id !== parseInt(userId)) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Access denied. You can only view your own applications.' 
+      });
+    }
     
     const result = await pool.query(`
       SELECT 
         a.*,
         u.name as user_name,
         u.email as user_email,
-        u.contact as user_contact
+        u.contact as user_contact,
+        u.username as applicant_username,
+        u.role as applicant_role
       FROM applications a
       LEFT JOIN users u ON a.applicant_id = u.id
       WHERE a.applicant_id = $1
@@ -141,6 +197,7 @@ router.get('/user/:userId', async (req, res) => {
 // Create new application
 router.post('/', authenticateToken, async (req, res) => {
   try {
+    const authUser = req.user;
     const {
       applicant_id,
       applicant_name,
@@ -158,6 +215,23 @@ router.post('/', authenticateToken, async (req, res) => {
       status = 'pending'
     } = req.body;
     
+    // Check if user already has an application (only for non-Admin4 users)
+    if (authUser.role !== 'Admin4') {
+      const existingApp = await pool.query(`
+        SELECT id FROM applications WHERE applicant_id = $1
+      `, [authUser.id]);
+      
+      if (existingApp.rows.length > 0) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'You have already submitted an application. You cannot submit multiple applications.' 
+        });
+      }
+    }
+    
+    // Use authenticated user's ID if not provided or if user is not Admin4
+    const finalApplicantId = authUser.role === 'Admin4' ? applicant_id : authUser.id;
+    
     const result = await pool.query(`
       INSERT INTO applications (
         applicant_id, applicant_name, contact, classes, subjects,
@@ -167,7 +241,7 @@ router.post('/', authenticateToken, async (req, res) => {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
       RETURNING *
     `, [
-      applicant_id, applicant_name, contact, classes, subjects,
+      finalApplicantId, applicant_name, contact, classes, subjects,
       experience_years, education_level, current_salary, expected_salary,
       availability, additional_info, certificate_url, certificate_name, status
     ]);
@@ -187,11 +261,20 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Update application status
+// Update application status (Admin4 only)
 router.patch('/:id/status', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
+    const authUser = req.user;
+    
+    // Only Admin4 can update application status
+    if (authUser.role !== 'Admin4') {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Access denied. Only Admin4 can update application status.' 
+      });
+    }
     
     if (!status) {
       return res.status(400).json({ 
@@ -229,10 +312,11 @@ router.patch('/:id/status', authenticateToken, async (req, res) => {
   }
 });
 
-// Update application
+// Update application with access control
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    const authUser = req.user;
     const {
       applicant_name,
       contact,
@@ -248,6 +332,31 @@ router.put('/:id', authenticateToken, async (req, res) => {
       certificate_name,
       status
     } = req.body;
+    
+    // First get the application to check ownership and permissions
+    const appResult = await pool.query(`
+      SELECT * FROM applications WHERE id = $1
+    `, [id]);
+    
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Application not found' 
+      });
+    }
+    
+    const application = appResult.rows[0];
+    
+    // Check permissions: Only Admin4 or the owner (while pending) can edit
+    const canEdit = authUser.role === 'Admin4' ||
+                   (application.applicant_id === authUser.id && application.status === 'pending');
+    
+    if (!canEdit) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'You cannot edit this application' 
+      });
+    }
     
     const result = await pool.query(`
       UPDATE applications 
@@ -296,10 +405,36 @@ router.put('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Delete application
+// Delete application with access control
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    const authUser = req.user;
+    
+    // First get the application to check ownership and permissions
+    const appResult = await pool.query(`
+      SELECT * FROM applications WHERE id = $1
+    `, [id]);
+    
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Application not found' 
+      });
+    }
+    
+    const application = appResult.rows[0];
+    
+    // Check permissions: Admin4 can delete any, others can only delete their own (if pending)
+    const canDelete = authUser.role === 'Admin4' ||
+                     (application.applicant_id === authUser.id && application.status === 'pending');
+    
+    if (!canDelete) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'You cannot delete this application' 
+      });
+    }
     
     const result = await pool.query(`
       DELETE FROM applications 
