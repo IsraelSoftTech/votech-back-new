@@ -6,7 +6,7 @@ const { protect, restrictTo } = require("../controllers/auth.controller");
 const classSubjectRouter = express.Router();
 
 classSubjectRouter.use(protect);
-classSubjectRouter.use(restrictTo("Admin1", "Admin3"));
+// classSubjectRouter.use(restrictTo("Admin1", "Admin3"));
 classSubjectRouter
   .route("/")
   .post(classSubjectControllers.createClassSubject)
@@ -15,6 +15,10 @@ classSubjectRouter
 classSubjectRouter
   .route("/save")
   .post(classSubjectControllers.saveClassSubjects);
+
+classSubjectRouter
+  .route("/unassign")
+  .post(classSubjectControllers.unassignSubject);
 
 classSubjectRouter
   .route("/:id")

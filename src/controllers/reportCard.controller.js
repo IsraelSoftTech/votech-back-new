@@ -6,6 +6,7 @@ const models = require("../models/index.model");
 const appResponder = require("../utils/appResponder");
 const { StatusCodes } = require("http-status-codes");
 const puppeteer = require("puppeteer");
+const fs = require("fs");
 
 const sequencesFormat = {
   seq1: { name: "Sequence 1", weight: 1 },
@@ -1960,8 +1961,32 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
   const html = buildHTML(reportCards, { defaultLogoUrl }, grading);
 
   // Render HTML to PDF via Puppeteer
+  // const browser = await puppeteer.launch({
+  //   args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  // });
+
+  function findChromium() {
+    const candidates = [
+      "/usr/bin/chromium-browser",
+      "/usr/bin/chromium",
+      "/usr/bin/google-chrome",
+      "/usr/bin/google-chrome-stable",
+    ];
+    return candidates.find(fs.existsSync);
+  }
+
+  const executablePath = findChromium();
+
   const browser = await puppeteer.launch({
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    executablePath,
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-software-rasterizer",
+    ],
   });
 
   try {

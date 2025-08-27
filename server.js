@@ -157,6 +157,8 @@ const studentRouter = require("./src/routes/students.route");
 const reportCardRouter = require("./src/routes/reportCard.route");
 const globalErrorController = require("./src/controllers/error.controller");
 const { protect } = require("./src/controllers/auth.controller");
+const contentRouter = require("./src/routes/content.route");
+const { StatusCodes } = require("http-status-codes");
 if (!fs.existsSync("uploads")) {
   fs.mkdirSync("uploads");
 }
@@ -244,6 +246,7 @@ app.use("/api/v1/academic-bands", academicBandRouter);
 app.use("/api/v1/marks", marksRouter);
 app.use("/api/v1/students", studentRouter);
 app.use("/api/v1/report-cards", reportCardRouter);
+app.use("/api/v1/content", contentRouter);
 //------------------------------------------------------------------//
 
 app.use("/api/cases", casesRouter);
@@ -1500,11 +1503,11 @@ app.get("/api/student/:id/fees", authenticateToken, async (req, res) => {
 app.post("/api/fees", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const { student_id, class_id, fee_type, amount, paid_at } = req.body;
-  
+
   // Debug logging
   console.log("[FEE DEBUG] Received request body:", req.body);
   console.log("[FEE DEBUG] fee_type:", fee_type, "type:", typeof fee_type);
-  
+
   try {
     // Validate
     const numericAmount = parseFloat(amount);
@@ -1542,19 +1545,21 @@ app.post("/api/fees", authenticateToken, async (req, res) => {
       .trim()
       .toLowerCase();
     const feeKey = keyMap[ft];
-    
+
     // Debug logging
     console.log("[FEE DEBUG] fee_type after conversion:", ft);
     console.log("[FEE DEBUG] feeKey found:", feeKey);
     console.log("[FEE DEBUG] Available keys:", Object.keys(keyMap));
-    
+
     // If fee type not found, return error
     if (!feeKey) {
-      return res.status(400).json({ 
-        error: `Invalid fee type: ${fee_type}. Valid types are: ${Object.keys(keyMap).join(', ')}` 
+      return res.status(400).json({
+        error: `Invalid fee type: ${fee_type}. Valid types are: ${Object.keys(
+          keyMap
+        ).join(", ")}`,
       });
     }
-    
+
     const expected = parseFloat(String(srow[feeKey] || "0").replace(/,/g, ""));
     const remaining = Math.max(0, expected - alreadyPaid);
     if (numericAmount > remaining) {
@@ -1694,7 +1699,7 @@ app.get("/api/fees/class/:classId", authenticateToken, async (req, res) => {
       const paidTotal =
         paidReg + paidBus + paidIntern + paidRemedial + paidTuition + paidPTA;
       const balance = Math.max(0, total - paidTotal);
-      
+
       // Calculate status based on payment
       let status = "Paid";
       if (balance > 0) {
@@ -1706,7 +1711,7 @@ app.get("/api/fees/class/:classId", authenticateToken, async (req, res) => {
           status = "Partially Paid";
         }
       }
-      
+
       return {
         name: s.full_name,
         Registration: paidReg,
@@ -1733,11 +1738,13 @@ app.delete("/api/fees/payments/:id", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const userRole = req.user.role;
   const paymentId = req.params.id;
-  
+
   try {
     // Check if payment exists and user has permission
     let result;
-    const isAdminLike = (userRole === "admin" || ["Admin1","Admin2","Admin3","Admin4"].includes(userRole));
+    const isAdminLike =
+      userRole === "admin" ||
+      ["Admin1", "Admin2", "Admin3", "Admin4"].includes(userRole);
     if (isAdminLike) {
       result = await pool.query(
         "SELECT f.id FROM fees f JOIN students s ON f.student_id = s.id WHERE f.id = $1",
@@ -1749,117 +1756,141 @@ app.delete("/api/fees/payments/:id", authenticateToken, async (req, res) => {
         [paymentId, userId]
       );
     }
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Payment record not found" });
     }
-    
+
     // Delete the payment record
     await pool.query("DELETE FROM fees WHERE id = $1", [paymentId]);
-    
+
     res.json({ message: "Payment record deleted successfully" });
   } catch (error) {
     console.error("Error deleting payment record:", error);
-    res.status(500).json({ error: "Error deleting payment record", details: error.message });
+    res
+      .status(500)
+      .json({ error: "Error deleting payment record", details: error.message });
   }
 });
 
 // Clear all fees for a specific student
-app.delete("/api/fees/student/:studentId", authenticateToken, async (req, res) => {
-  const userId = req.user.id;
-  const userRole = req.user.role;
-  const studentId = parseInt(req.params.studentId);
-  
-  console.log("=== CLEAR FEES DEBUG ===");
-  console.log("Student ID:", studentId, "Type:", typeof studentId);
-  console.log("User ID:", userId, "Role:", userRole);
-  console.log("=========================");
-  
-  // Validate student ID
-  if (isNaN(studentId)) {
-    return res.status(400).json({ error: "Invalid student ID" });
-  }
-  
-  try {
-    // Check if student exists and user has permission
-    let result;
-    const isAdminLike = (userRole === "admin" || ["Admin1","Admin2","Admin3","Admin4"].includes(userRole));
-    
-    console.log("Is Admin Like:", isAdminLike);
-    
-    if (isAdminLike) {
-      result = await pool.query(
-        "SELECT s.id, s.full_name FROM students s WHERE s.id = $1",
+app.delete(
+  "/api/fees/student/:studentId",
+  authenticateToken,
+  async (req, res) => {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const studentId = parseInt(req.params.studentId);
+
+    console.log("=== CLEAR FEES DEBUG ===");
+    console.log("Student ID:", studentId, "Type:", typeof studentId);
+    console.log("User ID:", userId, "Role:", userRole);
+    console.log("=========================");
+
+    // Validate student ID
+    if (isNaN(studentId)) {
+      return res.status(400).json({ error: "Invalid student ID" });
+    }
+
+    try {
+      // Check if student exists and user has permission
+      let result;
+      const isAdminLike =
+        userRole === "admin" ||
+        ["Admin1", "Admin2", "Admin3", "Admin4"].includes(userRole);
+
+      console.log("Is Admin Like:", isAdminLike);
+
+      if (isAdminLike) {
+        result = await pool.query(
+          "SELECT s.id, s.full_name FROM students s WHERE s.id = $1",
+          [studentId]
+        );
+      } else {
+        result = await pool.query(
+          "SELECT s.id, s.full_name FROM students s WHERE s.id = $1 AND s.user_id = $2",
+          [studentId, userId]
+        );
+      }
+
+      console.log("Student query result:", result.rows);
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: "Student not found" });
+      }
+
+      const studentName = result.rows[0].full_name;
+      console.log("Student found:", studentName);
+
+      // Delete all fee records for this student
+      const deleteResult = await pool.query(
+        "DELETE FROM fees WHERE student_id = $1",
         [studentId]
       );
-    } else {
-      result = await pool.query(
-        "SELECT s.id, s.full_name FROM students s WHERE s.id = $1 AND s.user_id = $2",
-        [studentId, userId]
-      );
-    }
-    
-    console.log("Student query result:", result.rows);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: "Student not found" });
-    }
-    
-    const studentName = result.rows[0].full_name;
-    console.log("Student found:", studentName);
-    
-    // Delete all fee records for this student
-    const deleteResult = await pool.query(
-      "DELETE FROM fees WHERE student_id = $1",
-      [studentId]
-    );
-    
-    console.log("Delete result:", deleteResult);
-    
-    const deletedCount = deleteResult.rowCount;
-    console.log("Deleted count:", deletedCount);
-    
-    // Log activity (with error handling)
-    try {
-      const ipAddress = req.ip || req.connection.remoteAddress || req.headers["x-forwarded-for"] || "unknown";
-      const userAgent = req.headers["user-agent"] || "unknown";
-      await logUserActivity(
-        req.user.id,
-        "delete",
-        `Cleared ${deletedCount} fee records for student: ${studentName}`,
-        "fees",
-        studentId,
+
+      console.log("Delete result:", deleteResult);
+
+      const deletedCount = deleteResult.rowCount;
+      console.log("Deleted count:", deletedCount);
+
+      // Log activity (with error handling)
+      try {
+        const ipAddress =
+          req.ip ||
+          req.connection.remoteAddress ||
+          req.headers["x-forwarded-for"] ||
+          "unknown";
+        const userAgent = req.headers["user-agent"] || "unknown";
+        await logUserActivity(
+          req.user.id,
+          "delete",
+          `Cleared ${deletedCount} fee records for student: ${studentName}`,
+          "fees",
+          studentId,
+          studentName,
+          ipAddress,
+          userAgent
+        );
+      } catch (logError) {
+        console.error("Error logging activity (non-critical):", logError);
+        // Continue execution even if logging fails
+      }
+
+      res.json({
+        message: `Successfully cleared ${deletedCount} fee records for student: ${studentName}`,
+        deletedCount,
         studentName,
-        ipAddress,
-        userAgent
-      );
-    } catch (logError) {
-      console.error("Error logging activity (non-critical):", logError);
-      // Continue execution even if logging fails
+      });
+    } catch (error) {
+      console.error("Error clearing student fees:", error);
+      res
+        .status(500)
+        .json({ error: "Error clearing student fees", details: error.message });
     }
-    
-    res.json({ 
-      message: `Successfully cleared ${deletedCount} fee records for student: ${studentName}`,
-      deletedCount,
-      studentName
-    });
-  } catch (error) {
-    console.error("Error clearing student fees:", error);
-    res.status(500).json({ error: "Error clearing student fees", details: error.message });
   }
-});
+);
 
 // Get individual payment details for a specific student
-app.get("/api/fees/payments/student/:studentId", authenticateToken, async (req, res) => {
-  const userId = req.user.id;
-  const userRole = req.user.role;
-  const studentId = req.params.studentId;
-  
-  try {
-    let result;
-    if (userRole === "admin" || userRole === "Admin3" || userRole === "Admin2" || userRole === "Admin1" || userRole === "Admin4") {
-      // Admins can view all payment details
-      result = await pool.query(`
+app.get(
+  "/api/fees/payments/student/:studentId",
+  authenticateToken,
+  async (req, res) => {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const studentId = req.params.studentId;
+
+    try {
+      let result;
+      if (
+        userRole === "admin" ||
+        userRole === "Admin3" ||
+        userRole === "Admin2" ||
+        userRole === "Admin1" ||
+        userRole === "Admin4"
+      ) {
+        // Admins can view all payment details
+        result = await pool.query(
+          `
         SELECT 
           f.id,
           f.student_id,
@@ -1875,10 +1906,13 @@ app.get("/api/fees/payments/student/:studentId", authenticateToken, async (req, 
         JOIN classes c ON f.class_id = c.id
         WHERE f.student_id = $1
         ORDER BY f.paid_at DESC
-      `, [studentId]);
-    } else {
-      // Regular users can only view their own students' payment details
-      result = await pool.query(`
+      `,
+          [studentId]
+        );
+      } else {
+        // Regular users can only view their own students' payment details
+        result = await pool.query(
+          `
         SELECT 
           f.id,
           f.student_id,
@@ -1894,14 +1928,20 @@ app.get("/api/fees/payments/student/:studentId", authenticateToken, async (req, 
         JOIN classes c ON f.class_id = c.id
         WHERE f.student_id = $1 AND s.user_id = $2
         ORDER BY f.paid_at DESC
-      `, [studentId, userId]);
+      `,
+          [studentId, userId]
+        );
+      }
+      res.json(result.rows);
+    } catch (error) {
+      console.error("Error fetching student payment details:", error);
+      res.status(500).json({
+        error: "Error fetching student payment details",
+        details: error.message,
+      });
     }
-    res.json(result.rows);
-  } catch (error) {
-    console.error("Error fetching student payment details:", error);
-    res.status(500).json({ error: "Error fetching student payment details", details: error.message });
   }
-});
+);
 
 function verifyDatabaseStructure() {
   return new Promise((resolve, reject) => {
@@ -3831,54 +3871,63 @@ app.post("/api/students", protect, upload.single("photo"), async (req, res) => {
       !academicYear
     ) {
       return res
-        .status(400)
+        .status(StatusCodes.BAD_REQUEST)
         .json({ error: "All fields except photo are required." });
     }
 
-    // Validate that IDs exist in DB
+    // Validate IDs
     const classResult = await pool.query(
       "SELECT id FROM classes WHERE id = $1",
       [Number(classId)]
     );
-    if (!classResult.rows[0])
+    if (!classResult.rows[0]) {
       return res
-        .status(400)
+        .status(StatusCodes.BAD_REQUEST)
         .json({ error: `Class ID "${classId}" not found.` });
+    }
 
     const specialtyResult = await pool.query(
       "SELECT id FROM specialties WHERE id = $1",
       [Number(specialtyId)]
     );
-    if (!specialtyResult.rows[0])
+    if (!specialtyResult.rows[0]) {
       return res
-        .status(400)
+        .status(StatusCodes.BAD_REQUEST)
         .json({ error: `Specialty ID "${specialtyId}" not found.` });
+    }
 
     const ayResult = await pool.query(
       'SELECT id FROM "academicYears" WHERE id = $1',
       [Number(academicYear)]
     );
-    if (!ayResult.rows[0])
+    if (!ayResult.rows[0]) {
       return res
-        .status(400)
+        .status(StatusCodes.BAD_REQUEST)
         .json({ error: `Academic year ID "${academicYear}" not found.` });
+    }
 
-    // Handle photo upload (FTP + fallback)
+    // Handle photo upload (direct FTP with fallback)
     let photo_url = null;
     if (req.file) {
+      const filename = `student_${Date.now()}_${req.file.originalname}`;
       try {
-        const filename = `student_${Date.now()}_${req.file.originalname}`;
+        // Upload directly to FTP
         photo_url = await ftpService.uploadBuffer(req.file.buffer, filename);
+        console.log("✅ Photo uploaded to FTP:", photo_url);
       } catch (error) {
-        console.error("FTP upload failed, saving locally:", error);
+        console.error("❌ Failed to upload photo to FTP:", error.message);
+
+        // fallback to local storage
         const fs = require("fs");
         const path = require("path");
         const uploadsDir = path.join(__dirname, "uploads");
         if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-        const filename = `student_${Date.now()}_${req.file.originalname}`;
+
         const filepath = path.join(uploadsDir, filename);
         fs.writeFileSync(filepath, req.file.buffer);
+
         photo_url = `/uploads/${filename}`;
+        console.log("📂 Photo saved locally as fallback:", photo_url);
       }
     }
 
@@ -3915,6 +3964,7 @@ app.post("/api/students", protect, upload.single("photo"), async (req, res) => {
       req.headers["x-forwarded-for"] ||
       "unknown";
     const userAgent = req.headers["user-agent"] || "unknown";
+
     await logUserActivity(
       req.user.id,
       "create",
@@ -3926,12 +3976,13 @@ app.post("/api/students", protect, upload.single("photo"), async (req, res) => {
       userAgent
     );
 
-    res.status(201).json(student);
+    res.status(StatusCodes.CREATED).json(student);
   } catch (error) {
     console.error("Error registering student:", error);
-    res
-      .status(500)
-      .json({ error: "Failed to register student", details: error.message });
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+      error: "Failed to register student",
+      details: error.message,
+    });
   }
 });
 

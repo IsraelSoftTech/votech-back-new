@@ -3,6 +3,8 @@ const models = require("../models/index.model");
 const AppError = require("../utils/AppError");
 const catchAsync = require("../utils/catchAsync");
 const CRUD = require("../utils/Crud");
+const appResponder = require("../utils/appResponder");
+const { sequelize } = require("../db");
 
 const SubjectModel = models.Subject;
 const ClassSubjectModel = models.ClassSubject;
@@ -87,6 +89,23 @@ const include = [
 
 const createSubject = catchAsync(async (req, res, next) => {
   validateSubjectData(req.body);
+
+  const exist = await models.Subject.findOne({
+    where: sequelize.where(
+      sequelize.fn("LOWER", sequelize.col("code")),
+      req.body.code.toLowerCase()
+    ),
+  });
+
+  if (exist) {
+    return next(
+      new AppError(
+        `Subject code ${req.body.code} already exists!`,
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+
   await CRUDSubject.create(req.body, res);
 });
 
@@ -107,6 +126,32 @@ const deleteSubject = catchAsync(async (req, res, next) => {
   await CRUDSubject.delete(req.params.id, res);
 });
 
+const fileterdSubjects = catchAsync(async (req, res, next) => {
+  const userId = req.query.id;
+
+  if (!userId) {
+    return next(
+      new AppError(
+        "User Id is required in order to filter the subjects they have been assigned",
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+
+  const subjects = await models.Subject.findAll({ include });
+
+  const classSubjects = await models.ClassSubject.findAll({
+    where: { teacher_id: userId },
+    attributes: ["subject_id"],
+  });
+
+  const subjectIds = classSubjects.map((cs) => cs.subject_id);
+
+  const subjectsFiltered = subjects.filter((s) => subjectIds.includes(s.id));
+
+  appResponder(StatusCodes.OK, subjectsFiltered, res);
+});
+
 module.exports = {
   initSubject,
   createSubject,
@@ -115,4 +160,5 @@ module.exports = {
   updateSubject,
   deleteSubject,
   validateSubjectData,
+  fileterdSubjects,
 };

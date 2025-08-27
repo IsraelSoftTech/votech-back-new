@@ -6,7 +6,7 @@ const { protect, restrictTo } = require("../controllers/auth.controller");
 const classRouter = express.Router();
 
 classRouter.use(protect);
-classRouter.use(restrictTo("Admin1", "Admin3"));
+// classRouter.use(restrictTo("Admin1", "Admin3"));
 classRouter
   .route("/")
   .post(classControllers.createClass)

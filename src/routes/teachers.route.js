@@ -6,7 +6,7 @@ const { protect, restrictTo } = require("../controllers/auth.controller");
 const teacherRouter = express.Router();
 
 teacherRouter.use(protect);
-teacherRouter.use(restrictTo("Admin1", "Admin3"));
+// teacherRouter.use(restrictTo("Admin1", "Admin3"));
 teacherRouter.route("/").get(teacherControllers.readAllTeachers);
 
 teacherRouter.route("/:id").get(teacherControllers.readOneTeacher);

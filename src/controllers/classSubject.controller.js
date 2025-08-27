@@ -6,6 +6,7 @@ const AppError = require("../utils/AppError");
 const catchAsync = require("../utils/catchAsync");
 const CRUD = require("../utils/Crud");
 const appResponder = require("../utils/appResponder");
+const { Op } = require("sequelize");
 const Joi = require("joi");
 const { specialties, users } = require("../models/index.model");
 const models = require("../models/index.model");
@@ -227,10 +228,7 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
   const transaction = await sequelize.transaction();
   try {
     await ClassSubjectModel.destroy({
-      where: {
-        subject_id,
-        class_id: class_ids,
-      },
+      where: { subject_id },
       transaction,
     });
 
@@ -247,6 +245,46 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
   }
 });
 
+const unassignSubject = catchAsync(async (req, res, next) => {
+  const { subject_id, class_ids } = req.body;
+
+  if (!subject_id || typeof subject_id !== "number") {
+    return next(
+      new AppError(
+        "subject_id is required and must be a number.",
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+
+  // Build the where clause
+  const whereClause = { subject_id };
+  if (Array.isArray(class_ids) && class_ids.length > 0) {
+    whereClause.class_id = class_ids;
+  }
+
+  const transaction = await sequelize.transaction();
+  try {
+    const deletedCount = await ClassSubjectModel.destroy({
+      where: whereClause,
+      transaction,
+    });
+
+    await transaction.commit();
+
+    return res.status(StatusCodes.OK).json({
+      success: true,
+      message:
+        deletedCount > 0
+          ? `Successfully unassigned subject ${subject_id} from ${deletedCount} class(es).`
+          : "No assignments were found to unassign.",
+    });
+  } catch (err) {
+    await transaction.rollback();
+    throw err;
+  }
+});
+
 module.exports = {
   createClassSubject,
   readOneClassSubject,
@@ -254,4 +292,5 @@ module.exports = {
   updateClassSubject,
   deleteClassSubject,
   saveClassSubjects,
+  unassignSubject,
 };
