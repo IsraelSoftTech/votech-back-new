@@ -6,11 +6,13 @@ const { protect, restrictTo } = require("../controllers/auth.controller");
 const subjectRouter = express.Router();
 
 subjectRouter.use(protect);
-subjectRouter.use(restrictTo("Admin1", "Admin3"));
+// subjectRouter.use(restrictTo("Admin1", "Admin3"));
 subjectRouter
   .route("/")
   .post(subjectControllers.createSubject)
   .get(subjectControllers.readAllSubjects);
+
+subjectRouter.route("/filtered").get(subjectControllers.fileterdSubjects);
 
 subjectRouter
   .route("/:id")

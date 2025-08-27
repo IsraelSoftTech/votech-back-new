@@ -26,7 +26,7 @@ const readOneTeacher = catchAsync(async (req, res, next) => {
 });
 
 const readAllTeachers = catchAsync(async (req, res, next) => {
-  req.query.role = "Teacher";
+  // req.query.role = "Teacher";
   await CRUDTeachersModel.readAll(res, req, "", 1, 100);
 });
 

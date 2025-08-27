@@ -6,7 +6,7 @@ const { protect, restrictTo } = require("../controllers/auth.controller");
 const departmentClassesRouter = express.Router();
 
 departmentClassesRouter.use(protect);
-departmentClassesRouter.use(restrictTo("Admin1", "Admin3"));
+// departmentClassesRouter.use(restrictTo("Admin1", "Admin3"));
 departmentClassesRouter
   .route("/")
   .get(departmentClassesControllers.readAllDepartmentClassess);

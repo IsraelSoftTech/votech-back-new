@@ -89,9 +89,9 @@ async function validateMarkData(
         errors.push(`${key} must be a positive integer`);
       } else if (
         key === "score" &&
-        (typeof data.score !== "number" || data.score < 0 || data.score > 100)
+        (typeof data.score !== "number" || data.score < 0 || data.score > 20)
       ) {
-        errors.push(`score must be a number between 0 and 100`);
+        errors.push(`score must be a number between 0 and 20`);
       }
     }
   }
@@ -168,6 +168,22 @@ const saveMarksBatch = catchAsync(async (req, res, next) => {
       new AppError(
         "academic_year_id, class_id, term_id, sequence_id, subject_id, and marks array are required",
         StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+
+  const exist = await models.ClassSubject.findAll({
+    where: {
+      class_id,
+      subject_id,
+    },
+  });
+
+  if (exist.length < 1) {
+    return next(
+      new AppError(
+        "This class has not been assigned this subject!",
+        StatusCodes.FORBIDDEN
       )
     );
   }
