@@ -6,7 +6,7 @@ const { protect, restrictTo } = require("../controllers/auth.controller");
 const academicBandRouter = express.Router();
 
 academicBandRouter.use(protect);
-academicBandRouter.use(restrictTo("Admin1", "Admin3"));
+// academicBandRouter.use(restrictTo("Admin1", "Admin3"));
 
 academicBandRouter
   .route("/")

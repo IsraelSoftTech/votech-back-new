@@ -9,7 +9,7 @@ const { StatusCodes } = require("http-status-codes");
 const marksRouter = express.Router();
 
 marksRouter.use(protect);
-marksRouter.use(restrictTo("Admin1", "Admin3"));
+// marksRouter.use(restrictTo("Admin1", "Admin3"));
 
 const validateUser = (req, res, next) => {
   // Future improvement: validate that only the teacher assigned the subject can upload marks, just say the word, hmu on whatsapp.
