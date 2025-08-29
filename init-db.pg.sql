@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS specialty_classes (
     class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE
 );
 
--- Students
+-- Students table intentionally omitted (removed)
 CREATE TABLE IF NOT EXISTS students (
     id SERIAL PRIMARY KEY,
     student_id VARCHAR(32) UNIQUE NOT NULL,
@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS students (
     mother_name VARCHAR(100),
     class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL,
     specialty_id INTEGER REFERENCES specialties(id) ON DELETE SET NULL,
+    academic_year_id INTEGER REFERENCES academic_years(id) ON DELETE SET NULL,
     guardian_contact VARCHAR(50),
+    mother_contact VARCHAR(50),
     photo_url VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -62,7 +64,7 @@ CREATE TABLE IF NOT EXISTS students (
 -- Fees (for tracking fee payments)
 CREATE TABLE IF NOT EXISTS fees (
     id SERIAL PRIMARY KEY,
-    student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+    student_id INTEGER,
     class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL,
     fee_type VARCHAR(50) NOT NULL,
     amount DECIMAL(10,2) NOT NULL,
@@ -259,29 +261,13 @@ CREATE TABLE IF NOT EXISTS lesson_plans (
 
 
 
--- Applications
-CREATE TABLE IF NOT EXISTS applications (
-    id SERIAL PRIMARY KEY,
-    applicant_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    applicant_name VARCHAR(100) NOT NULL,
-    classes TEXT NOT NULL, -- Comma-separated class names
-    subjects TEXT NOT NULL, -- Comma-separated subject names
-    contact VARCHAR(50) NOT NULL,
-    certificate_url VARCHAR(500),
-    certificate_name VARCHAR(255),
-    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
-    admin_comment TEXT,
-    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    reviewed_at TIMESTAMP,
-    reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    UNIQUE(applicant_id) -- Ensure only one application per user
-);
+
 
 -- Salary Management
 CREATE TABLE IF NOT EXISTS salaries (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    applicant_id INTEGER REFERENCES applications(id) ON DELETE CASCADE,
+
     amount DECIMAL(10,2) NOT NULL,
     month VARCHAR(20) NOT NULL CHECK (month IN ('January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December')),
     year INTEGER NOT NULL,

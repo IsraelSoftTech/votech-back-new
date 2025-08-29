@@ -144,7 +144,7 @@ router.post('/class/:classId', authenticateToken, async (req, res) => {
     console.log('Request body stringified:', JSON.stringify(req.body));
     
     const data = req.body || {};
-    console.log(`Saving timetable for class ${classId}:`, data);
+    // Saving timetable for class
     
     // Ensure data is a proper object for JSONB storage
     let jsonData;
@@ -167,11 +167,11 @@ router.post('/class/:classId', authenticateToken, async (req, res) => {
     const exists = await pool.query('SELECT id FROM timetables WHERE class_id = $1', [classId]);
     if (exists.rows.length > 0) {
       await pool.query('UPDATE timetables SET data = $1, updated_at = CURRENT_TIMESTAMP WHERE class_id = $2', [jsonData, classId]);
-      console.log(`Updated timetable for class ${classId}`);
+      // Updated timetable for class
       return res.json({ class_id: classId, updated: true });
     } else {
       const ins = await pool.query('INSERT INTO timetables (class_id, data) VALUES ($1, $2) RETURNING id', [classId, jsonData]);
-      console.log(`Created timetable for class ${classId}`);
+      // Created timetable for class
       return res.status(201).json({ id: ins.rows[0].id, class_id: classId, created: true });
     }
   } catch (err) {
@@ -187,7 +187,7 @@ router.get('/class/:classId', authenticateToken, async (req, res) => {
     if (Number.isNaN(classId)) return res.status(400).json({ error: 'Invalid classId' });
     const result = await pool.query('SELECT data FROM timetables WHERE class_id = $1', [classId]);
     if (result.rows.length === 0) return res.json(null);
-    console.log(`Retrieved timetable for class ${classId}:`, result.rows[0].data);
+    // Retrieved timetable for class
     res.json(result.rows[0].data);
   } catch (err) {
     console.error('Get class timetable failed:', err);

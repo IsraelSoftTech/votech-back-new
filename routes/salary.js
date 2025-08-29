@@ -10,37 +10,23 @@ const pool = new Pool({
 
 // Authentication middleware function (copied from server.js)
 function authenticateToken(req, res, next) {
-  console.log("Authenticating request...");
-  console.log("Headers:", req.headers);
-
   const authHeader = req.headers["authorization"];
   if (!authHeader) {
-    console.log("No authorization header");
     return res.status(401).json({ error: "No authorization header" });
   }
 
-  console.log("Authorization header:", authHeader);
   const token = authHeader.split(" ")[1];
   if (!token) {
-    console.log("No token in authorization header");
     return res.status(401).json({ error: "No token provided" });
   }
 
-  console.log("Extracted token:", token);
-
   try {
     const jwt = require("jsonwebtoken");
-    // Use the same JWT_SECRET as the main server
     const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-    console.log("JWT_SECRET:", JWT_SECRET);
-
     const user = jwt.verify(token, JWT_SECRET);
-    console.log("Token verified for user:", user.username, "ID:", user.id);
     req.user = user;
     next();
   } catch (err) {
-    console.error("Token verification failed:", err.message);
-    console.error("Error details:", err);
     if (err.name === "TokenExpiredError") {
       return res.status(401).json({ error: "Token expired" });
     }
@@ -86,7 +72,7 @@ const getMonthNumber = (monthName) => {
   return months.indexOf(monthName) + 1;
 };
 
-// Get all approved applications with salary information
+// Get all teachers with salary information
 router.get("/approved-applications", async (req, res) => {
   try {
     const currentMonth = new Date().getMonth() + 1; // 1-12
@@ -110,13 +96,13 @@ router.get("/approved-applications", async (req, res) => {
     const result = await pool.query(
       `
       SELECT 
-        a.id as application_id,
-        a.applicant_id,
-        a.applicant_name,
-        a.contact,
-        a.classes,
-        a.subjects,
-        a.status,
+        t.id as teacher_id,
+        t.user_id as applicant_id,
+        t.full_name as applicant_name,
+        t.contact,
+        t.classes,
+        t.subjects,
+        'approved' as status,
         COALESCE(s.amount, 0) as salary_amount,
         s.id as salary_id,
         CASE WHEN s.paid = true THEN 'paid' ELSE 'pending' END as salary_status,
@@ -159,20 +145,19 @@ router.get("/approved-applications", async (req, res) => {
           WHERE s5.user_id = a.applicant_id 
           AND s5.year = $2
         ) as all_salary_records
-      FROM applications a
-      LEFT JOIN salaries s ON a.applicant_id = s.user_id 
+      FROM teachers t
+      LEFT JOIN salaries s ON t.user_id = s.user_id 
         AND s.month = $1
         AND s.year = $2
-      WHERE a.status = 'approved'
-      ORDER BY a.applicant_name
+      ORDER BY t.full_name
     `,
       [currentMonthName, academicYearStart]
     );
 
     res.json(result.rows);
   } catch (error) {
-    console.error("Error fetching approved applications:", error);
-    res.status(500).json({ error: "Failed to fetch approved applications" });
+    console.error("Error fetching teachers:", error);
+    res.status(500).json({ error: "Failed to fetch teachers" });
   }
 });
 
@@ -217,17 +202,16 @@ router.get("/statistics", async (req, res) => {
       [currentMonthName, academicYearStart]
     );
 
-    // Get total approved applications count
-    const approvedCountResult = await pool.query(`
+    // Get total teachers count
+    const teachersCountResult = await pool.query(`
       SELECT COUNT(*) as total_approved
-      FROM applications 
-      WHERE status = 'approved'
+      FROM teachers
     `);
 
     res.json({
       totalPaid: parseFloat(paidResult.rows[0].total_paid),
       totalPending: parseFloat(pendingResult.rows[0].total_pending),
-      totalApproved: parseInt(approvedCountResult.rows[0].total_approved),
+      totalApproved: parseInt(teachersCountResult.rows[0].total_approved),
     });
   } catch (error) {
     console.error("Error fetching salary statistics:", error);
@@ -251,11 +235,11 @@ router.post("/update", async (req, res) => {
         .json({ error: "Salary amount must be greater than 0" });
     }
 
-    // Check if user exists and has approved application
+    // Check if user exists as a teacher
     const userCheck = await pool.query(
       `
-      SELECT id FROM applications 
-      WHERE applicant_id = $1 AND status = 'approved'
+      SELECT id FROM teachers 
+      WHERE user_id = $1
     `,
       [userId]
     );
@@ -263,7 +247,7 @@ router.post("/update", async (req, res) => {
     if (userCheck.rows.length === 0) {
       return res
         .status(404)
-        .json({ error: "User not found or application not approved" });
+        .json({ error: "User not found or not registered as a teacher" });
     }
 
     // Calculate academic year start (changes on August 1st)
@@ -312,11 +296,11 @@ router.post("/update", async (req, res) => {
         // Create new salary record
         result = await pool.query(
           `
-          INSERT INTO salaries (user_id, applicant_id, amount, month, year, paid)
-          VALUES ($1, $2, $3, $4, $5, false)
+          INSERT INTO salaries (user_id, amount, month, year, paid)
+          VALUES ($1, $2, $3, $4, false)
           RETURNING *
         `,
-          [userId, userCheck.rows[0].id, amount, monthName, academicYearStart]
+          [userId, amount, monthName, academicYearStart]
         );
       }
 
@@ -341,9 +325,9 @@ router.put("/mark-paid/:salaryId", async (req, res) => {
     // First, get the salary record to check if it's already paid
     const salaryCheck = await pool.query(
       `
-      SELECT s.*, a.applicant_name 
+      SELECT s.*, t.full_name as applicant_name 
       FROM salaries s
-      JOIN applications a ON s.applicant_id = a.id
+      JOIN teachers t ON s.user_id = t.user_id
       WHERE s.id = $1
     `,
       [salaryId]
@@ -396,10 +380,10 @@ router.get("/user/:userId", async (req, res) => {
       `
       SELECT 
         s.*,
-        a.applicant_name,
-        a.contact
+        t.full_name as applicant_name,
+        t.contact
       FROM salaries s
-      JOIN applications a ON s.applicant_id = a.id
+      JOIN teachers t ON s.user_id = t.user_id
       WHERE s.user_id = $1
       ORDER BY s.year DESC, s.month DESC
     `,
@@ -423,14 +407,14 @@ router.get("/paid-salaries", async (req, res) => {
         s.month,
         s.year,
         s.paid_at,
-        a.applicant_name,
-        a.contact,
-        a.classes,
-        a.subjects
+        t.full_name as applicant_name,
+        t.contact,
+        t.classes,
+        t.subjects
       FROM salaries s
-      JOIN applications a ON s.applicant_id = a.id
+      JOIN teachers t ON s.user_id = t.user_id
       WHERE s.paid = true
-      ORDER BY s.paid_at DESC, a.applicant_name ASC
+      ORDER BY s.paid_at DESC, t.full_name ASC
     `);
 
     res.json(result.rows);
@@ -533,12 +517,12 @@ router.get("/my/paid", authenticateToken, async (req, res) => {
         s.year,
         s.paid_at,
         s.paid,
-        a.applicant_name,
-        a.contact,
-        a.classes,
-        a.subjects
+        t.full_name as applicant_name,
+        t.contact,
+        t.classes,
+        t.subjects
       FROM salaries s
-      LEFT JOIN applications a ON s.user_id = a.applicant_id
+      LEFT JOIN teachers t ON s.user_id = t.user_id
       WHERE s.user_id = $1 AND s.paid = true
       ORDER BY s.paid_at DESC, s.year DESC, s.month DESC
     `,

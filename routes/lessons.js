@@ -58,7 +58,7 @@ const initializeLessonsTable = async () => {
         reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
       )
     `);
-    console.log('Lessons table initialized');
+    // Lessons table initialized
   } catch (error) {
     console.error('Error initializing lessons table:', error);
   }

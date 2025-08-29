@@ -2,10 +2,10 @@
   "name": "mpasat-online-backend",
   "version": "1.0.0",
   "description": "MPASAT Online Backend with MySQL",
-  "main": "server.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
+    "start": "node index.js",
+    "dev": "nodemon index.js",
     "load-schema": "node load-schema.js",
     "create-admin": "node create-admin.js"
   },

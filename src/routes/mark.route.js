@@ -23,7 +23,7 @@ const validateUser = (req, res, next) => {
     );
   }
   req.body.uploaded_by = req.user.id;
-  //   console.log(req.body);
+  // Request body received
   next();
 };
 

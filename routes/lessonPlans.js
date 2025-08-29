@@ -104,7 +104,7 @@ const initializeLessonPlansTable = async () => {
       console.log('Added submitted_at column to lesson_plans table');
     }
 
-    console.log('Lesson plans table initialized with correct schema');
+    // Lesson plans table initialized with correct schema
   } catch (error) {
     console.error('Error initializing lesson plans table:', error);
   }

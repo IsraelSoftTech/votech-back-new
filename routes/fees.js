@@ -237,12 +237,12 @@ router.get('/class/:classId', authenticateToken, async (req, res) => {
     );
 
     if (classCheck.rows.length === 0) {
-      console.log(`[FEE DEBUG] Class with ID ${classId} not found.`);
+      // Class with ID not found
       return res.status(404).json({ error: `Class with ID ${classId} not found` });
     }
 
     const className = classCheck.rows[0].name;
-    console.log(`[FEE DEBUG] ClassId: ${classId}, ClassName: ${className}`);
+    // ClassId and ClassName processed
 
     // Get all students in class
     let resultStudents;
@@ -252,10 +252,10 @@ router.get('/class/:classId', authenticateToken, async (req, res) => {
     );
 
     const students = resultStudents.rows;
-    console.log(`[FEE DEBUG] Found ${students.length} students in class ${className} (ID: ${classId})`);
+    // Found students in class
 
     if (students.length > 0) {
-      console.log("[FEE DEBUG] Student IDs:", students.map((s) => s.id));
+      // Student IDs processed
     }
 
     if (students.length === 0) {

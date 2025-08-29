@@ -540,7 +540,7 @@ router.get('/admins/list', authenticateToken, async (req, res) => {
       ORDER BY name
     `;
     const result = await pool.query(query);
-    console.log('Found Admin1 users:', result.rows);
+    // Found Admin1 users
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching Admin1 users:', error);

@@ -45,14 +45,7 @@ module.exports = function(sequelize, DataTypes) {
       allowNull: true,
       defaultValue: "pending"
     },
-    applicant_id: {
-      type: DataTypes.INTEGER,
-      allowNull: true,
-      references: {
-        model: 'applications',
-        key: 'id'
-      }
-    }
+    
   }, {
     sequelize,
     tableName: 'salaries',

@@ -418,7 +418,7 @@ const singleReportCard = catchAsync(async (req, res, next) => {
 
   if (!marks.length) return next(new AppError("No data found", 404));
 
-  // console.log(marks.map((el) => el.toJSON()));
+      // Marks processed successfully
 
   const reportCardClass = await models.Class.findByPk(classId, {
     include: [
@@ -2015,7 +2015,7 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
     });
 
     res.end(pdfBuffer);
-    console.log("Report card PDF generated successfully.");
+    // Report card PDF generated successfully
   } finally {
     await browser.close();
   }

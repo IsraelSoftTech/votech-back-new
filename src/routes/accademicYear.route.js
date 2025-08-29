@@ -7,7 +7,7 @@ const { protect, restrictTo } = require("../controllers/auth.controller");
 (async () => {
   try {
     await academicYearControllers.initAcademicYear();
-    console.log("AcademicYear module ready, starting server...");
+    // AcademicYear module ready, starting server...
   } catch (error) {
     console.error("Failed to initialize AcademicYear module", error);
     process.exit(1);

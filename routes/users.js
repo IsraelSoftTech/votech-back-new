@@ -411,12 +411,8 @@ router.get('/assigned-data/:userId', authenticateToken, async (req, res) => {
     `, [userId]);
     assignedData.students = studentsResult.rows;
     
-    // Get assigned applications
-    const applicationsResult = await pool.query(`
-      SELECT a.* FROM applications a 
-      WHERE a.assigned_to = $1
-    `, [userId]);
-    assignedData.applications = applicationsResult.rows;
+    // Applications feature removed
+    assignedData.applications = [];
     
     res.json(assignedData);
   } catch (error) {

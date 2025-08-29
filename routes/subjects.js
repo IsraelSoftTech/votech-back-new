@@ -91,7 +91,7 @@ const initializeSubjectsTable = async () => {
       await pool.query('ALTER TABLE subjects ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
     }
 
-    console.log('Subjects table initialized with correct schema');
+    // Subjects table initialized with correct schema
   } catch (error) {
     console.error('Error initializing subjects table:', error);
   }

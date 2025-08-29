@@ -19,12 +19,11 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
     try {
       const result = await pool.query(`
         SELECT 
-          a.applicant_id as id,
-          a.applicant_name as full_name,
-          a.contact
-        FROM applications a
-        WHERE a.status = 'approved'
-        ORDER BY a.applicant_name ASC
+          t.user_id as id,
+          t.full_name,
+          t.contact
+        FROM teachers t
+        ORDER BY t.full_name ASC
       `);
       res.json(result.rows);
     } catch (error) {
@@ -236,7 +235,7 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
       
       console.log('=== EXPORT REQUEST ===');
       console.log('Type:', type);
-      console.log('Class ID:', classId);
+      // Class ID processed
       console.log('Date:', date);
       
       if (!['student', 'teacher'].includes(type)) {
@@ -278,7 +277,7 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
       let filteredSessions = sessions;
       if (type === 'student' && classId) {
         filteredSessions = sessions.filter(s => s.class_id === classId);
-        console.log(`Filtered to class ${classId}:`, filteredSessions);
+        // Filtered to class
       }
 
       // Step 3: Get people (students or teachers)
@@ -295,17 +294,16 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
           [classId]
         );
         people = studentsResult.rows;
-        console.log(`Found ${people.length} students for class ${className}:`, people);
+        // Found students for class
       } else {
         // Get all approved teachers
         const teachersResult = await pool.query(`
           SELECT 
-            a.applicant_id as id,
-            a.applicant_name as full_name,
+            t.user_id as id,
+            t.full_name,
             'N/A' as sex
-          FROM applications a
-          WHERE a.status = 'approved'
-          ORDER BY a.applicant_name ASC
+          FROM teachers t
+          ORDER BY t.full_name ASC
         `);
         people = teachersResult.rows;
         console.log(`Found ${people.length} approved teachers:`, people);
