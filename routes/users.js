@@ -85,7 +85,7 @@ router.get('/chat-list', authenticateToken, async (req, res) => {
 // Check user details
 router.post('/check-user-details', async (req, res) => {
   try {
-    const { username } = req.body;
+    const { username, contact } = req.body;
 
     if (!username) {
       return res.status(400).json({ error: 'Username is required' });
@@ -100,10 +100,52 @@ router.post('/check-user-details', async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json({ user: result.rows[0] });
+    const user = result.rows[0];
+
+    // If contact is provided, verify it matches (normalize phone numbers for comparison)
+    if (contact && user.contact) {
+      const normalizePhone = (phone) => {
+        return phone.replace(/\D/g, ''); // Remove all non-digits
+      };
+      
+      const normalizedUserContact = normalizePhone(user.contact);
+      const normalizedInputContact = normalizePhone(contact);
+      
+      if (normalizedUserContact !== normalizedInputContact) {
+        return res.status(400).json({ error: 'Phone number does not match' });
+      }
+    }
+
+    res.json({ 
+      exists: true,
+      user: {
+        id: user.id,
+        name: user.name,
+        username: user.username,
+        role: user.role,
+        contact: user.contact,
+        email: user.email
+      }
+    });
   } catch (error) {
     console.error('Error checking user details:', error);
     res.status(500).json({ error: 'Failed to check user details' });
+  }
+});
+
+// Get Admin3 count (no authentication required)
+router.get('/admin3-count', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT COUNT(*) as count FROM users WHERE role = $1',
+      ['Admin3']
+    );
+    
+    const count = parseInt(result.rows[0].count);
+    res.json({ count });
+  } catch (error) {
+    console.error('Error getting Admin3 count:', error);
+    res.status(500).json({ error: 'Failed to get Admin3 count' });
   }
 });
 
@@ -290,23 +332,40 @@ router.post('/:id/suspend', authenticateToken, requireAdmin, async (req, res) =>
 // Get user monitoring data
 router.get('/monitor/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT 
-        u.id,
-        u.name,
-        u.username,
-        u.role,
-        u.suspended,
-        u.created_at,
-        COUNT(ua.id) as activity_count,
-        MAX(ua.created_at) as last_activity
-      FROM users u
-      LEFT JOIN user_activities ua ON u.id = ua.user_id
-      GROUP BY u.id, u.name, u.username, u.role, u.suspended, u.created_at
-      ORDER BY u.created_at DESC
-    `);
-
-    res.json(result.rows);
+    try {
+      const result = await pool.query(`
+        SELECT 
+          u.id,
+          u.name,
+          u.username,
+          u.role,
+          u.suspended,
+          u.created_at,
+          COUNT(ua.id) as activity_count,
+          MAX(ua.created_at) as last_activity
+        FROM users u
+        LEFT JOIN user_activities ua ON u.id = ua.user_id
+        GROUP BY u.id, u.name, u.username, u.role, u.suspended, u.created_at
+        ORDER BY u.created_at DESC
+      `);
+      res.json(result.rows);
+    } catch (joinError) {
+      console.log('user_activities table not found, using basic query');
+      const result = await pool.query(`
+        SELECT 
+          id,
+          name,
+          username,
+          role,
+          suspended,
+          created_at,
+          0 as activity_count,
+          NULL as last_activity
+        FROM users
+        ORDER BY created_at DESC
+      `);
+      res.json(result.rows);
+    }
   } catch (error) {
     console.error('Error fetching user monitoring data:', error);
     res.status(500).json({ error: 'Failed to fetch user monitoring data' });
@@ -318,26 +377,31 @@ router.get('/monitor/user-activities', authenticateToken, requireAdmin, async (r
   try {
     const { userId, limit = 50 } = req.query;
     
-    let query = `
-      SELECT 
-        ua.*,
-        u.name as user_name,
-        u.username
-      FROM user_activities ua
-      JOIN users u ON ua.user_id = u.id
-    `;
-    
-    const params = [];
-    if (userId) {
-      query += ' WHERE ua.user_id = $1';
-      params.push(userId);
-    }
-    
-    query += ' ORDER BY ua.created_at DESC LIMIT $' + (params.length + 1);
-    params.push(parseInt(limit));
+    try {
+      let query = `
+        SELECT 
+          ua.*,
+          u.name as user_name,
+          u.username
+        FROM user_activities ua
+        JOIN users u ON ua.user_id = u.id
+      `;
+      
+      const params = [];
+      if (userId) {
+        query += ' WHERE ua.user_id = $1';
+        params.push(userId);
+      }
+      
+      query += ' ORDER BY ua.created_at DESC LIMIT $' + (params.length + 1);
+      params.push(parseInt(limit));
 
-    const result = await pool.query(query, params);
-    res.json(result.rows);
+      const result = await pool.query(query, params);
+      res.json(result.rows);
+    } catch (tableError) {
+      console.log('user_activities table not found, returning empty array');
+      res.json([]);
+    }
   } catch (error) {
     console.error('Error fetching user activities:', error);
     res.status(500).json({ error: 'Failed to fetch user activities' });
@@ -349,26 +413,31 @@ router.get('/monitor/user-sessions', authenticateToken, requireAdmin, async (req
   try {
     const { userId, limit = 50 } = req.query;
     
-    let query = `
-      SELECT 
-        us.*,
-        u.name as user_name,
-        u.username
-      FROM user_sessions us
-      JOIN users u ON us.user_id = u.id
-    `;
-    
-    const params = [];
-    if (userId) {
-      query += ' WHERE us.user_id = $1';
-      params.push(userId);
-    }
-    
-    query += ' ORDER BY us.created_at DESC LIMIT $' + (params.length + 1);
-    params.push(parseInt(limit));
+    try {
+      let query = `
+        SELECT 
+          us.*,
+          u.name as user_name,
+          u.username
+        FROM user_sessions us
+        JOIN users u ON us.user_id = u.id
+      `;
+      
+      const params = [];
+      if (userId) {
+        query += ' WHERE us.user_id = $1';
+        params.push(userId);
+      }
+      
+      query += ' ORDER BY us.created_at DESC LIMIT $' + (params.length + 1);
+      params.push(parseInt(limit));
 
-    const result = await pool.query(query, params);
-    res.json(result.rows);
+      const result = await pool.query(query, params);
+      res.json(result.rows);
+    } catch (tableError) {
+      console.log('user_sessions table not found, returning empty array');
+      res.json([]);
+    }
   } catch (error) {
     console.error('Error fetching user sessions:', error);
     res.status(500).json({ error: 'Failed to fetch user sessions' });

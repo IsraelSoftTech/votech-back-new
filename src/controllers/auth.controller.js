@@ -23,6 +23,8 @@ const protect = catchAsync(async (req, res, next) => {
     );
   }
 
+
+
   const decodedToken = await promisify(jwt.verify)(
     token,
     process.env.JWT_SECRET

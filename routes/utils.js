@@ -20,6 +20,8 @@ const authenticateToken = (req, res, next) => {
     return res.status(401).json({ error: 'No token provided' });
   }
 
+
+
   try {
     const user = jwt.verify(token, JWT_SECRET);
     req.user = user;
