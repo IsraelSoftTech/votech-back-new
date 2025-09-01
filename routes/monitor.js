@@ -11,13 +11,13 @@ router.get('/users', authenticateToken, async (req, res) => {
       const result = await pool.query(`
         SELECT 
           u.id, u.name, u.username, u.role, u.email, u.contact,
-          u.created_at, u.last_login, u.suspended,
+          u.created_at, u.suspended,
           COUNT(ua.id) as activity_count,
           COUNT(us.id) as session_count
         FROM users u
         LEFT JOIN user_activities ua ON u.id = ua.user_id
         LEFT JOIN user_sessions us ON u.id = us.user_id
-        GROUP BY u.id, u.name, u.username, u.role, u.email, u.contact, u.created_at, u.last_login, u.suspended
+        GROUP BY u.id, u.name, u.username, u.role, u.email, u.contact, u.created_at, u.suspended
         ORDER BY u.created_at DESC
       `);
       res.json(result.rows);
@@ -27,7 +27,7 @@ router.get('/users', authenticateToken, async (req, res) => {
       const result = await pool.query(`
         SELECT 
           id, name, username, role, email, contact,
-          created_at, last_login, suspended,
+          created_at, suspended,
           0 as activity_count,
           0 as session_count
         FROM users
@@ -94,7 +94,7 @@ router.get('/user-sessions', authenticateToken, async (req, res) => {
 });
 
 // Clear all monitoring data
-router.get('/clear-all', authenticateToken, async (req, res) => {
+router.delete('/clear-all', authenticateToken, async (req, res) => {
   try {
     try {
       await pool.query('DELETE FROM user_activities');

@@ -127,19 +127,19 @@ router.get("/approved-applications", async (req, res) => {
             ', ' ORDER BY s2.year DESC, s2.month DESC
           )
           FROM salaries s2 
-          WHERE s2.user_id = a.applicant_id 
+          WHERE s2.user_id = t.user_id 
           AND s2.paid = true
         ) as paid_months,
         (
           SELECT COUNT(*)
           FROM salaries s3
-          WHERE s3.user_id = a.applicant_id 
+          WHERE s3.user_id = t.user_id 
           AND s3.amount > 0
         ) as total_salary_records,
         (
           SELECT COUNT(*)
           FROM salaries s4
-          WHERE s4.user_id = a.applicant_id 
+          WHERE s4.user_id = t.user_id 
           AND s4.paid = true
         ) as paid_salary_records,
         (
@@ -154,7 +154,7 @@ router.get("/approved-applications", async (req, res) => {
             ) ORDER BY s5.month
           )
           FROM salaries s5
-          WHERE s5.user_id = a.applicant_id 
+          WHERE s5.user_id = t.user_id 
           AND s5.year = $2
         ) as all_salary_records
       FROM teachers t
