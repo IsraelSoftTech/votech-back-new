@@ -3,6 +3,14 @@ const { pool, authenticateToken } = require('./utils');
 
 const router = express.Router();
 
+// Middleware to restrict Admin1 to read-only access
+const restrictAdmin1ReadOnly = (req, res, next) => {
+  if (req.user.role === 'Admin1') {
+    return res.status(403).json({ error: 'Admin1 accounts have read-only access to departments' });
+  }
+  next();
+};
+
 // Get all specialties
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -15,7 +23,7 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 // Create new specialty
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authenticateToken, restrictAdmin1ReadOnly, async (req, res) => {
   try {
     const { name, description } = req.body;
     const result = await pool.query(
@@ -30,7 +38,7 @@ router.post('/', authenticateToken, async (req, res) => {
 });
 
 // Update specialty
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put('/:id', authenticateToken, restrictAdmin1ReadOnly, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description } = req.body;
@@ -49,7 +57,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
 });
 
 // Delete specialty
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete('/:id', authenticateToken, restrictAdmin1ReadOnly, async (req, res) => {
   try {
     const { id } = req.params;
     const result = await pool.query('DELETE FROM specialties WHERE id = $1 RETURNING *', [id]);
@@ -64,7 +72,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 });
 
 // Add class to specialty
-router.post('/:specialty_id/classes', authenticateToken, async (req, res) => {
+router.post('/:specialty_id/classes', authenticateToken, restrictAdmin1ReadOnly, async (req, res) => {
   try {
     const { specialty_id } = req.params;
     const { class_id } = req.body;
@@ -95,7 +103,7 @@ router.get('/:specialty_id/classes', authenticateToken, async (req, res) => {
 });
 
 // Remove class from specialty
-router.delete('/:specialty_id/classes/:class_id', authenticateToken, async (req, res) => {
+router.delete('/:specialty_id/classes/:class_id', authenticateToken, restrictAdmin1ReadOnly, async (req, res) => {
   try {
     const { specialty_id, class_id } = req.params;
     const result = await pool.query(
@@ -113,7 +121,7 @@ router.delete('/:specialty_id/classes/:class_id', authenticateToken, async (req,
 });
 
 // Update specialty classes
-router.put('/:id/classes', authenticateToken, async (req, res) => {
+router.put('/:id/classes', authenticateToken, restrictAdmin1ReadOnly, async (req, res) => {
   try {
     const { id } = req.params;
     const { class_ids } = req.body;

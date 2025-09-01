@@ -128,6 +128,18 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Name, username, password, and role are required' });
     }
 
+    // Check Admin4 limit (maximum 2 Admin4 accounts)
+    if (role === 'Admin4') {
+      const admin4Count = await pool.query(
+        'SELECT COUNT(*) FROM users WHERE role = $1',
+        ['Admin4']
+      );
+      
+      if (parseInt(admin4Count.rows[0].count) >= 2) {
+        return res.status(400).json({ error: 'Maximum of 2 Admin4 accounts allowed' });
+      }
+    }
+
     // Check if username already exists
     const existingUser = await pool.query(
       'SELECT * FROM users WHERE username = $1',
