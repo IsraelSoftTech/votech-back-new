@@ -1,0 +1,3962 @@
+<!DOCTYPE html>
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <title>Report Cards</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <style>
+    /* =============================== Report Card Styles =============================== */
+    /* Base page setup */
+    @page {
+      size: A4;
+      margin: 10mm;
+    }
+    
+    body, html {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      font-size: 12px;
+      line-height: 1.3;
+      background: white;
+    }
+    
+    /* Report card wrapper - ensures one card per page */
+    .report-card-wrapper {
+      page-break-after: always;
+      page-break-inside: avoid;
+      break-after: page;
+      break-inside: avoid;
+      background: white;
+      padding: 0;
+      margin: 0;
+      max-height: 277mm; /* A4 height minus margins */
+      overflow: hidden; /* Prevent bleeding */
+    }
+    
+    /* Main Report Card Container */
+    .report-card {
+      width: 100%;
+      background: white;
+      border: 1px solid #204080;
+      padding: 8px;
+      box-sizing: border-box;
+      position: relative;
+    }
+    
+    /* Document Header */
+    .document-header {
+      border-bottom: 1px solid #204080;
+      padding: 6px;
+      margin-bottom: 6px;
+      background: white;
+      border-radius: 4px;
+    }
+    
+    .header-content {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    
+    .left-section, .right-section {
+      flex: 1;
+      text-align: center;
+      font-size: 10px;
+      line-height: 1.3;
+    }
+    
+    .center-emblem {
+      flex: 0 0 80px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+    
+    .center-text {
+      text-align: center;
+      margin-top: 3px;
+      font-size: 9px;
+    }
+    
+    .igniting-text {
+      font-weight: bold;
+      font-size: 9px;
+      color: #204080;
+    }
+    
+    .center-motto {
+      font-style: italic;
+      font-size: 8px;
+      color: #c9a96e;
+    }
+    
+    .report-card-logo {
+      height: 50px;
+      width: 50px;
+      object-fit: cover;
+    }
+    
+    /* Header Text */
+    .republic-text {
+      font-weight: bold;
+      font-size: 10px;
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      color: #204080;
+    }
+    
+    .motto {
+      font-style: italic;
+      font-size: 9px;
+      margin-bottom: 2px;
+      color: #c9a96e;
+      font-weight: 600;
+    }
+    
+    .ministry {
+      font-weight: bold;
+      font-size: 9px;
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      color: #204080;
+    }
+    
+    .department {
+      font-weight: bold;
+      font-size: 9px;
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      color: #204080;
+    }
+    
+    .school-name-header {
+      font-weight: bold;
+      font-size: 9px;
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      color: #204080;
+    }
+    
+    .location {
+      font-size: 9px;
+      color: #666;
+      margin-bottom: 2px;
+    }
+
+    /* Document Title */
+    .document-title {
+      text-align: center;
+      margin-top: 4px;
+    }
+    
+    .document-title h1 {
+      font-size: 16px;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin: 0 0 3px 0;
+      color: #204080;
+    }
+    
+    .term-info {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 5px;
+    }
+    
+    /* Student Information */
+    .student-info {
+      margin-bottom: 6px;
+      padding: 6px;
+      border-radius: 4px;
+      background: white;
+      border: 1px solid #204080;
+    }
+    
+    .info-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 8px 3px;
+    }
+    
+    .info-table td {
+      padding: 3px 4px;
+      font-size: 11px;
+      vertical-align: middle;
+    }
+    
+    .info-table .label {
+      font-weight: bold;
+      width: 110px;
+      color: #204080;
+      white-space: nowrap;
+    }
+    
+    .info-table .value {
+      border-bottom: 1px solid #204080;
+      min-width: 130px;
+      font-weight: 600;
+      color: #333;
+    }
+    
+    /* Subjects Section */
+    .subjects-section {
+      margin-bottom: 6px;
+    }
+    
+    .section-header {
+      background: #204080;
+      color: #fff;
+      text-align: center;
+      padding: 4px;
+      margin-bottom: 0;
+      border-radius: 4px 4px 0 0;
+    }
+    
+    .section-header h3 {
+      font-size: 12px;
+      font-weight: bold;
+      text-transform: uppercase;
+      margin: 0;
+    }
+    
+    .subjects-table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid #204080;
+    }
+    
+    .low-score {
+      color: #cc0000;
+    }
+    
+    .subjects-table th,
+    .subjects-table td {
+      border: 1px solid #204080;
+      padding: 2px 2px;
+      font-size: 10px;
+      text-align: center;
+      vertical-align: middle;
+      line-height: 1.2;
+    }
+    
+    .subjects-table th {
+      background: #e8eeff;
+      font-weight: bold;
+      text-transform: uppercase;
+      color: #204080;
+      height: 20px;
+      font-size: 9px;
+    }
+    
+    .code-cell {
+      font-weight: bold;
+      color: #204080;
+      width: 35px;
+    }
+    
+    .subject-cell {
+      text-align: left;
+      padding-left: 4px;
+      font-weight: normal;
+      color: #333;
+      width: 120px;
+      font-size: 10px;
+    }
+    
+    .score-cell,
+    .avg-cell,
+    .coef-cell,
+    .total-cell {
+      font-weight: bold;
+      color: #333;
+      width: 28px;
+      font-size: 10px;
+    }
+    
+    .avg-cell,
+    .total-cell {
+      font-weight: bold;
+      color: #204080;
+    }
+    
+    .remark-cell {
+      width: 55px;
+    }
+    
+    .remark-cell span {
+      font-size: 9px;
+      font-weight: bold;
+      display: inline-block;
+      min-width: 45px;
+      color: #333;
+    }
+    
+    /* Grade Colors */
+    .remark-excellent { color: #0d5f0d; }
+    .remark-vgood { color: #1a5f1a; }
+    .remark-good { color: #204080; }
+    .remark-fairly-good { color: #b8860b; }
+    .remark-average { color: #ff8c00; }
+    .remark-weak { color: #cc0000; }
+    
+    .teacher-cell {
+      text-align: left;
+      padding-left: 3px;
+      font-size: 9px;
+      color: #666;
+      width: 65px;
+    }
+    
+    .subtotal-row {
+      background: #e8eeff;
+      font-weight: bold;
+      border-top: 1px solid #204080;
+    }
+    
+    .subtotal-label {
+      text-transform: uppercase;
+      font-size: 10px;
+      color: #204080;
+      text-align: right;
+      padding-right: 5px;
+    }
+    
+    .subtotal-value {
+      font-size: 10px;
+      font-weight: bold;
+      color: #204080;
+    }
+    
+    .subtotal-remark {
+      font-weight: bold;
+      color: #204080;
+    }
+    
+    /* Performance Summary */
+    .performance-summary {
+      margin-bottom: 6px;
+      padding: 6px;
+      border-radius: 4px;
+      background: white;
+      border: 1px solid #204080;
+    }
+    
+    .summary-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 8px 3px;
+    }
+    
+    .summary-table td {
+      padding: 3px 4px;
+      font-size: 11px;
+      font-weight: bold;
+    }
+    
+    .summary-label {
+      color: #204080;
+      text-transform: uppercase;
+    }
+    
+    .summary-value {
+      color: #333;
+      border-bottom: 1px solid #204080;
+      min-width: 70px;
+    }
+    
+    /* Bottom Section */
+    .bottom-section {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    
+    .left-column,
+    .center-column,
+    .right-column {
+      flex: 1;
+    }
+    
+    .conduct-section,
+    .grading-scale,
+    .admin-section {
+      padding: 6px;
+      border-radius: 4px;
+      border: 1px solid #204080;
+      background: white;
+      height: 100%;
+    }
+    
+    .conduct-section h4,
+    .grading-scale h4,
+    .admin-section h4 {
+      text-align: center;
+      font-weight: bold;
+      font-size: 11px;
+      color: #204080;
+      border-bottom: 1px solid #204080;
+      padding-bottom: 4px;
+      margin: 0 0 4px 0;
+    }
+    
+    .conduct-table,
+    .scale-table,
+    .admin-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0 3px;
+    }
+    
+    .conduct-table td,
+    .scale-table td,
+    .admin-table td {
+      padding: 2px 3px;
+      font-size: 10px;
+    }
+    
+    .conduct-table td:first-child,
+    .scale-table td:first-child,
+    .admin-table td:first-child {
+      font-weight: bold;
+      color: #204080;
+    }
+    
+    .conduct-table td:last-child,
+    .scale-table td:last-child,
+    .admin-table td:last-child {
+      text-align: right;
+      font-weight: bold;
+      color: #333;
+    }
+    
+    /* Signature Section - Added space before signatures */
+    .signature-section {
+      display: flex;
+      gap: 6px;
+      margin: 12px 0 6px 0; /* Added top margin for spacing */
+      padding-top: 6px;
+      border-top: 1px dashed #eee; /* Subtle separator */
+    }
+    
+    .signature-box {
+      flex: 1;
+      padding: 6px;
+      border-radius: 4px;
+      border: 1px solid #204080;
+      text-align: center;
+      background: white;
+      min-height: 60px;
+    }
+    
+    .signature-title {
+      font-weight: bold;
+      text-transform: uppercase;
+      font-size: 10px;
+      margin-bottom: 5px;
+      color: #204080;
+    }
+    
+    .signature-line {
+      background-color: #204080;
+      margin: 8px 0;
+      height: 1px;
+      width: 100%;
+    }
+    
+    .signature-name {
+      font-weight: bold;
+      font-size: 10px;
+      color: #333;
+      margin-bottom: 3px;
+    }
+    
+    .signature-date {
+      font-size: 9px;
+      font-style: italic;
+      color: #666;
+    }
+    
+    /* Watermark */
+    .report-card::before {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) rotate(-15deg);
+      width: 350px;
+      height: 350px;
+      background: var(--wm) no-repeat center;
+      background-size: contain;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.05;
+    }
+    
+    /* Footer */
+    .footer-text {
+      display: flex;
+      justify-content: center;
+      font-size: 9px;
+      color: #666;
+      margin-top: 6px;
+      text-align: center;
+    }
+    
+    /* Auto-adjust for different content sizes */
+    @media print {
+      * {
+        -webkit-print-color-adjust: exact !important;
+        color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      
+      /* Overflow detection - if the card is too tall, adjust font sizes */
+      .report-card-wrapper.overflow-adjust .report-card {
+        font-size: 10px;
+      }
+      
+      .report-card-wrapper.overflow-adjust h1 {
+        font-size: 14px;
+      }
+      
+      .report-card-wrapper.overflow-adjust .subjects-table th,
+      .report-card-wrapper.overflow-adjust .subjects-table td {
+        font-size: 9px;
+        padding: 1px 1px;
+      }
+      
+      .report-card-wrapper.overflow-adjust .signature-section {
+        margin-top: 8px;
+      }
+      
+      .report-card-wrapper.overflow-adjust .signature-box {
+        min-height: 50px;
+      }
+      
+      /* Extreme overflow (many subjects) */
+      .report-card-wrapper.overflow-severe .report-card {
+        font-size: 9px;
+      }
+      
+      .report-card-wrapper.overflow-severe .subjects-table th,
+      .report-card-wrapper.overflow-severe .subjects-table td {
+        font-size: 8px;
+        padding: 1px 0;
+      }
+      
+      body, html {
+        width: 210mm;
+        height: 297mm;
+      }
+      
+      .report-card-wrapper {
+        page-break-after: always;
+        page-break-inside: avoid;
+        break-after: page;
+        break-inside: avoid;
+      }
+      
+      .report-card {
+        border: none;
+      }
+    }</style>
+      <script>
+        // Enhanced overflow detection
+        window.addEventListener('load', function() {
+          // Check each report card wrapper
+          var wrappers = document.querySelectorAll('.report-card-wrapper');
+          wrappers.forEach(function(wrapper) {
+            var content = wrapper.querySelector('.report-card');
+            // If content height exceeds wrapper container
+            if (content && content.offsetHeight > wrapper.offsetHeight * 0.98) {
+              // Check if severe overflow (very tall content)
+              if (content.offsetHeight > wrapper.offsetHeight * 1.1) {
+                wrapper.classList.add('overflow-severe');
+              } else {
+                wrapper.classList.add('overflow-adjust');
+              }
+            }
+          });
+        });
+      </script>
+    </head>
+    <body>
+      <div class="batch-wrapper">
+        
+          <div class="report-card-wrapper overflow-severe">
+            <div class="report-card" style="--wm: url('http://localhost:5000/public/logo.png')">
+              <!-- Document Header -->
+              <div class="document-header">
+                <div class="header-content">
+                  <div class="left-section">
+                    <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
+                    <div class="motto">PAIX - TRAVAIL - PATRIE</div>
+                    <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
+                    <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                  
+                  <div class="center-emblem">
+                    <img src="http://localhost:5000/public/logo.png" alt="" class="report-card-logo" />
+                    <div class="center-text">
+                      <div class="igniting-text">IGNITING ''Preneurs</div>
+                      <div class="center-motto">Motto: Welfare, Productivity, Self Actualization</div>
+                    </div>
+                  </div>
+                  
+                  <div class="right-section">
+                    <div class="republic-text">REPUBLIC OF CAMEROON</div>
+                    <div class="motto">PEACE - WORK - FATHERLAND</div>
+                    <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
+                    <div class="department">DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                </div>
+                
+                <div class="document-title">
+                  <h1>ACADEMIC REPORT CARD</h1>
+                  <div class="term-info">FIRST TERM • 2024/2025 Academic Year</div>
+                </div>
+              </div>
+              
+              <!-- Student Information -->
+              <div class="student-info">
+                <table class="info-table">
+                  <tbody>
+                    <tr>
+                      <td class="label">Student Name:</td>
+                      <td class="value">Patricia Nchout Njie</td>
+                      <td class="label">Class:</td>
+                      <td class="value">Certification Level 3</td>
+                    </tr>
+                    <tr>
+                      <td class="label">Registration No:</td>
+                      <td class="value">25-VOT-PAIE-010</td>
+                      <td class="label">Specialty:</td>
+                      <td class="value">Mechanical Engineering </td>
+                    </tr>
+                    <tr>
+                      <td class="label">Date of Birth:</td>
+                      <td class="value">2025-08-31</td>
+                      <td class="label">Academic Year:</td>
+                      <td class="value">2024/2025 Academic Year</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- General Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">ACS</td>
+            <td class="subject-cell">Advance Computer Studies</td>
+            <td class="score-cell ">18</td><td class="score-cell ">20</td><td class="avg-cell ">19.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">76</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ECAE</td>
+            <td class="subject-cell">Enterprise Creation and Entrepreneurship</td>
+            <td class="score-cell ">19</td><td class="score-cell ">20</td><td class="avg-cell ">19.6</td>
+            <td class="coef-cell">8</td>
+            <td class="total-cell">156.8</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Eng3</td>
+            <td class="subject-cell">English Language III</td>
+            <td class="score-cell ">20</td><td class="score-cell ">19</td><td class="avg-cell ">19.6</td>
+            <td class="coef-cell">2</td>
+            <td class="total-cell">39.2</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Lum Sandra</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Law3</td>
+            <td class="subject-cell">Company Law</td>
+            <td class="score-cell ">14</td><td class="score-cell ">20</td><td class="avg-cell ">17.0</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">85</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MATH3</td>
+            <td class="subject-cell">Mathematics III</td>
+            <td class="score-cell ">14</td><td class="score-cell ">12</td><td class="avg-cell ">13.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">52</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Very Good</span></td>
+            <td class="teacher-cell">Njang Collins</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">409</td>
+                      <td class="subtotal-remark"><span class="remark-vgood">V.Good</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Professional Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">AMD</td>
+            <td class="subject-cell">Automotive Mechanics and Diagnostics</td>
+            <td class="score-cell ">18</td><td class="score-cell ">20</td><td class="avg-cell ">19.0</td>
+            <td class="coef-cell">7</td>
+            <td class="total-cell">133</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ASD</td>
+            <td class="subject-cell">Advance System Design</td>
+            <td class="score-cell ">20</td><td class="score-cell ">18</td><td class="avg-cell ">18.8</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">75.2</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">CAD3</td>
+            <td class="subject-cell">CNC Machining and CAD CAM Programming</td>
+            <td class="score-cell ">19</td><td class="score-cell ">17</td><td class="avg-cell ">18.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">180</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">FCT3</td>
+            <td class="subject-cell">Foundry and Casting Technology</td>
+            <td class="score-cell ">19</td><td class="score-cell ">20</td><td class="avg-cell ">19.5</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">97.5</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Ndeh Junior Nche-mukum Brice</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">GEP3</td>
+            <td class="subject-cell">General Engineering Principles 3</td>
+            <td class="score-cell ">14</td><td class="score-cell ">20</td><td class="avg-cell ">17.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">153</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">HVAC</td>
+            <td class="subject-cell">Refrigeration and Air Conditioning</td>
+            <td class="score-cell ">20</td><td class="score-cell ">20</td><td class="avg-cell ">20.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">180</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">IMM</td>
+            <td class="subject-cell">Industrial Maintenance and Mechatronics</td>
+            <td class="score-cell ">20</td><td class="score-cell ">20</td><td class="avg-cell ">20.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">200</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Sumfor Loic Ncham</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MEP3</td>
+            <td class="subject-cell">Mechanical Engineering Practicals 3</td>
+            <td class="score-cell ">20</td><td class="score-cell ">20</td><td class="avg-cell ">20.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">200</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">RES</td>
+            <td class="subject-cell">Renewable Energy Systems (Solar, Wind, Biomass)</td>
+            <td class="score-cell ">18</td><td class="score-cell ">20</td><td class="avg-cell ">18.8</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">188</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">WFT3</td>
+            <td class="subject-cell">Welding and Fabrication Technology</td>
+            <td class="score-cell ">20</td><td class="score-cell ">19</td><td class="avg-cell ">19.5</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">175.5</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Berinyuy Randy Mukum</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">1582</td>
+                      <td class="subtotal-remark"><span class="remark-excellent">Excellent</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Performance Summary -->
+              <div class="performance-summary">
+                <table class="summary-table">
+                  <tbody>
+                    <tr>
+                      <td class="summary-label">GRAND TOTAL:</td>
+                      <td class="summary-value">1991</td>
+                      <td class="summary-label">STUDENT AVERAGE:</td>
+                      <td class="summary-value">18.8/20</td>
+                    </tr>
+                    <tr>
+                      <td class="summary-label">CLASS AVERAGE:</td>
+                      <td class="summary-value">12/20</td>
+                      <td class="summary-label">CLASS RANK:</td>
+                      <td class="summary-value">1° of 10</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Bottom Section -->
+              <div class="bottom-section">
+                <div class="left-column">
+                  <div class="conduct-section">
+                    <h4>CONDUCT & ATTENDANCE</h4>
+                    <table class="conduct-table">
+                      <tbody>
+                        
+          <tr><td>Days Present:</td><td>/</td></tr>
+          <tr><td>Times Late:</td><td></td></tr>
+          <tr><td>Disciplinary Actions:</td><td></td></tr>
+        
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="center-column">
+                  <div class="grading-scale">
+                    <h4>GRADING SCALE</h4>
+                    <table class="scale-table">
+                      <tbody>
+                        <tr><td>0-9.9:</td><td><span class="remark-weak">Weak</span></td></tr><tr><td>10-12.9:</td><td><span class="remark-average">Good</span></td></tr><tr><td>13-15.9:</td><td><span class="remark-fairly-good">Very Good</span></td></tr><tr><td>16-17.9:</td><td><span class="remark-vgood">Execellent</span></td></tr><tr><td>18-20:</td><td><span class="remark-excellent">Distinction</span></td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="right-column">
+                  <div class="admin-section">
+                    <h4>ADMINISTRATION</h4>
+                    <table class="admin-table">
+                      <tbody>
+                        <tr>
+                          <td>Class Master:</td>
+                          <td>NJANG COLLINS</td>
+                        </tr>
+                        <tr>
+                          <td>Decision:</td>
+                          <td><span class="remark-good"></span></td>
+                        </tr>
+                        <tr>
+                          <td>Next Term:</td>
+                          <td></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Signatures with added space -->
+              <div class="signature-section">
+                <div class="signature-box">
+                  <div class="signature-title">CLASS MASTER</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NJANG COLLINS</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PRINCIPAL</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">MR. THOMAS AMBE</div>
+                  <div class="signature-date">Date, Signature & Seal</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PARENT/GUARDIAN</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NI JOHN FRU, LUM LADDELLE NGUM</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+              </div>
+              
+              <div class="footer-text">© 2025 Izzy Tech Team – Official Document | Votech (S7) Academy</div>
+            </div>
+          </div>
+        
+          <div class="report-card-wrapper overflow-severe">
+            <div class="report-card" style="--wm: url('http://localhost:5000/public/logo.png')">
+              <!-- Document Header -->
+              <div class="document-header">
+                <div class="header-content">
+                  <div class="left-section">
+                    <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
+                    <div class="motto">PAIX - TRAVAIL - PATRIE</div>
+                    <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
+                    <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                  
+                  <div class="center-emblem">
+                    <img src="http://localhost:5000/public/logo.png" alt="" class="report-card-logo" />
+                    <div class="center-text">
+                      <div class="igniting-text">IGNITING ''Preneurs</div>
+                      <div class="center-motto">Motto: Welfare, Productivity, Self Actualization</div>
+                    </div>
+                  </div>
+                  
+                  <div class="right-section">
+                    <div class="republic-text">REPUBLIC OF CAMEROON</div>
+                    <div class="motto">PEACE - WORK - FATHERLAND</div>
+                    <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
+                    <div class="department">DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                </div>
+                
+                <div class="document-title">
+                  <h1>ACADEMIC REPORT CARD</h1>
+                  <div class="term-info">FIRST TERM • 2024/2025 Academic Year</div>
+                </div>
+              </div>
+              
+              <!-- Student Information -->
+              <div class="student-info">
+                <table class="info-table">
+                  <tbody>
+                    <tr>
+                      <td class="label">Student Name:</td>
+                      <td class="value">Junior Talla Ndifon</td>
+                      <td class="label">Class:</td>
+                      <td class="value">Certification Level 3</td>
+                    </tr>
+                    <tr>
+                      <td class="label">Registration No:</td>
+                      <td class="value">25-VOT-JUON-009</td>
+                      <td class="label">Specialty:</td>
+                      <td class="value">Mechanical Engineering </td>
+                    </tr>
+                    <tr>
+                      <td class="label">Date of Birth:</td>
+                      <td class="value">2025-08-31</td>
+                      <td class="label">Academic Year:</td>
+                      <td class="value">2024/2025 Academic Year</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- General Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">ACS</td>
+            <td class="subject-cell">Advance Computer Studies</td>
+            <td class="score-cell ">11</td><td class="score-cell ">20</td><td class="avg-cell ">15.5</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">62</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ECAE</td>
+            <td class="subject-cell">Enterprise Creation and Entrepreneurship</td>
+            <td class="score-cell ">12</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">6.0</td>
+            <td class="coef-cell">8</td>
+            <td class="total-cell">48</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Eng3</td>
+            <td class="subject-cell">English Language III</td>
+            <td class="score-cell ">18</td><td class="score-cell ">12</td><td class="avg-cell ">15.0</td>
+            <td class="coef-cell">2</td>
+            <td class="total-cell">30</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Lum Sandra</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Law3</td>
+            <td class="subject-cell">Company Law</td>
+            <td class="score-cell ">18</td><td class="score-cell ">12</td><td class="avg-cell ">15.0</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">75</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MATH3</td>
+            <td class="subject-cell">Mathematics III</td>
+            <td class="score-cell ">14</td><td class="score-cell ">12</td><td class="avg-cell ">13.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">52</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Very Good</span></td>
+            <td class="teacher-cell">Njang Collins</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">267</td>
+                      <td class="subtotal-remark"><span class="remark-average">Average</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Professional Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">AMD</td>
+            <td class="subject-cell">Automotive Mechanics and Diagnostics</td>
+            <td class="score-cell low-score">5</td><td class="score-cell ">20</td><td class="avg-cell ">12.5</td>
+            <td class="coef-cell">7</td>
+            <td class="total-cell">87.5</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ASD</td>
+            <td class="subject-cell">Advance System Design</td>
+            <td class="score-cell ">12</td><td class="score-cell ">14</td><td class="avg-cell ">12.8</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">51.2</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">CAD3</td>
+            <td class="subject-cell">CNC Machining and CAD CAM Programming</td>
+            <td class="score-cell ">18</td><td class="score-cell low-score">8</td><td class="avg-cell ">13.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">130</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Very Good</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">FCT3</td>
+            <td class="subject-cell">Foundry and Casting Technology</td>
+            <td class="score-cell ">14</td><td class="score-cell low-score">7</td><td class="avg-cell ">10.5</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">52.5</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndeh Junior Nche-mukum Brice</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">GEP3</td>
+            <td class="subject-cell">General Engineering Principles 3</td>
+            <td class="score-cell ">15</td><td class="score-cell ">18</td><td class="avg-cell ">16.5</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">148.5</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">HVAC</td>
+            <td class="subject-cell">Refrigeration and Air Conditioning</td>
+            <td class="score-cell ">14</td><td class="score-cell low-score">5</td><td class="avg-cell low-score">9.5</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">85.5</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">IMM</td>
+            <td class="subject-cell">Industrial Maintenance and Mechatronics</td>
+            <td class="score-cell ">18</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">9.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">90</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Sumfor Loic Ncham</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MEP3</td>
+            <td class="subject-cell">Mechanical Engineering Practicals 3</td>
+            <td class="score-cell ">15</td><td class="score-cell ">11</td><td class="avg-cell ">13.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">130</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Very Good</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">RES</td>
+            <td class="subject-cell">Renewable Energy Systems (Solar, Wind, Biomass)</td>
+            <td class="score-cell ">16</td><td class="score-cell low-score">10</td><td class="avg-cell ">12.8</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">128</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">WFT3</td>
+            <td class="subject-cell">Welding and Fabrication Technology</td>
+            <td class="score-cell ">19</td><td class="score-cell low-score">5</td><td class="avg-cell ">12.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">108</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Berinyuy Randy Mukum</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">1011</td>
+                      <td class="subtotal-remark"><span class="remark-fairly-good">Fairly Good</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Performance Summary -->
+              <div class="performance-summary">
+                <table class="summary-table">
+                  <tbody>
+                    <tr>
+                      <td class="summary-label">GRAND TOTAL:</td>
+                      <td class="summary-value">1278</td>
+                      <td class="summary-label">STUDENT AVERAGE:</td>
+                      <td class="summary-value">12.1/20</td>
+                    </tr>
+                    <tr>
+                      <td class="summary-label">CLASS AVERAGE:</td>
+                      <td class="summary-value">12/20</td>
+                      <td class="summary-label">CLASS RANK:</td>
+                      <td class="summary-value">3° of 10</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Bottom Section -->
+              <div class="bottom-section">
+                <div class="left-column">
+                  <div class="conduct-section">
+                    <h4>CONDUCT & ATTENDANCE</h4>
+                    <table class="conduct-table">
+                      <tbody>
+                        
+          <tr><td>Days Present:</td><td>/</td></tr>
+          <tr><td>Times Late:</td><td></td></tr>
+          <tr><td>Disciplinary Actions:</td><td></td></tr>
+        
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="center-column">
+                  <div class="grading-scale">
+                    <h4>GRADING SCALE</h4>
+                    <table class="scale-table">
+                      <tbody>
+                        <tr><td>0-9.9:</td><td><span class="remark-weak">Weak</span></td></tr><tr><td>10-12.9:</td><td><span class="remark-average">Good</span></td></tr><tr><td>13-15.9:</td><td><span class="remark-fairly-good">Very Good</span></td></tr><tr><td>16-17.9:</td><td><span class="remark-vgood">Execellent</span></td></tr><tr><td>18-20:</td><td><span class="remark-excellent">Distinction</span></td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="right-column">
+                  <div class="admin-section">
+                    <h4>ADMINISTRATION</h4>
+                    <table class="admin-table">
+                      <tbody>
+                        <tr>
+                          <td>Class Master:</td>
+                          <td>NJANG COLLINS</td>
+                        </tr>
+                        <tr>
+                          <td>Decision:</td>
+                          <td><span class="remark-good"></span></td>
+                        </tr>
+                        <tr>
+                          <td>Next Term:</td>
+                          <td></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Signatures with added space -->
+              <div class="signature-section">
+                <div class="signature-box">
+                  <div class="signature-title">CLASS MASTER</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NJANG COLLINS</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PRINCIPAL</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">MR. THOMAS AMBE</div>
+                  <div class="signature-date">Date, Signature & Seal</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PARENT/GUARDIAN</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NI JOHN FRU, AWAH MILDRED</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+              </div>
+              
+              <div class="footer-text">© 2025 Izzy Tech Team – Official Document | Votech (S7) Academy</div>
+            </div>
+          </div>
+        
+          <div class="report-card-wrapper overflow-severe">
+            <div class="report-card" style="--wm: url('http://localhost:5000/public/logo.png')">
+              <!-- Document Header -->
+              <div class="document-header">
+                <div class="header-content">
+                  <div class="left-section">
+                    <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
+                    <div class="motto">PAIX - TRAVAIL - PATRIE</div>
+                    <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
+                    <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                  
+                  <div class="center-emblem">
+                    <img src="http://localhost:5000/public/logo.png" alt="" class="report-card-logo" />
+                    <div class="center-text">
+                      <div class="igniting-text">IGNITING ''Preneurs</div>
+                      <div class="center-motto">Motto: Welfare, Productivity, Self Actualization</div>
+                    </div>
+                  </div>
+                  
+                  <div class="right-section">
+                    <div class="republic-text">REPUBLIC OF CAMEROON</div>
+                    <div class="motto">PEACE - WORK - FATHERLAND</div>
+                    <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
+                    <div class="department">DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                </div>
+                
+                <div class="document-title">
+                  <h1>ACADEMIC REPORT CARD</h1>
+                  <div class="term-info">FIRST TERM • 2024/2025 Academic Year</div>
+                </div>
+              </div>
+              
+              <!-- Student Information -->
+              <div class="student-info">
+                <table class="info-table">
+                  <tbody>
+                    <tr>
+                      <td class="label">Student Name:</td>
+                      <td class="value">Emmanuel Tabe Ngwa</td>
+                      <td class="label">Class:</td>
+                      <td class="value">Certification Level 3</td>
+                    </tr>
+                    <tr>
+                      <td class="label">Registration No:</td>
+                      <td class="value">25-VOT-EMWA-001</td>
+                      <td class="label">Specialty:</td>
+                      <td class="value">Mechanical Engineering </td>
+                    </tr>
+                    <tr>
+                      <td class="label">Date of Birth:</td>
+                      <td class="value">2025-08-31</td>
+                      <td class="label">Academic Year:</td>
+                      <td class="value">2024/2025 Academic Year</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- General Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">ACS</td>
+            <td class="subject-cell">Advance Computer Studies</td>
+            <td class="score-cell ">20</td><td class="score-cell ">11</td><td class="avg-cell ">15.5</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">62</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ECAE</td>
+            <td class="subject-cell">Enterprise Creation and Entrepreneurship</td>
+            <td class="score-cell ">14</td><td class="score-cell ">11</td><td class="avg-cell ">12.5</td>
+            <td class="coef-cell">8</td>
+            <td class="total-cell">100</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Eng3</td>
+            <td class="subject-cell">English Language III</td>
+            <td class="score-cell ">14</td><td class="score-cell low-score">8</td><td class="avg-cell ">11.0</td>
+            <td class="coef-cell">2</td>
+            <td class="total-cell">22</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Lum Sandra</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Law3</td>
+            <td class="subject-cell">Company Law</td>
+            <td class="score-cell ">18</td><td class="score-cell ">14</td><td class="avg-cell ">16.0</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">80</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MATH3</td>
+            <td class="subject-cell">Mathematics III</td>
+            <td class="score-cell ">14</td><td class="score-cell ">14</td><td class="avg-cell ">14.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">56</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Njang Collins</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">320</td>
+                      <td class="subtotal-remark"><span class="remark-fairly-good">Fairly Good</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Professional Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">AMD</td>
+            <td class="subject-cell">Automotive Mechanics and Diagnostics</td>
+            <td class="score-cell ">12</td><td class="score-cell ">15</td><td class="avg-cell ">13.5</td>
+            <td class="coef-cell">7</td>
+            <td class="total-cell">94.5</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Very Good</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ASD</td>
+            <td class="subject-cell">Advance System Design</td>
+            <td class="score-cell ">14</td><td class="score-cell ">14</td><td class="avg-cell ">14.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">56</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">CAD3</td>
+            <td class="subject-cell">CNC Machining and CAD CAM Programming</td>
+            <td class="score-cell ">12</td><td class="score-cell ">12</td><td class="avg-cell ">12.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">120</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">FCT3</td>
+            <td class="subject-cell">Foundry and Casting Technology</td>
+            <td class="score-cell ">14</td><td class="score-cell ">14</td><td class="avg-cell ">14.0</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">70</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Ndeh Junior Nche-mukum Brice</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">GEP3</td>
+            <td class="subject-cell">General Engineering Principles 3</td>
+            <td class="score-cell ">18</td><td class="score-cell low-score">5</td><td class="avg-cell ">11.5</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">103.5</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">HVAC</td>
+            <td class="subject-cell">Refrigeration and Air Conditioning</td>
+            <td class="score-cell ">20</td><td class="score-cell ">12</td><td class="avg-cell ">16.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">144</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">IMM</td>
+            <td class="subject-cell">Industrial Maintenance and Mechatronics</td>
+            <td class="score-cell ">15</td><td class="score-cell ">15</td><td class="avg-cell ">15.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">150</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Sumfor Loic Ncham</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MEP3</td>
+            <td class="subject-cell">Mechanical Engineering Practicals 3</td>
+            <td class="score-cell low-score">0</td><td class="score-cell ">11</td><td class="avg-cell low-score">5.5</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">55</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">RES</td>
+            <td class="subject-cell">Renewable Energy Systems (Solar, Wind, Biomass)</td>
+            <td class="score-cell ">11</td><td class="score-cell ">14</td><td class="avg-cell ">12.5</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">125</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">WFT3</td>
+            <td class="subject-cell">Welding and Fabrication Technology</td>
+            <td class="score-cell ">14</td><td class="score-cell ">14</td><td class="avg-cell ">14.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">126</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Berinyuy Randy Mukum</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">1044</td>
+                      <td class="subtotal-remark"><span class="remark-fairly-good">Fairly Good</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Performance Summary -->
+              <div class="performance-summary">
+                <table class="summary-table">
+                  <tbody>
+                    <tr>
+                      <td class="summary-label">GRAND TOTAL:</td>
+                      <td class="summary-value">1364</td>
+                      <td class="summary-label">STUDENT AVERAGE:</td>
+                      <td class="summary-value">12.9/20</td>
+                    </tr>
+                    <tr>
+                      <td class="summary-label">CLASS AVERAGE:</td>
+                      <td class="summary-value">12/20</td>
+                      <td class="summary-label">CLASS RANK:</td>
+                      <td class="summary-value">2° of 10</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Bottom Section -->
+              <div class="bottom-section">
+                <div class="left-column">
+                  <div class="conduct-section">
+                    <h4>CONDUCT & ATTENDANCE</h4>
+                    <table class="conduct-table">
+                      <tbody>
+                        
+          <tr><td>Days Present:</td><td>/</td></tr>
+          <tr><td>Times Late:</td><td></td></tr>
+          <tr><td>Disciplinary Actions:</td><td></td></tr>
+        
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="center-column">
+                  <div class="grading-scale">
+                    <h4>GRADING SCALE</h4>
+                    <table class="scale-table">
+                      <tbody>
+                        <tr><td>0-9.9:</td><td><span class="remark-weak">Weak</span></td></tr><tr><td>10-12.9:</td><td><span class="remark-average">Good</span></td></tr><tr><td>13-15.9:</td><td><span class="remark-fairly-good">Very Good</span></td></tr><tr><td>16-17.9:</td><td><span class="remark-vgood">Execellent</span></td></tr><tr><td>18-20:</td><td><span class="remark-excellent">Distinction</span></td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="right-column">
+                  <div class="admin-section">
+                    <h4>ADMINISTRATION</h4>
+                    <table class="admin-table">
+                      <tbody>
+                        <tr>
+                          <td>Class Master:</td>
+                          <td>NJANG COLLINS</td>
+                        </tr>
+                        <tr>
+                          <td>Decision:</td>
+                          <td><span class="remark-good"></span></td>
+                        </tr>
+                        <tr>
+                          <td>Next Term:</td>
+                          <td></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Signatures with added space -->
+              <div class="signature-section">
+                <div class="signature-box">
+                  <div class="signature-title">CLASS MASTER</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NJANG COLLINS</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PRINCIPAL</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">MR. THOMAS AMBE</div>
+                  <div class="signature-date">Date, Signature & Seal</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PARENT/GUARDIAN</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NI JOHN FRU, NDI CHANCELING FRU</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+              </div>
+              
+              <div class="footer-text">© 2025 Izzy Tech Team – Official Document | Votech (S7) Academy</div>
+            </div>
+          </div>
+        
+          <div class="report-card-wrapper overflow-severe">
+            <div class="report-card" style="--wm: url('http://localhost:5000/public/logo.png')">
+              <!-- Document Header -->
+              <div class="document-header">
+                <div class="header-content">
+                  <div class="left-section">
+                    <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
+                    <div class="motto">PAIX - TRAVAIL - PATRIE</div>
+                    <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
+                    <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                  
+                  <div class="center-emblem">
+                    <img src="http://localhost:5000/public/logo.png" alt="" class="report-card-logo" />
+                    <div class="center-text">
+                      <div class="igniting-text">IGNITING ''Preneurs</div>
+                      <div class="center-motto">Motto: Welfare, Productivity, Self Actualization</div>
+                    </div>
+                  </div>
+                  
+                  <div class="right-section">
+                    <div class="republic-text">REPUBLIC OF CAMEROON</div>
+                    <div class="motto">PEACE - WORK - FATHERLAND</div>
+                    <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
+                    <div class="department">DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                </div>
+                
+                <div class="document-title">
+                  <h1>ACADEMIC REPORT CARD</h1>
+                  <div class="term-info">FIRST TERM • 2024/2025 Academic Year</div>
+                </div>
+              </div>
+              
+              <!-- Student Information -->
+              <div class="student-info">
+                <table class="info-table">
+                  <tbody>
+                    <tr>
+                      <td class="label">Student Name:</td>
+                      <td class="value">Brenda Lema Tchouangue</td>
+                      <td class="label">Class:</td>
+                      <td class="value">Certification Level 3</td>
+                    </tr>
+                    <tr>
+                      <td class="label">Registration No:</td>
+                      <td class="value">25-VOT-BRUE-002</td>
+                      <td class="label">Specialty:</td>
+                      <td class="value">Mechanical Engineering </td>
+                    </tr>
+                    <tr>
+                      <td class="label">Date of Birth:</td>
+                      <td class="value">2025-08-31</td>
+                      <td class="label">Academic Year:</td>
+                      <td class="value">2024/2025 Academic Year</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- General Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">ACS</td>
+            <td class="subject-cell">Advance Computer Studies</td>
+            <td class="score-cell ">14</td><td class="score-cell ">20</td><td class="avg-cell ">17.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">68</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ECAE</td>
+            <td class="subject-cell">Enterprise Creation and Entrepreneurship</td>
+            <td class="score-cell ">18</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">9.0</td>
+            <td class="coef-cell">8</td>
+            <td class="total-cell">72</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Eng3</td>
+            <td class="subject-cell">English Language III</td>
+            <td class="score-cell ">20</td><td class="score-cell low-score">8</td><td class="avg-cell ">14.0</td>
+            <td class="coef-cell">2</td>
+            <td class="total-cell">28</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Lum Sandra</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Law3</td>
+            <td class="subject-cell">Company Law</td>
+            <td class="score-cell ">14</td><td class="score-cell low-score">9</td><td class="avg-cell ">11.5</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">57.5</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MATH3</td>
+            <td class="subject-cell">Mathematics III</td>
+            <td class="score-cell ">11</td><td class="score-cell ">14</td><td class="avg-cell ">12.5</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">50</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Njang Collins</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">276</td>
+                      <td class="subtotal-remark"><span class="remark-fairly-good">Fairly Good</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Professional Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">AMD</td>
+            <td class="subject-cell">Automotive Mechanics and Diagnostics</td>
+            <td class="score-cell ">13</td><td class="score-cell ">12</td><td class="avg-cell ">12.5</td>
+            <td class="coef-cell">7</td>
+            <td class="total-cell">87.5</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ASD</td>
+            <td class="subject-cell">Advance System Design</td>
+            <td class="score-cell ">14</td><td class="score-cell low-score">2</td><td class="avg-cell low-score">8.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">32</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">CAD3</td>
+            <td class="subject-cell">CNC Machining and CAD CAM Programming</td>
+            <td class="score-cell low-score">0</td><td class="score-cell ">13</td><td class="avg-cell low-score">6.5</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">65</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">FCT3</td>
+            <td class="subject-cell">Foundry and Casting Technology</td>
+            <td class="score-cell low-score">5</td><td class="score-cell ">13</td><td class="avg-cell low-score">9.0</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">45</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndeh Junior Nche-mukum Brice</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">GEP3</td>
+            <td class="subject-cell">General Engineering Principles 3</td>
+            <td class="score-cell ">20</td><td class="score-cell ">18</td><td class="avg-cell ">19.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">171</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">HVAC</td>
+            <td class="subject-cell">Refrigeration and Air Conditioning</td>
+            <td class="score-cell ">18</td><td class="score-cell ">15</td><td class="avg-cell ">16.5</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">148.5</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">IMM</td>
+            <td class="subject-cell">Industrial Maintenance and Mechatronics</td>
+            <td class="score-cell low-score">0</td><td class="score-cell ">14</td><td class="avg-cell low-score">7.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">70</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Sumfor Loic Ncham</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MEP3</td>
+            <td class="subject-cell">Mechanical Engineering Practicals 3</td>
+            <td class="score-cell low-score">0</td><td class="score-cell ">12</td><td class="avg-cell low-score">6.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">60</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">RES</td>
+            <td class="subject-cell">Renewable Energy Systems (Solar, Wind, Biomass)</td>
+            <td class="score-cell ">12</td><td class="score-cell ">12</td><td class="avg-cell ">12.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">120</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">WFT3</td>
+            <td class="subject-cell">Welding and Fabrication Technology</td>
+            <td class="score-cell ">18</td><td class="score-cell ">12</td><td class="avg-cell ">15.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">135</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Berinyuy Randy Mukum</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">934</td>
+                      <td class="subtotal-remark"><span class="remark-average">Average</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Performance Summary -->
+              <div class="performance-summary">
+                <table class="summary-table">
+                  <tbody>
+                    <tr>
+                      <td class="summary-label">GRAND TOTAL:</td>
+                      <td class="summary-value">1210</td>
+                      <td class="summary-label">STUDENT AVERAGE:</td>
+                      <td class="summary-value">11.4/20</td>
+                    </tr>
+                    <tr>
+                      <td class="summary-label">CLASS AVERAGE:</td>
+                      <td class="summary-value">12/20</td>
+                      <td class="summary-label">CLASS RANK:</td>
+                      <td class="summary-value">4° of 10</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Bottom Section -->
+              <div class="bottom-section">
+                <div class="left-column">
+                  <div class="conduct-section">
+                    <h4>CONDUCT & ATTENDANCE</h4>
+                    <table class="conduct-table">
+                      <tbody>
+                        
+          <tr><td>Days Present:</td><td>/</td></tr>
+          <tr><td>Times Late:</td><td></td></tr>
+          <tr><td>Disciplinary Actions:</td><td></td></tr>
+        
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="center-column">
+                  <div class="grading-scale">
+                    <h4>GRADING SCALE</h4>
+                    <table class="scale-table">
+                      <tbody>
+                        <tr><td>0-9.9:</td><td><span class="remark-weak">Weak</span></td></tr><tr><td>10-12.9:</td><td><span class="remark-average">Good</span></td></tr><tr><td>13-15.9:</td><td><span class="remark-fairly-good">Very Good</span></td></tr><tr><td>16-17.9:</td><td><span class="remark-vgood">Execellent</span></td></tr><tr><td>18-20:</td><td><span class="remark-excellent">Distinction</span></td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="right-column">
+                  <div class="admin-section">
+                    <h4>ADMINISTRATION</h4>
+                    <table class="admin-table">
+                      <tbody>
+                        <tr>
+                          <td>Class Master:</td>
+                          <td>NJANG COLLINS</td>
+                        </tr>
+                        <tr>
+                          <td>Decision:</td>
+                          <td><span class="remark-good"></span></td>
+                        </tr>
+                        <tr>
+                          <td>Next Term:</td>
+                          <td></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Signatures with added space -->
+              <div class="signature-section">
+                <div class="signature-box">
+                  <div class="signature-title">CLASS MASTER</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NJANG COLLINS</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PRINCIPAL</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">MR. THOMAS AMBE</div>
+                  <div class="signature-date">Date, Signature & Seal</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PARENT/GUARDIAN</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NI JOHN FRU, NDI CHANCELING FRU</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+              </div>
+              
+              <div class="footer-text">© 2025 Izzy Tech Team – Official Document | Votech (S7) Academy</div>
+            </div>
+          </div>
+        
+          <div class="report-card-wrapper overflow-severe">
+            <div class="report-card" style="--wm: url('http://localhost:5000/public/logo.png')">
+              <!-- Document Header -->
+              <div class="document-header">
+                <div class="header-content">
+                  <div class="left-section">
+                    <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
+                    <div class="motto">PAIX - TRAVAIL - PATRIE</div>
+                    <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
+                    <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                  
+                  <div class="center-emblem">
+                    <img src="http://localhost:5000/public/logo.png" alt="" class="report-card-logo" />
+                    <div class="center-text">
+                      <div class="igniting-text">IGNITING ''Preneurs</div>
+                      <div class="center-motto">Motto: Welfare, Productivity, Self Actualization</div>
+                    </div>
+                  </div>
+                  
+                  <div class="right-section">
+                    <div class="republic-text">REPUBLIC OF CAMEROON</div>
+                    <div class="motto">PEACE - WORK - FATHERLAND</div>
+                    <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
+                    <div class="department">DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                </div>
+                
+                <div class="document-title">
+                  <h1>ACADEMIC REPORT CARD</h1>
+                  <div class="term-info">FIRST TERM • 2024/2025 Academic Year</div>
+                </div>
+              </div>
+              
+              <!-- Student Information -->
+              <div class="student-info">
+                <table class="info-table">
+                  <tbody>
+                    <tr>
+                      <td class="label">Student Name:</td>
+                      <td class="value">Roland Che Jude Nfor</td>
+                      <td class="label">Class:</td>
+                      <td class="value">Certification Level 3</td>
+                    </tr>
+                    <tr>
+                      <td class="label">Registration No:</td>
+                      <td class="value">25-VOT-ROOR-003</td>
+                      <td class="label">Specialty:</td>
+                      <td class="value">Mechanical Engineering </td>
+                    </tr>
+                    <tr>
+                      <td class="label">Date of Birth:</td>
+                      <td class="value">2025-08-31</td>
+                      <td class="label">Academic Year:</td>
+                      <td class="value">2024/2025 Academic Year</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- General Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">ACS</td>
+            <td class="subject-cell">Advance Computer Studies</td>
+            <td class="score-cell ">14</td><td class="score-cell ">14</td><td class="avg-cell ">14.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">56</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ECAE</td>
+            <td class="subject-cell">Enterprise Creation and Entrepreneurship</td>
+            <td class="score-cell ">11</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">5.5</td>
+            <td class="coef-cell">8</td>
+            <td class="total-cell">44</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Eng3</td>
+            <td class="subject-cell">English Language III</td>
+            <td class="score-cell ">17</td><td class="score-cell low-score">9</td><td class="avg-cell ">13.0</td>
+            <td class="coef-cell">2</td>
+            <td class="total-cell">26</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Very Good</span></td>
+            <td class="teacher-cell">Lum Sandra</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Law3</td>
+            <td class="subject-cell">Company Law</td>
+            <td class="score-cell ">10</td><td class="score-cell low-score">4</td><td class="avg-cell low-score">7.0</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">35</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MATH3</td>
+            <td class="subject-cell">Mathematics III</td>
+            <td class="score-cell ">13</td><td class="score-cell low-score">8</td><td class="avg-cell ">10.5</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">42</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Njang Collins</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">203</td>
+                      <td class="subtotal-remark"><span class="remark-weak">Weak</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Professional Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">AMD</td>
+            <td class="subject-cell">Automotive Mechanics and Diagnostics</td>
+            <td class="score-cell low-score">8</td><td class="score-cell ">15</td><td class="avg-cell ">11.5</td>
+            <td class="coef-cell">7</td>
+            <td class="total-cell">80.5</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ASD</td>
+            <td class="subject-cell">Advance System Design</td>
+            <td class="score-cell ">15</td><td class="score-cell low-score">8</td><td class="avg-cell ">11.5</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">46</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">CAD3</td>
+            <td class="subject-cell">CNC Machining and CAD CAM Programming</td>
+            <td class="score-cell ">18</td><td class="score-cell ">18</td><td class="avg-cell ">18.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">180</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">FCT3</td>
+            <td class="subject-cell">Foundry and Casting Technology</td>
+            <td class="score-cell ">13</td><td class="score-cell low-score">4</td><td class="avg-cell low-score">8.5</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">42.5</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndeh Junior Nche-mukum Brice</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">GEP3</td>
+            <td class="subject-cell">General Engineering Principles 3</td>
+            <td class="score-cell low-score">9</td><td class="score-cell ">12</td><td class="avg-cell ">10.5</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">94.5</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">HVAC</td>
+            <td class="subject-cell">Refrigeration and Air Conditioning</td>
+            <td class="score-cell ">14</td><td class="score-cell ">15</td><td class="avg-cell ">14.5</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">130.5</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">IMM</td>
+            <td class="subject-cell">Industrial Maintenance and Mechatronics</td>
+            <td class="score-cell low-score">0</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">0.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">0</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Sumfor Loic Ncham</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MEP3</td>
+            <td class="subject-cell">Mechanical Engineering Practicals 3</td>
+            <td class="score-cell ">20</td><td class="score-cell ">16</td><td class="avg-cell ">18.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">180</td>
+            <td class="remark-cell"><span class="remark-excellent">Distinction</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">RES</td>
+            <td class="subject-cell">Renewable Energy Systems (Solar, Wind, Biomass)</td>
+            <td class="score-cell ">12</td><td class="score-cell ">11</td><td class="avg-cell ">11.5</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">115</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">WFT3</td>
+            <td class="subject-cell">Welding and Fabrication Technology</td>
+            <td class="score-cell ">13</td><td class="score-cell low-score">5</td><td class="avg-cell low-score">9.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">81</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Berinyuy Randy Mukum</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">950</td>
+                      <td class="subtotal-remark"><span class="remark-average">Average</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Performance Summary -->
+              <div class="performance-summary">
+                <table class="summary-table">
+                  <tbody>
+                    <tr>
+                      <td class="summary-label">GRAND TOTAL:</td>
+                      <td class="summary-value">1153</td>
+                      <td class="summary-label">STUDENT AVERAGE:</td>
+                      <td class="summary-value">10.9/20</td>
+                    </tr>
+                    <tr>
+                      <td class="summary-label">CLASS AVERAGE:</td>
+                      <td class="summary-value">12/20</td>
+                      <td class="summary-label">CLASS RANK:</td>
+                      <td class="summary-value">7° of 10</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Bottom Section -->
+              <div class="bottom-section">
+                <div class="left-column">
+                  <div class="conduct-section">
+                    <h4>CONDUCT & ATTENDANCE</h4>
+                    <table class="conduct-table">
+                      <tbody>
+                        
+          <tr><td>Days Present:</td><td>/</td></tr>
+          <tr><td>Times Late:</td><td></td></tr>
+          <tr><td>Disciplinary Actions:</td><td></td></tr>
+        
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="center-column">
+                  <div class="grading-scale">
+                    <h4>GRADING SCALE</h4>
+                    <table class="scale-table">
+                      <tbody>
+                        <tr><td>0-9.9:</td><td><span class="remark-weak">Weak</span></td></tr><tr><td>10-12.9:</td><td><span class="remark-average">Good</span></td></tr><tr><td>13-15.9:</td><td><span class="remark-fairly-good">Very Good</span></td></tr><tr><td>16-17.9:</td><td><span class="remark-vgood">Execellent</span></td></tr><tr><td>18-20:</td><td><span class="remark-excellent">Distinction</span></td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="right-column">
+                  <div class="admin-section">
+                    <h4>ADMINISTRATION</h4>
+                    <table class="admin-table">
+                      <tbody>
+                        <tr>
+                          <td>Class Master:</td>
+                          <td>NJANG COLLINS</td>
+                        </tr>
+                        <tr>
+                          <td>Decision:</td>
+                          <td><span class="remark-good"></span></td>
+                        </tr>
+                        <tr>
+                          <td>Next Term:</td>
+                          <td></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Signatures with added space -->
+              <div class="signature-section">
+                <div class="signature-box">
+                  <div class="signature-title">CLASS MASTER</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NJANG COLLINS</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PRINCIPAL</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">MR. THOMAS AMBE</div>
+                  <div class="signature-date">Date, Signature & Seal</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PARENT/GUARDIAN</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NI JOHN FRU, MBICHAM LOUISE SANGA</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+              </div>
+              
+              <div class="footer-text">© 2025 Izzy Tech Team – Official Document | Votech (S7) Academy</div>
+            </div>
+          </div>
+        
+          <div class="report-card-wrapper overflow-severe">
+            <div class="report-card" style="--wm: url('http://localhost:5000/public/logo.png')">
+              <!-- Document Header -->
+              <div class="document-header">
+                <div class="header-content">
+                  <div class="left-section">
+                    <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
+                    <div class="motto">PAIX - TRAVAIL - PATRIE</div>
+                    <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
+                    <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                  
+                  <div class="center-emblem">
+                    <img src="http://localhost:5000/public/logo.png" alt="" class="report-card-logo" />
+                    <div class="center-text">
+                      <div class="igniting-text">IGNITING ''Preneurs</div>
+                      <div class="center-motto">Motto: Welfare, Productivity, Self Actualization</div>
+                    </div>
+                  </div>
+                  
+                  <div class="right-section">
+                    <div class="republic-text">REPUBLIC OF CAMEROON</div>
+                    <div class="motto">PEACE - WORK - FATHERLAND</div>
+                    <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
+                    <div class="department">DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                </div>
+                
+                <div class="document-title">
+                  <h1>ACADEMIC REPORT CARD</h1>
+                  <div class="term-info">FIRST TERM • 2024/2025 Academic Year</div>
+                </div>
+              </div>
+              
+              <!-- Student Information -->
+              <div class="student-info">
+                <table class="info-table">
+                  <tbody>
+                    <tr>
+                      <td class="label">Student Name:</td>
+                      <td class="value">Collins Abang Eyong</td>
+                      <td class="label">Class:</td>
+                      <td class="value">Certification Level 3</td>
+                    </tr>
+                    <tr>
+                      <td class="label">Registration No:</td>
+                      <td class="value">25-VOT-CONG-007</td>
+                      <td class="label">Specialty:</td>
+                      <td class="value">Mechanical Engineering </td>
+                    </tr>
+                    <tr>
+                      <td class="label">Date of Birth:</td>
+                      <td class="value">2025-08-31</td>
+                      <td class="label">Academic Year:</td>
+                      <td class="value">2024/2025 Academic Year</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- General Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">ACS</td>
+            <td class="subject-cell">Advance Computer Studies</td>
+            <td class="score-cell low-score">0</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">0.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">0</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ECAE</td>
+            <td class="subject-cell">Enterprise Creation and Entrepreneurship</td>
+            <td class="score-cell low-score">0</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">0.0</td>
+            <td class="coef-cell">8</td>
+            <td class="total-cell">0</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Eng3</td>
+            <td class="subject-cell">English Language III</td>
+            <td class="score-cell ">11</td><td class="score-cell low-score">4</td><td class="avg-cell low-score">7.5</td>
+            <td class="coef-cell">2</td>
+            <td class="total-cell">15</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Lum Sandra</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Law3</td>
+            <td class="subject-cell">Company Law</td>
+            <td class="score-cell ">14</td><td class="score-cell ">16</td><td class="avg-cell ">15.0</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">75</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MATH3</td>
+            <td class="subject-cell">Mathematics III</td>
+            <td class="score-cell ">12</td><td class="score-cell ">14</td><td class="avg-cell ">13.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">52</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Very Good</span></td>
+            <td class="teacher-cell">Njang Collins</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">142</td>
+                      <td class="subtotal-remark"><span class="remark-weak">Weak</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Professional Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">AMD</td>
+            <td class="subject-cell">Automotive Mechanics and Diagnostics</td>
+            <td class="score-cell low-score">8</td><td class="score-cell ">14</td><td class="avg-cell ">11.0</td>
+            <td class="coef-cell">7</td>
+            <td class="total-cell">77</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ASD</td>
+            <td class="subject-cell">Advance System Design</td>
+            <td class="score-cell ">18</td><td class="score-cell ">11</td><td class="avg-cell ">14.5</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">58</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">CAD3</td>
+            <td class="subject-cell">CNC Machining and CAD CAM Programming</td>
+            <td class="score-cell ">17</td><td class="score-cell ">18</td><td class="avg-cell ">17.5</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">175</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">FCT3</td>
+            <td class="subject-cell">Foundry and Casting Technology</td>
+            <td class="score-cell ">15</td><td class="score-cell ">18</td><td class="avg-cell ">16.5</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">82.5</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Ndeh Junior Nche-mukum Brice</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">GEP3</td>
+            <td class="subject-cell">General Engineering Principles 3</td>
+            <td class="score-cell ">13</td><td class="score-cell low-score">2</td><td class="avg-cell low-score">7.5</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">67.5</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">HVAC</td>
+            <td class="subject-cell">Refrigeration and Air Conditioning</td>
+            <td class="score-cell ">14</td><td class="score-cell ">18</td><td class="avg-cell ">16.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">144</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">IMM</td>
+            <td class="subject-cell">Industrial Maintenance and Mechatronics</td>
+            <td class="score-cell low-score">0</td><td class="score-cell ">18</td><td class="avg-cell low-score">9.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">90</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Sumfor Loic Ncham</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MEP3</td>
+            <td class="subject-cell">Mechanical Engineering Practicals 3</td>
+            <td class="score-cell ">11</td><td class="score-cell ">14</td><td class="avg-cell ">12.5</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">125</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">RES</td>
+            <td class="subject-cell">Renewable Energy Systems (Solar, Wind, Biomass)</td>
+            <td class="score-cell ">12</td><td class="score-cell low-score">7</td><td class="avg-cell low-score">9.5</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">95</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">WFT3</td>
+            <td class="subject-cell">Welding and Fabrication Technology</td>
+            <td class="score-cell ">19</td><td class="score-cell ">13</td><td class="avg-cell ">16.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">144</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Berinyuy Randy Mukum</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">1058</td>
+                      <td class="subtotal-remark"><span class="remark-fairly-good">Fairly Good</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Performance Summary -->
+              <div class="performance-summary">
+                <table class="summary-table">
+                  <tbody>
+                    <tr>
+                      <td class="summary-label">GRAND TOTAL:</td>
+                      <td class="summary-value">1200</td>
+                      <td class="summary-label">STUDENT AVERAGE:</td>
+                      <td class="summary-value">11.3/20</td>
+                    </tr>
+                    <tr>
+                      <td class="summary-label">CLASS AVERAGE:</td>
+                      <td class="summary-value">12/20</td>
+                      <td class="summary-label">CLASS RANK:</td>
+                      <td class="summary-value">6° of 10</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Bottom Section -->
+              <div class="bottom-section">
+                <div class="left-column">
+                  <div class="conduct-section">
+                    <h4>CONDUCT & ATTENDANCE</h4>
+                    <table class="conduct-table">
+                      <tbody>
+                        
+          <tr><td>Days Present:</td><td>/</td></tr>
+          <tr><td>Times Late:</td><td></td></tr>
+          <tr><td>Disciplinary Actions:</td><td></td></tr>
+        
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="center-column">
+                  <div class="grading-scale">
+                    <h4>GRADING SCALE</h4>
+                    <table class="scale-table">
+                      <tbody>
+                        <tr><td>0-9.9:</td><td><span class="remark-weak">Weak</span></td></tr><tr><td>10-12.9:</td><td><span class="remark-average">Good</span></td></tr><tr><td>13-15.9:</td><td><span class="remark-fairly-good">Very Good</span></td></tr><tr><td>16-17.9:</td><td><span class="remark-vgood">Execellent</span></td></tr><tr><td>18-20:</td><td><span class="remark-excellent">Distinction</span></td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="right-column">
+                  <div class="admin-section">
+                    <h4>ADMINISTRATION</h4>
+                    <table class="admin-table">
+                      <tbody>
+                        <tr>
+                          <td>Class Master:</td>
+                          <td>NJANG COLLINS</td>
+                        </tr>
+                        <tr>
+                          <td>Decision:</td>
+                          <td><span class="remark-good"></span></td>
+                        </tr>
+                        <tr>
+                          <td>Next Term:</td>
+                          <td></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Signatures with added space -->
+              <div class="signature-section">
+                <div class="signature-box">
+                  <div class="signature-title">CLASS MASTER</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NJANG COLLINS</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PRINCIPAL</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">MR. THOMAS AMBE</div>
+                  <div class="signature-date">Date, Signature & Seal</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PARENT/GUARDIAN</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NI JOHN FRU, DIDIER PRIZOLINE MUKUM-WAIN</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+              </div>
+              
+              <div class="footer-text">© 2025 Izzy Tech Team – Official Document | Votech (S7) Academy</div>
+            </div>
+          </div>
+        
+          <div class="report-card-wrapper overflow-severe">
+            <div class="report-card" style="--wm: url('http://localhost:5000/public/logo.png')">
+              <!-- Document Header -->
+              <div class="document-header">
+                <div class="header-content">
+                  <div class="left-section">
+                    <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
+                    <div class="motto">PAIX - TRAVAIL - PATRIE</div>
+                    <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
+                    <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                  
+                  <div class="center-emblem">
+                    <img src="http://localhost:5000/public/logo.png" alt="" class="report-card-logo" />
+                    <div class="center-text">
+                      <div class="igniting-text">IGNITING ''Preneurs</div>
+                      <div class="center-motto">Motto: Welfare, Productivity, Self Actualization</div>
+                    </div>
+                  </div>
+                  
+                  <div class="right-section">
+                    <div class="republic-text">REPUBLIC OF CAMEROON</div>
+                    <div class="motto">PEACE - WORK - FATHERLAND</div>
+                    <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
+                    <div class="department">DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                </div>
+                
+                <div class="document-title">
+                  <h1>ACADEMIC REPORT CARD</h1>
+                  <div class="term-info">FIRST TERM • 2024/2025 Academic Year</div>
+                </div>
+              </div>
+              
+              <!-- Student Information -->
+              <div class="student-info">
+                <table class="info-table">
+                  <tbody>
+                    <tr>
+                      <td class="label">Student Name:</td>
+                      <td class="value">Linda Ashu Fonjong</td>
+                      <td class="label">Class:</td>
+                      <td class="value">Certification Level 3</td>
+                    </tr>
+                    <tr>
+                      <td class="label">Registration No:</td>
+                      <td class="value">25-VOT-LING-006</td>
+                      <td class="label">Specialty:</td>
+                      <td class="value">Mechanical Engineering </td>
+                    </tr>
+                    <tr>
+                      <td class="label">Date of Birth:</td>
+                      <td class="value">2025-08-31</td>
+                      <td class="label">Academic Year:</td>
+                      <td class="value">2024/2025 Academic Year</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- General Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">ACS</td>
+            <td class="subject-cell">Advance Computer Studies</td>
+            <td class="score-cell low-score">0</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">0.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">0</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ECAE</td>
+            <td class="subject-cell">Enterprise Creation and Entrepreneurship</td>
+            <td class="score-cell ">14</td><td class="score-cell ">12</td><td class="avg-cell ">13.0</td>
+            <td class="coef-cell">8</td>
+            <td class="total-cell">104</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Very Good</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Eng3</td>
+            <td class="subject-cell">English Language III</td>
+            <td class="score-cell ">14</td><td class="score-cell low-score">4</td><td class="avg-cell low-score">9.0</td>
+            <td class="coef-cell">2</td>
+            <td class="total-cell">18</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Lum Sandra</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Law3</td>
+            <td class="subject-cell">Company Law</td>
+            <td class="score-cell ">18</td><td class="score-cell ">14</td><td class="avg-cell ">16.0</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">80</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MATH3</td>
+            <td class="subject-cell">Mathematics III</td>
+            <td class="score-cell ">14</td><td class="score-cell ">17</td><td class="avg-cell ">15.5</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">62</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Njang Collins</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">264</td>
+                      <td class="subtotal-remark"><span class="remark-average">Average</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Professional Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">AMD</td>
+            <td class="subject-cell">Automotive Mechanics and Diagnostics</td>
+            <td class="score-cell low-score">7</td><td class="score-cell ">13</td><td class="avg-cell ">10.0</td>
+            <td class="coef-cell">7</td>
+            <td class="total-cell">70</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ASD</td>
+            <td class="subject-cell">Advance System Design</td>
+            <td class="score-cell ">14</td><td class="score-cell ">11</td><td class="avg-cell ">12.5</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">50</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">CAD3</td>
+            <td class="subject-cell">CNC Machining and CAD CAM Programming</td>
+            <td class="score-cell ">14</td><td class="score-cell ">15</td><td class="avg-cell ">14.5</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">145</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">FCT3</td>
+            <td class="subject-cell">Foundry and Casting Technology</td>
+            <td class="score-cell ">10</td><td class="score-cell ">13</td><td class="avg-cell ">11.5</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">57.5</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndeh Junior Nche-mukum Brice</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">GEP3</td>
+            <td class="subject-cell">General Engineering Principles 3</td>
+            <td class="score-cell low-score">9</td><td class="score-cell ">15</td><td class="avg-cell ">11.8</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">106.2</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">HVAC</td>
+            <td class="subject-cell">Refrigeration and Air Conditioning</td>
+            <td class="score-cell ">12</td><td class="score-cell low-score">7</td><td class="avg-cell low-score">9.5</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">85.5</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">IMM</td>
+            <td class="subject-cell">Industrial Maintenance and Mechatronics</td>
+            <td class="score-cell ">12</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">6.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">60</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Sumfor Loic Ncham</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MEP3</td>
+            <td class="subject-cell">Mechanical Engineering Practicals 3</td>
+            <td class="score-cell low-score">0</td><td class="score-cell ">18</td><td class="avg-cell low-score">9.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">90</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">RES</td>
+            <td class="subject-cell">Renewable Energy Systems (Solar, Wind, Biomass)</td>
+            <td class="score-cell ">12</td><td class="score-cell ">14</td><td class="avg-cell ">13.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">130</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Very Good</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">WFT3</td>
+            <td class="subject-cell">Welding and Fabrication Technology</td>
+            <td class="score-cell ">18</td><td class="score-cell ">15</td><td class="avg-cell ">16.5</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">148.5</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Berinyuy Randy Mukum</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">943</td>
+                      <td class="subtotal-remark"><span class="remark-average">Average</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Performance Summary -->
+              <div class="performance-summary">
+                <table class="summary-table">
+                  <tbody>
+                    <tr>
+                      <td class="summary-label">GRAND TOTAL:</td>
+                      <td class="summary-value">1207</td>
+                      <td class="summary-label">STUDENT AVERAGE:</td>
+                      <td class="summary-value">11.4/20</td>
+                    </tr>
+                    <tr>
+                      <td class="summary-label">CLASS AVERAGE:</td>
+                      <td class="summary-value">12/20</td>
+                      <td class="summary-label">CLASS RANK:</td>
+                      <td class="summary-value">5° of 10</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Bottom Section -->
+              <div class="bottom-section">
+                <div class="left-column">
+                  <div class="conduct-section">
+                    <h4>CONDUCT & ATTENDANCE</h4>
+                    <table class="conduct-table">
+                      <tbody>
+                        
+          <tr><td>Days Present:</td><td>/</td></tr>
+          <tr><td>Times Late:</td><td></td></tr>
+          <tr><td>Disciplinary Actions:</td><td></td></tr>
+        
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="center-column">
+                  <div class="grading-scale">
+                    <h4>GRADING SCALE</h4>
+                    <table class="scale-table">
+                      <tbody>
+                        <tr><td>0-9.9:</td><td><span class="remark-weak">Weak</span></td></tr><tr><td>10-12.9:</td><td><span class="remark-average">Good</span></td></tr><tr><td>13-15.9:</td><td><span class="remark-fairly-good">Very Good</span></td></tr><tr><td>16-17.9:</td><td><span class="remark-vgood">Execellent</span></td></tr><tr><td>18-20:</td><td><span class="remark-excellent">Distinction</span></td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="right-column">
+                  <div class="admin-section">
+                    <h4>ADMINISTRATION</h4>
+                    <table class="admin-table">
+                      <tbody>
+                        <tr>
+                          <td>Class Master:</td>
+                          <td>NJANG COLLINS</td>
+                        </tr>
+                        <tr>
+                          <td>Decision:</td>
+                          <td><span class="remark-good"></span></td>
+                        </tr>
+                        <tr>
+                          <td>Next Term:</td>
+                          <td></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Signatures with added space -->
+              <div class="signature-section">
+                <div class="signature-box">
+                  <div class="signature-title">CLASS MASTER</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NJANG COLLINS</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PRINCIPAL</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">MR. THOMAS AMBE</div>
+                  <div class="signature-date">Date, Signature & Seal</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PARENT/GUARDIAN</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NI JOHN FRU, NDI CHANCELING FRU</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+              </div>
+              
+              <div class="footer-text">© 2025 Izzy Tech Team – Official Document | Votech (S7) Academy</div>
+            </div>
+          </div>
+        
+          <div class="report-card-wrapper overflow-severe">
+            <div class="report-card" style="--wm: url('http://localhost:5000/public/logo.png')">
+              <!-- Document Header -->
+              <div class="document-header">
+                <div class="header-content">
+                  <div class="left-section">
+                    <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
+                    <div class="motto">PAIX - TRAVAIL - PATRIE</div>
+                    <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
+                    <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                  
+                  <div class="center-emblem">
+                    <img src="http://localhost:5000/public/logo.png" alt="" class="report-card-logo" />
+                    <div class="center-text">
+                      <div class="igniting-text">IGNITING ''Preneurs</div>
+                      <div class="center-motto">Motto: Welfare, Productivity, Self Actualization</div>
+                    </div>
+                  </div>
+                  
+                  <div class="right-section">
+                    <div class="republic-text">REPUBLIC OF CAMEROON</div>
+                    <div class="motto">PEACE - WORK - FATHERLAND</div>
+                    <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
+                    <div class="department">DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                </div>
+                
+                <div class="document-title">
+                  <h1>ACADEMIC REPORT CARD</h1>
+                  <div class="term-info">FIRST TERM • 2024/2025 Academic Year</div>
+                </div>
+              </div>
+              
+              <!-- Student Information -->
+              <div class="student-info">
+                <table class="info-table">
+                  <tbody>
+                    <tr>
+                      <td class="label">Student Name:</td>
+                      <td class="value">Clarisse Mbappe Ngo Bakia</td>
+                      <td class="label">Class:</td>
+                      <td class="value">Certification Level 3</td>
+                    </tr>
+                    <tr>
+                      <td class="label">Registration No:</td>
+                      <td class="value">25-VOT-CLIA-004</td>
+                      <td class="label">Specialty:</td>
+                      <td class="value">Mechanical Engineering </td>
+                    </tr>
+                    <tr>
+                      <td class="label">Date of Birth:</td>
+                      <td class="value">2025-08-31</td>
+                      <td class="label">Academic Year:</td>
+                      <td class="value">2024/2025 Academic Year</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- General Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">ACS</td>
+            <td class="subject-cell">Advance Computer Studies</td>
+            <td class="score-cell low-score">0</td><td class="score-cell ">12</td><td class="avg-cell low-score">6.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">24</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ECAE</td>
+            <td class="subject-cell">Enterprise Creation and Entrepreneurship</td>
+            <td class="score-cell ">12</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">6.0</td>
+            <td class="coef-cell">8</td>
+            <td class="total-cell">48</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Eng3</td>
+            <td class="subject-cell">English Language III</td>
+            <td class="score-cell ">12</td><td class="score-cell ">13</td><td class="avg-cell ">12.5</td>
+            <td class="coef-cell">2</td>
+            <td class="total-cell">25</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Lum Sandra</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Law3</td>
+            <td class="subject-cell">Company Law</td>
+            <td class="score-cell ">10</td><td class="score-cell ">11</td><td class="avg-cell ">10.5</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">52.5</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MATH3</td>
+            <td class="subject-cell">Mathematics III</td>
+            <td class="score-cell ">12</td><td class="score-cell low-score">7</td><td class="avg-cell low-score">9.5</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">38</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Njang Collins</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">188</td>
+                      <td class="subtotal-remark"><span class="remark-weak">Weak</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Professional Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">AMD</td>
+            <td class="subject-cell">Automotive Mechanics and Diagnostics</td>
+            <td class="score-cell ">11</td><td class="score-cell ">14</td><td class="avg-cell ">12.5</td>
+            <td class="coef-cell">7</td>
+            <td class="total-cell">87.5</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ASD</td>
+            <td class="subject-cell">Advance System Design</td>
+            <td class="score-cell ">12</td><td class="score-cell low-score">3</td><td class="avg-cell low-score">7.5</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">30</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">CAD3</td>
+            <td class="subject-cell">CNC Machining and CAD CAM Programming</td>
+            <td class="score-cell low-score">9</td><td class="score-cell ">11</td><td class="avg-cell ">10.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">100</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">FCT3</td>
+            <td class="subject-cell">Foundry and Casting Technology</td>
+            <td class="score-cell ">10</td><td class="score-cell ">18</td><td class="avg-cell ">14.0</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">70</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Ndeh Junior Nche-mukum Brice</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">GEP3</td>
+            <td class="subject-cell">General Engineering Principles 3</td>
+            <td class="score-cell ">14</td><td class="score-cell ">16</td><td class="avg-cell ">15.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">135</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">HVAC</td>
+            <td class="subject-cell">Refrigeration and Air Conditioning</td>
+            <td class="score-cell ">12</td><td class="score-cell ">10</td><td class="avg-cell ">11.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">99</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">IMM</td>
+            <td class="subject-cell">Industrial Maintenance and Mechatronics</td>
+            <td class="score-cell ">19</td><td class="score-cell ">10</td><td class="avg-cell ">14.5</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">145</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Sumfor Loic Ncham</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MEP3</td>
+            <td class="subject-cell">Mechanical Engineering Practicals 3</td>
+            <td class="score-cell low-score">0</td><td class="score-cell ">11</td><td class="avg-cell low-score">5.5</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">55</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">RES</td>
+            <td class="subject-cell">Renewable Energy Systems (Solar, Wind, Biomass)</td>
+            <td class="score-cell ">11</td><td class="score-cell ">12</td><td class="avg-cell ">11.5</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">115</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">WFT3</td>
+            <td class="subject-cell">Welding and Fabrication Technology</td>
+            <td class="score-cell ">15</td><td class="score-cell low-score">6</td><td class="avg-cell ">10.5</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">94.5</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Berinyuy Randy Mukum</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">931</td>
+                      <td class="subtotal-remark"><span class="remark-average">Average</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Performance Summary -->
+              <div class="performance-summary">
+                <table class="summary-table">
+                  <tbody>
+                    <tr>
+                      <td class="summary-label">GRAND TOTAL:</td>
+                      <td class="summary-value">1119</td>
+                      <td class="summary-label">STUDENT AVERAGE:</td>
+                      <td class="summary-value">10.6/20</td>
+                    </tr>
+                    <tr>
+                      <td class="summary-label">CLASS AVERAGE:</td>
+                      <td class="summary-value">12/20</td>
+                      <td class="summary-label">CLASS RANK:</td>
+                      <td class="summary-value">8° of 10</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Bottom Section -->
+              <div class="bottom-section">
+                <div class="left-column">
+                  <div class="conduct-section">
+                    <h4>CONDUCT & ATTENDANCE</h4>
+                    <table class="conduct-table">
+                      <tbody>
+                        
+          <tr><td>Days Present:</td><td>/</td></tr>
+          <tr><td>Times Late:</td><td></td></tr>
+          <tr><td>Disciplinary Actions:</td><td></td></tr>
+        
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="center-column">
+                  <div class="grading-scale">
+                    <h4>GRADING SCALE</h4>
+                    <table class="scale-table">
+                      <tbody>
+                        <tr><td>0-9.9:</td><td><span class="remark-weak">Weak</span></td></tr><tr><td>10-12.9:</td><td><span class="remark-average">Good</span></td></tr><tr><td>13-15.9:</td><td><span class="remark-fairly-good">Very Good</span></td></tr><tr><td>16-17.9:</td><td><span class="remark-vgood">Execellent</span></td></tr><tr><td>18-20:</td><td><span class="remark-excellent">Distinction</span></td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="right-column">
+                  <div class="admin-section">
+                    <h4>ADMINISTRATION</h4>
+                    <table class="admin-table">
+                      <tbody>
+                        <tr>
+                          <td>Class Master:</td>
+                          <td>NJANG COLLINS</td>
+                        </tr>
+                        <tr>
+                          <td>Decision:</td>
+                          <td><span class="remark-good"></span></td>
+                        </tr>
+                        <tr>
+                          <td>Next Term:</td>
+                          <td></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Signatures with added space -->
+              <div class="signature-section">
+                <div class="signature-box">
+                  <div class="signature-title">CLASS MASTER</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NJANG COLLINS</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PRINCIPAL</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">MR. THOMAS AMBE</div>
+                  <div class="signature-date">Date, Signature & Seal</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PARENT/GUARDIAN</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NI JOHN FRU, NDI CHANCELING FRU</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+              </div>
+              
+              <div class="footer-text">© 2025 Izzy Tech Team – Official Document | Votech (S7) Academy</div>
+            </div>
+          </div>
+        
+          <div class="report-card-wrapper overflow-severe">
+            <div class="report-card" style="--wm: url('http://localhost:5000/public/logo.png')">
+              <!-- Document Header -->
+              <div class="document-header">
+                <div class="header-content">
+                  <div class="left-section">
+                    <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
+                    <div class="motto">PAIX - TRAVAIL - PATRIE</div>
+                    <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
+                    <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                  
+                  <div class="center-emblem">
+                    <img src="http://localhost:5000/public/logo.png" alt="" class="report-card-logo" />
+                    <div class="center-text">
+                      <div class="igniting-text">IGNITING ''Preneurs</div>
+                      <div class="center-motto">Motto: Welfare, Productivity, Self Actualization</div>
+                    </div>
+                  </div>
+                  
+                  <div class="right-section">
+                    <div class="republic-text">REPUBLIC OF CAMEROON</div>
+                    <div class="motto">PEACE - WORK - FATHERLAND</div>
+                    <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
+                    <div class="department">DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                </div>
+                
+                <div class="document-title">
+                  <h1>ACADEMIC REPORT CARD</h1>
+                  <div class="term-info">FIRST TERM • 2024/2025 Academic Year</div>
+                </div>
+              </div>
+              
+              <!-- Student Information -->
+              <div class="student-info">
+                <table class="info-table">
+                  <tbody>
+                    <tr>
+                      <td class="label">Student Name:</td>
+                      <td class="value">Nathalie Manka Neba</td>
+                      <td class="label">Class:</td>
+                      <td class="value">Certification Level 3</td>
+                    </tr>
+                    <tr>
+                      <td class="label">Registration No:</td>
+                      <td class="value">25-VOT-NABA-008</td>
+                      <td class="label">Specialty:</td>
+                      <td class="value">Mechanical Engineering </td>
+                    </tr>
+                    <tr>
+                      <td class="label">Date of Birth:</td>
+                      <td class="value">2025-08-31</td>
+                      <td class="label">Academic Year:</td>
+                      <td class="value">2024/2025 Academic Year</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- General Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">ACS</td>
+            <td class="subject-cell">Advance Computer Studies</td>
+            <td class="score-cell ">10</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">5.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">20</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ECAE</td>
+            <td class="subject-cell">Enterprise Creation and Entrepreneurship</td>
+            <td class="score-cell ">15</td><td class="score-cell ">14</td><td class="avg-cell ">14.5</td>
+            <td class="coef-cell">8</td>
+            <td class="total-cell">116</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Eng3</td>
+            <td class="subject-cell">English Language III</td>
+            <td class="score-cell ">18</td><td class="score-cell ">14</td><td class="avg-cell ">16.0</td>
+            <td class="coef-cell">2</td>
+            <td class="total-cell">32</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Lum Sandra</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Law3</td>
+            <td class="subject-cell">Company Law</td>
+            <td class="score-cell ">15</td><td class="score-cell ">18</td><td class="avg-cell ">16.5</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">82.5</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MATH3</td>
+            <td class="subject-cell">Mathematics III</td>
+            <td class="score-cell ">10</td><td class="score-cell low-score">8</td><td class="avg-cell low-score">8.8</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">35.2</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Njang Collins</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">286</td>
+                      <td class="subtotal-remark"><span class="remark-fairly-good">Fairly Good</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Professional Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">AMD</td>
+            <td class="subject-cell">Automotive Mechanics and Diagnostics</td>
+            <td class="score-cell low-score">10</td><td class="score-cell low-score">2</td><td class="avg-cell low-score">5.8</td>
+            <td class="coef-cell">7</td>
+            <td class="total-cell">40.6</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ASD</td>
+            <td class="subject-cell">Advance System Design</td>
+            <td class="score-cell ">14</td><td class="score-cell ">12</td><td class="avg-cell ">13.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">52</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Very Good</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">CAD3</td>
+            <td class="subject-cell">CNC Machining and CAD CAM Programming</td>
+            <td class="score-cell ">12</td><td class="score-cell ">12</td><td class="avg-cell ">12.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">120</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">FCT3</td>
+            <td class="subject-cell">Foundry and Casting Technology</td>
+            <td class="score-cell low-score">7</td><td class="score-cell ">14</td><td class="avg-cell ">10.5</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">52.5</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndeh Junior Nche-mukum Brice</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">GEP3</td>
+            <td class="subject-cell">General Engineering Principles 3</td>
+            <td class="score-cell ">20</td><td class="score-cell ">14</td><td class="avg-cell ">17.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">153</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">HVAC</td>
+            <td class="subject-cell">Refrigeration and Air Conditioning</td>
+            <td class="score-cell ">14</td><td class="score-cell low-score">3</td><td class="avg-cell low-score">8.5</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">76.5</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">IMM</td>
+            <td class="subject-cell">Industrial Maintenance and Mechatronics</td>
+            <td class="score-cell low-score">0</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">0.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">0</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Sumfor Loic Ncham</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MEP3</td>
+            <td class="subject-cell">Mechanical Engineering Practicals 3</td>
+            <td class="score-cell low-score">0</td><td class="score-cell ">14</td><td class="avg-cell low-score">7.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">70</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">RES</td>
+            <td class="subject-cell">Renewable Energy Systems (Solar, Wind, Biomass)</td>
+            <td class="score-cell ">15</td><td class="score-cell low-score">9</td><td class="avg-cell ">12.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">120</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">WFT3</td>
+            <td class="subject-cell">Welding and Fabrication Technology</td>
+            <td class="score-cell ">18</td><td class="score-cell ">14</td><td class="avg-cell ">16.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">144</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Berinyuy Randy Mukum</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">829</td>
+                      <td class="subtotal-remark"><span class="remark-average">Average</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Performance Summary -->
+              <div class="performance-summary">
+                <table class="summary-table">
+                  <tbody>
+                    <tr>
+                      <td class="summary-label">GRAND TOTAL:</td>
+                      <td class="summary-value">1114</td>
+                      <td class="summary-label">STUDENT AVERAGE:</td>
+                      <td class="summary-value">10.5/20</td>
+                    </tr>
+                    <tr>
+                      <td class="summary-label">CLASS AVERAGE:</td>
+                      <td class="summary-value">12/20</td>
+                      <td class="summary-label">CLASS RANK:</td>
+                      <td class="summary-value">9° of 10</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Bottom Section -->
+              <div class="bottom-section">
+                <div class="left-column">
+                  <div class="conduct-section">
+                    <h4>CONDUCT & ATTENDANCE</h4>
+                    <table class="conduct-table">
+                      <tbody>
+                        
+          <tr><td>Days Present:</td><td>/</td></tr>
+          <tr><td>Times Late:</td><td></td></tr>
+          <tr><td>Disciplinary Actions:</td><td></td></tr>
+        
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="center-column">
+                  <div class="grading-scale">
+                    <h4>GRADING SCALE</h4>
+                    <table class="scale-table">
+                      <tbody>
+                        <tr><td>0-9.9:</td><td><span class="remark-weak">Weak</span></td></tr><tr><td>10-12.9:</td><td><span class="remark-average">Good</span></td></tr><tr><td>13-15.9:</td><td><span class="remark-fairly-good">Very Good</span></td></tr><tr><td>16-17.9:</td><td><span class="remark-vgood">Execellent</span></td></tr><tr><td>18-20:</td><td><span class="remark-excellent">Distinction</span></td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="right-column">
+                  <div class="admin-section">
+                    <h4>ADMINISTRATION</h4>
+                    <table class="admin-table">
+                      <tbody>
+                        <tr>
+                          <td>Class Master:</td>
+                          <td>NJANG COLLINS</td>
+                        </tr>
+                        <tr>
+                          <td>Decision:</td>
+                          <td><span class="remark-good"></span></td>
+                        </tr>
+                        <tr>
+                          <td>Next Term:</td>
+                          <td></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Signatures with added space -->
+              <div class="signature-section">
+                <div class="signature-box">
+                  <div class="signature-title">CLASS MASTER</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NJANG COLLINS</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PRINCIPAL</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">MR. THOMAS AMBE</div>
+                  <div class="signature-date">Date, Signature & Seal</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PARENT/GUARDIAN</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">TAM DUPONT MBICHAM, NDI CHANCELING FRU</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+              </div>
+              
+              <div class="footer-text">© 2025 Izzy Tech Team – Official Document | Votech (S7) Academy</div>
+            </div>
+          </div>
+        
+          <div class="report-card-wrapper overflow-severe">
+            <div class="report-card" style="--wm: url('http://localhost:5000/public/logo.png')">
+              <!-- Document Header -->
+              <div class="document-header">
+                <div class="header-content">
+                  <div class="left-section">
+                    <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
+                    <div class="motto">PAIX - TRAVAIL - PATRIE</div>
+                    <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
+                    <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                  
+                  <div class="center-emblem">
+                    <img src="http://localhost:5000/public/logo.png" alt="" class="report-card-logo" />
+                    <div class="center-text">
+                      <div class="igniting-text">IGNITING ''Preneurs</div>
+                      <div class="center-motto">Motto: Welfare, Productivity, Self Actualization</div>
+                    </div>
+                  </div>
+                  
+                  <div class="right-section">
+                    <div class="republic-text">REPUBLIC OF CAMEROON</div>
+                    <div class="motto">PEACE - WORK - FATHERLAND</div>
+                    <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
+                    <div class="department">DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                </div>
+                
+                <div class="document-title">
+                  <h1>ACADEMIC REPORT CARD</h1>
+                  <div class="term-info">FIRST TERM • 2024/2025 Academic Year</div>
+                </div>
+              </div>
+              
+              <!-- Student Information -->
+              <div class="student-info">
+                <table class="info-table">
+                  <tbody>
+                    <tr>
+                      <td class="label">Student Name:</td>
+                      <td class="value">Didier Etame Ewane</td>
+                      <td class="label">Class:</td>
+                      <td class="value">Certification Level 3</td>
+                    </tr>
+                    <tr>
+                      <td class="label">Registration No:</td>
+                      <td class="value">25-VOT-DINE-005</td>
+                      <td class="label">Specialty:</td>
+                      <td class="value">Mechanical Engineering </td>
+                    </tr>
+                    <tr>
+                      <td class="label">Date of Birth:</td>
+                      <td class="value">2025-08-31</td>
+                      <td class="label">Academic Year:</td>
+                      <td class="value">2024/2025 Academic Year</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- General Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">ACS</td>
+            <td class="subject-cell">Advance Computer Studies</td>
+            <td class="score-cell low-score">0</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">0.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">0</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ECAE</td>
+            <td class="subject-cell">Enterprise Creation and Entrepreneurship</td>
+            <td class="score-cell ">14</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">7.0</td>
+            <td class="coef-cell">8</td>
+            <td class="total-cell">56</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Eng3</td>
+            <td class="subject-cell">English Language III</td>
+            <td class="score-cell ">14</td><td class="score-cell low-score">5</td><td class="avg-cell low-score">9.5</td>
+            <td class="coef-cell">2</td>
+            <td class="total-cell">19</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Lum Sandra</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">Law3</td>
+            <td class="subject-cell">Company Law</td>
+            <td class="score-cell ">15</td><td class="score-cell ">15</td><td class="avg-cell ">15.0</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">75</td>
+            <td class="remark-cell"><span class="remark-good">Very Good</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MATH3</td>
+            <td class="subject-cell">Mathematics III</td>
+            <td class="score-cell ">13</td><td class="score-cell ">11</td><td class="avg-cell ">12.0</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">48</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Njang Collins</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">198</td>
+                      <td class="subtotal-remark"><span class="remark-weak">Weak</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Professional Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      <th>SEQ 1</th><th>SEQ 2</th><th>TERM AVG</th>
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="subject-row">
+            <td class="code-cell">AMD</td>
+            <td class="subject-cell">Automotive Mechanics and Diagnostics</td>
+            <td class="score-cell low-score">4</td><td class="score-cell ">14</td><td class="avg-cell low-score">9.0</td>
+            <td class="coef-cell">7</td>
+            <td class="total-cell">63</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">ASD</td>
+            <td class="subject-cell">Advance System Design</td>
+            <td class="score-cell ">12</td><td class="score-cell low-score">9</td><td class="avg-cell ">10.5</td>
+            <td class="coef-cell">4</td>
+            <td class="total-cell">42</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndeh Sulpicius</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">CAD3</td>
+            <td class="subject-cell">CNC Machining and CAD CAM Programming</td>
+            <td class="score-cell ">20</td><td class="score-cell ">13</td><td class="avg-cell ">16.5</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">165</td>
+            <td class="remark-cell"><span class="remark-vgood">Execellent</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">FCT3</td>
+            <td class="subject-cell">Foundry and Casting Technology</td>
+            <td class="score-cell low-score">9</td><td class="score-cell ">10</td><td class="avg-cell low-score">9.6</td>
+            <td class="coef-cell">5</td>
+            <td class="total-cell">48</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndeh Junior Nche-mukum Brice</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">GEP3</td>
+            <td class="subject-cell">General Engineering Principles 3</td>
+            <td class="score-cell low-score">1</td><td class="score-cell ">12</td><td class="avg-cell low-score">6.5</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">58.5</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Ndutu Jude Nfilam</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">HVAC</td>
+            <td class="subject-cell">Refrigeration and Air Conditioning</td>
+            <td class="score-cell ">15</td><td class="score-cell low-score">8</td><td class="avg-cell ">11.5</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">103.5</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Ndudu Judith</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">IMM</td>
+            <td class="subject-cell">Industrial Maintenance and Mechatronics</td>
+            <td class="score-cell low-score">0</td><td class="score-cell low-score">0</td><td class="avg-cell low-score">0.0</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">0</td>
+            <td class="remark-cell"><span class="remark-weak">Weak</span></td>
+            <td class="teacher-cell">Sumfor Loic Ncham</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">MEP3</td>
+            <td class="subject-cell">Mechanical Engineering Practicals 3</td>
+            <td class="score-cell ">11</td><td class="score-cell ">14</td><td class="avg-cell ">12.5</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">125</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ngong Bricel Yuh</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">RES</td>
+            <td class="subject-cell">Renewable Energy Systems (Solar, Wind, Biomass)</td>
+            <td class="score-cell ">14</td><td class="score-cell ">11</td><td class="avg-cell ">12.5</td>
+            <td class="coef-cell">10</td>
+            <td class="total-cell">125</td>
+            <td class="remark-cell"><span class="remark-fairly-good">Good</span></td>
+            <td class="teacher-cell">Ndekeh Sandra Lumwain</td>
+          </tr><tr class="subject-row">
+            <td class="code-cell">WFT3</td>
+            <td class="subject-cell">Welding and Fabrication Technology</td>
+            <td class="score-cell ">14</td><td class="score-cell low-score">8</td><td class="avg-cell ">11.0</td>
+            <td class="coef-cell">9</td>
+            <td class="total-cell">99</td>
+            <td class="remark-cell"><span class="remark-average">Good</span></td>
+            <td class="teacher-cell">Berinyuy Randy Mukum</td>
+          </tr>
+                    <tr class="subtotal-row">
+                      <td colspan="6" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">829</td>
+                      <td class="subtotal-remark"><span class="remark-average">Average</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Performance Summary -->
+              <div class="performance-summary">
+                <table class="summary-table">
+                  <tbody>
+                    <tr>
+                      <td class="summary-label">GRAND TOTAL:</td>
+                      <td class="summary-value">1027</td>
+                      <td class="summary-label">STUDENT AVERAGE:</td>
+                      <td class="summary-value">9.7/20</td>
+                    </tr>
+                    <tr>
+                      <td class="summary-label">CLASS AVERAGE:</td>
+                      <td class="summary-value">12/20</td>
+                      <td class="summary-label">CLASS RANK:</td>
+                      <td class="summary-value">10° of 10</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Bottom Section -->
+              <div class="bottom-section">
+                <div class="left-column">
+                  <div class="conduct-section">
+                    <h4>CONDUCT & ATTENDANCE</h4>
+                    <table class="conduct-table">
+                      <tbody>
+                        
+          <tr><td>Days Present:</td><td>/</td></tr>
+          <tr><td>Times Late:</td><td></td></tr>
+          <tr><td>Disciplinary Actions:</td><td></td></tr>
+        
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="center-column">
+                  <div class="grading-scale">
+                    <h4>GRADING SCALE</h4>
+                    <table class="scale-table">
+                      <tbody>
+                        <tr><td>0-9.9:</td><td><span class="remark-weak">Weak</span></td></tr><tr><td>10-12.9:</td><td><span class="remark-average">Good</span></td></tr><tr><td>13-15.9:</td><td><span class="remark-fairly-good">Very Good</span></td></tr><tr><td>16-17.9:</td><td><span class="remark-vgood">Execellent</span></td></tr><tr><td>18-20:</td><td><span class="remark-excellent">Distinction</span></td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="right-column">
+                  <div class="admin-section">
+                    <h4>ADMINISTRATION</h4>
+                    <table class="admin-table">
+                      <tbody>
+                        <tr>
+                          <td>Class Master:</td>
+                          <td>NJANG COLLINS</td>
+                        </tr>
+                        <tr>
+                          <td>Decision:</td>
+                          <td><span class="remark-good"></span></td>
+                        </tr>
+                        <tr>
+                          <td>Next Term:</td>
+                          <td></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Signatures with added space -->
+              <div class="signature-section">
+                <div class="signature-box">
+                  <div class="signature-title">CLASS MASTER</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">NJANG COLLINS</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PRINCIPAL</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">MR. THOMAS AMBE</div>
+                  <div class="signature-date">Date, Signature & Seal</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PARENT/GUARDIAN</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">DIDIER DROGBA MUKUM, DIDIER PRIZOLINE MUKUM-WAIN</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+              </div>
+              
+              <div class="footer-text">© 2025 Izzy Tech Team – Official Document | Votech (S7) Academy</div>
+            </div>
+          </div>
+        
+      </div>
+    </body>
+  </html>

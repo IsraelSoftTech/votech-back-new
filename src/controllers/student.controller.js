@@ -26,7 +26,7 @@ const readOneStudent = catchAsync(async (req, res, next) => {
 });
 
 const readAllStudents = catchAsync(async (req, res, next) => {
-  await CRUDStudentsModel.readAll(res, req, "", 1, 100);
+  await CRUDStudentsModel.readAll(res, req, "", 1, 10000);
 });
 
 module.exports = {

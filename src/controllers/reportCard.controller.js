@@ -7,6 +7,7 @@ const appResponder = require("../utils/appResponder");
 const { StatusCodes } = require("http-status-codes");
 const puppeteer = require("puppeteer");
 const fs = require("fs");
+const path = require("path");
 
 const sequencesFormat = {
   seq1: { name: "Sequence 1", weight: 1 },
@@ -418,7 +419,7 @@ const singleReportCard = catchAsync(async (req, res, next) => {
 
   if (!marks.length) return next(new AppError("No data found", 404));
 
-      // Marks processed successfully
+  // Marks processed successfully
 
   const reportCardClass = await models.Class.findByPk(classId, {
     include: [
@@ -752,1003 +753,964 @@ function buildHTML(
   { defaultLogoUrl = imageDirectory } = {},
   grading
 ) {
-  const css = `
-/* ===============================
-   Report Card Styles
-=============================== */
-
-/* Container for the report card */
-.report-card-container {
-  width: 100%;
-  min-height: 100vh;
-  background: #f5f5f5;
-  padding: 20px;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-}
-
-/* Main Report Card Container */
-.report-card {
-  width: 100%;
-  max-width: 1200px;
-  background: white;
-  border: 2px solid #204080;
-  padding: 20px;
-  margin: 0 auto;
-  box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
-  position: relative;
-  overflow: hidden;
-  font-family: "Arial", sans-serif;
-  line-height: 1.3;
-  font-size: 12px;
-  page-break-after: always;
-  break-inside: avoid;
-}
-
-/* Document Header */
-.document-header {
-  border-bottom: 2px solid #204080;
-  padding: 15px;
-  margin-bottom: 15px;
-  background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
-  border-radius: 6px;
-}
-
-.header-content {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 15px;
-}
-
-.left-section,
-.right-section {
-  flex: 1;
-  text-align: center;
-  font-size: 10px;
-  line-height: 1.4;
-}
-
-.center-emblem {
-  flex: 0 0 100px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.report-card-logo {
-  height: 5rem;
-  width: 5rem;
-  object-fit: cover;
-}
-
-/* Header Text */
-.republic-text {
-  font-weight: bold;
-  font-size: 11px;
-  margin-bottom: 3px;
-  text-transform: uppercase;
-  color: #204080;
-}
-
-.motto {
-  font-style: italic;
-  font-size: 9px;
-  margin-bottom: 3px;
-  color: #c9a96e;
-  font-weight: 600;
-}
-
-.ministry {
-  font-weight: bold;
-  font-size: 9px;
-  margin-bottom: 3px;
-  text-transform: uppercase;
-  color: #204080;
-}
-
-/* School Info */
-.school-info {
-  text-align: center;
-  margin: 15px 0;
-  padding: 10px;
-  border-top: 1px solid #204080;
-  border-bottom: 1px solid #204080;
-  background: linear-gradient(
-    90deg,
-    #f8f9ff 0%,
-    #ffffff 50%,
-    #f8f9ff 100%
-  );
-}
-
-.school-name {
-  font-size: 16px;
-  font-weight: bold;
-  text-transform: uppercase;
-  color: #204080;
-  letter-spacing: 2px;
-  margin-bottom: 3px;
-}
-
-.school-location {
-  font-size: 10px;
-  color: #666;
-  margin-bottom: 3px;
-}
-
-.school-motto {
-  font-size: 9px;
-  font-style: italic;
-  font-weight: 600;
-  color: #c9a96e;
-}
-
-/* Document Title */
-.document-title {
-  text-align: center;
-  margin-top: 15px;
-}
-
-.document-title h1 {
-  font-size: 18px;
-  font-weight: bold;
-  text-transform: uppercase;
-  letter-spacing: 2px;
-  margin-bottom: 5px;
-  color: #204080;
-}
-
-.term-info {
-  font-size: 12px;
-  color: #666;
-}
-
-/* Student Information */
-.student-info {
-  margin-bottom: 15px;
-  padding: 10px;
-  border-radius: 4px;
-  background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
-  border: 1px solid #204080;
-}
-
-.info-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 15px 5px;
-}
-
-.info-table td {
-  padding: 4px 8px;
-  font-size: 11px;
-  vertical-align: middle;
-}
-
-.info-table .label {
-  font-weight: bold;
-  width: 120px;
-  color: #204080;
-  white-space: nowrap;
-}
-
-.info-table .value {
-  border-bottom: 1px solid #204080;
-  min-width: 150px;
-  font-weight: 600;
-  color: #333;
-}
-
-/* Subjects Section */
-.subjects-section {
-  margin-bottom: 15px;
-  break-inside: avoid;
-}
-
-.section-header {
-  background: linear-gradient(135deg, #204080 0%, #3a5a9a 100%);
-  color: #fff;
-  text-align: center;
-  padding: 8px;
-  margin-bottom: 0;
-  border-radius: 4px 4px 0 0;
-}
-
-.section-header h3 {
-  font-size: 13px;
-  font-weight: bold;
-  text-transform: uppercase;
-  margin: 0;
-}
-
-.subjects-table {
-  width: 100%;
-  border-collapse: collapse;
-  border: 1px solid #204080;
-  border-radius: 0 0 4px 4px;
-  overflow: hidden;
-}
-
-/* Any mark or average below 10 in red */
-
-.subjects-table th,
-.subjects-table td {
-  border: 1px solid #204080;
-  padding: 4px 3px;
-  font-size: 9px;
-  text-align: center;
-  vertical-align: middle;
-  line-height: 1.2;
-}
-
-.subjects-table th {
-  background: linear-gradient(135deg, #e8eeff 0%, #f0f4ff 100%);
-  font-weight: bold;
-  text-transform: uppercase;
-  color: #204080;
-  height: 30px;
-  font-size: 8px;
-}
-
-.code-cell {
-  font-weight: bold;
-  color: #204080;
-  width: 40px;
-}
-
-.subject-cell {
-  text-align: left;
-  padding-left: 6px;
-  font-weight: normal;
-  color: #333;
-  min-width: 140px;
-  font-size: 8px;
-}
-
-.score-cell,
-.avg-cell,
-.coef-cell,
-.total-cell {
-  font-weight: bold;
-  color: #333;
-  width: 35px;
-}
-
-.avg-cell,
-.total-cell {
-  font-weight: bold;
-  color: #204080;
-  font-size: 9px;
-}
-
-.remark-cell {
-  width: 70px;
-}
-
-.remark-cell span {
-  font-size: 8px;
-  font-weight: bold;
-  display: inline-block;
-  min-width: 50px;
-  color: #333;
-}
-
-/* Grade Colors */
-.remark-excellent { color: #0d5f0d; }
-.remark-vgood     { color: #1a5f1a; }
-.remark-good      { color: #204080; }
-.remark-fairly-good { color: #b8860b; }
-.remark-average   { color: #ff8c00; }
-.remark-weak      { color: #cc0000; }
-
-.teacher-cell {
-  text-align: left;
-  padding-left: 4px;
-  font-size: 7px;
-  color: #666;
-  min-width: 80px;
-}
-
-.subtotal-row {
-  background: linear-gradient(135deg, #e8eeff 0%, #f0f4ff 100%);
-  font-weight: bold;
-  border-top: 2px solid #204080;
-}
-
-.subtotal-label {
-  text-transform: uppercase;
-  font-size: 9px;
-  color: #204080;
-  text-align: right;
-  padding-right: 10px;
-}
-
-.subtotal-value {
-  font-size: 10px;
-  font-weight: bold;
-  color: #204080;
-}
-
-.subtotal-remark {
-  font-weight: bold;
-  color: #204080;
-}
-
-/* Performance Summary */
-.performance-summary {
-  margin-bottom: 15px;
-  padding: 10px;
-  border-radius: 4px;
-  background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
-  border: 1px solid #204080;
-}
-
-.summary-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 15px 6px;
-}
-
-.summary-table td {
-  padding: 4px 10px;
-  font-size: 11px;
-  font-weight: bold;
-}
-
-.summary-label {
-  color: #204080;
-  text-transform: uppercase;
-}
-
-.summary-value {
-  color: #333;
-  border-bottom: 1px solid #204080;
-  min-width: 80px;
-}
-
-/* Bottom Section */
-.bottom-section {
-  display: flex;
-  gap: 15px;
-  margin-bottom: 15px;
-}
-
-.left-column,
-.center-column,
-.right-column {
-  flex: 1;
-}
-
-.conduct-section,
-.grading-scale,
-.admin-section {
-  padding: 10px;
-  border-radius: 4px;
-  border: 1px solid #204080;
-  background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
-  height: 100%;
-}
-
-.conduct-section h4,
-.grading-scale h4,
-.admin-section h4 {
-  text-align: center;
-  font-weight: bold;
-  font-size: 11px;
-  color: #204080;
-  border-bottom: 1px solid #204080;
-  padding-bottom: 5px;
-  margin-bottom: 10px;
-}
-
-.conduct-table,
-.scale-table,
-.admin-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0 4px;
-}
-
-.conduct-table td,
-.scale-table td,
-.admin-table td {
-  padding: 3px 5px;
-  font-size: 9px;
-}
-
-.conduct-table td:first-child,
-.scale-table td:first-child,
-.admin-table td:first-child {
-  font-weight: bold;
-  color: #204080;
-}
-
-.conduct-table td:last-child,
-.scale-table td:last-child,
-.admin-table td:last-child {
-  text-align: right;
-  font-weight: bold;
-  color: #333;
-}
-
-/* Signature Section */
-.signature-section {
-  display: flex;
-  gap: 15px;
-  margin-bottom: 15px;
-  margin-top: 1.8rem;
-}
-
-.signature-box {
-  flex: 1;
-  padding: 15px 10px;
-  border-radius: 4px;
-  border: 1px solid #204080;
-  text-align: center;
-  background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
-  min-height: 80px;
-}
-
-.signature-title {
-  font-weight: bold;
-  text-transform: uppercase;
-  font-size: 10px;
-  margin-bottom: 10px;
-  color: #204080;
-}
-
-.signature-line {
-  background-color: #204080;
-  margin: 15px 0;
-  height: 1px;
-  width: 100%;
-}
-
-.signature-name {
-  font-weight: bold;
-  font-size: 9px;
-  color: #333;
-  margin-bottom: 3px;
-}
-
-.signature-date {
-  font-size: 8px;
-  font-style: italic;
-  color: #666;
-}
-
-/* Watermark uses CSS variable --wm pointing to the logo URL */
-.report-card::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%) rotate(-15deg);
-  width: 550px;
-  height: 550px;
-  background: var(--wm) no-repeat center;
-  background-size: contain;
-  z-index: 10;
-  pointer-events: none;
-  opacity: 0.04;
-}
-
-/* Footer */
-.footer-text {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  justify-content: center;
-  font-size: 12px;
-  color: rgb(102, 102, 102);
-  display: none;
-}
-
-/* ===============================
-     PROFESSIONAL PRINT STYLES
-  =============================== */
-@media print {
-  @page {
-    size: A4;
-    margin: 12mm;
-    background: white;
-  }
-
-  .footer-text { display: flex; }
-
-  .report-card::before {
-    content: "";
-    position: absolute;
-    top: 60%;
-    left: 50%;
-    transform: translate(-50%, -50%) rotate(-15deg);
-    width: 450px;
-    height: 450px;
-    background: var(--wm) no-repeat center;
-    background-size: contain;
-    z-index: 10;
-    pointer-events: none;
-    opacity: 0.08;
-  }
-
-  * {
-    -webkit-print-color-adjust: exact !important;
-    color-adjust: exact !important;
-    print-color-adjust: exact !important;
-  }
-
-  html, body {
-    overflow: visible !important;
-    background: #fff !important;
-    display: flex;
-    align-items: start;
-    justify-content: center;
-  }
-
-  body {
-    margin: 0 !important;
-    padding: 0 !important;
-    background: white !important;
-    overflow: hidden !important;
-  }
-
-  .report-card-container {
-    background: white !important;
-    padding: 0 !important;
-    min-height: auto !important;
-    height: auto !important;
-    visibility: visible !important;
-    box-shadow: none !important;
-    width: 100% !important;
-    font-size: 11px !important;
-    line-height: 1.12 !important;
-  }
-
-  .report-card-container * { visibility: visible !important; }
-
-  .report-card {
-    width: 98% !important;
-    max-width: 98% !important;
-    box-shadow: none !important;
-    border: none !important;
-    padding: 8px !important;
-    margin: 0 !important;
-    overflow: visible !important;
-    font-size: 11px !important;
-    line-height: 1.1 !important;
-    height: auto !important;
-    max-height: none !important;
-    page-break-inside: avoid !important;
-    break-inside: avoid !important;
-  }
-
-  .document-header { padding: 6px !important; margin-bottom: 8px !important; background: white !important; }
-  .header-content { margin-bottom: 8px !important; }
-  .report-card-logo { width: 90px !important; height: 90px !important; }
-  .school-info { margin: 8px 0 !important; padding: 6px !important; background: white !important; }
-  .school-name { font-size: 21px !important; margin-bottom: 2px !important; }
-  .document-title h1 { font-size: 21px !important; margin-bottom: 3px !important; }
-  .term-info { font-size: 16px !important; }
-
-  .student-info { margin-bottom: 10px !important; padding: 6px !important; background: white !important; }
-  .info-table { border-spacing: 8px 2px !important; }
-  .info-table td { font-size: 11px !important; padding: 2px 4px !important; }
-
-  .subjects-section { margin-bottom: 8px !important; }
-  .section-header { padding: 4px !important; background: #204080 !important; color: white !important; display: flex !important; justify-content: center !important; }
-  .section-header h3 { font-size: 16px !important; }
-
-  .subjects-table th, .subjects-table td { font-size: 10px !important; padding: 1px 2px !important; line-height: 1.1 !important; }
-  .subjects-table th { height: 20px !important; background: #e8eeff !important; color: #204080 !important; }
-  .subject-cell { font-size: 10px !important; padding-left: 3px !important; }
-  .teacher-cell { font-size: 9px !important; padding-left: 2px !important; }
-
-  .performance-summary { margin-bottom: 8px !important; padding: 6px !important; background: white !important; }
-  .summary-table { border-spacing: 8px 3px !important; }
-  .summary-table td { font-size: 11px !important; padding: 2px 6px !important; }
-
-  .bottom-section { gap: 8px !important; margin-bottom: 8px !important; }
-  .conduct-section, .grading-scale, .admin-section { padding: 6px !important; background: white !important; }
-  .conduct-section h4, .grading-scale h4, .admin-section h4 { font-size: 12px !important; margin-bottom: 6px !important; padding-bottom: 3px !important; }
-  .conduct-table td, .scale-table td, .admin-table td { font-size: 10px !important; padding: 1px 3px !important; }
-  .conduct-table, .scale-table, .admin-table { border-spacing: 0 2px !important; }
-
-  .signature-section { gap: 8px !important; margin-bottom: 0 !important; }
-  .signature-box { padding: 8px 6px !important; min-height: 50px !important; background: white !important; }
-  .signature-title { font-size: 12px !important; margin-bottom: 6px !important; }
-  .signature-line { margin: 8px 0 !important; height: 1px !important; width: 100% !important; }
-  .signature-name { font-size: 11px !important; margin-bottom: 2px !important; }
-  .signature-date { font-size: 12px !important; }
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-  .report-card-container { padding: 10px; }
-  .report-card { padding: 15px; max-width: 100%; }
-  .header-content { text-align: center; }
-  .left-section, .right-section, .center-emblem { margin-bottom: 10px; }
-  .info-table { border-spacing: 8px 4px; }
-  .subjects-table th, .subjects-table td { font-size: 8px; padding: 3px 2px; }
-  .bottom-section { gap: 10px; }
-  .signature-section { gap: 10px; }
-}
-
-/* ========== AUTO-FIT TO ONE PAGE (A4) ========== */
-@media print {
-  :root {
-    --page-width-mm: 210;
-    --page-height-mm: 297;
-    --page-margin-mm: 4;
-    --print-scale: 1;
-  }
-
-  @page {
-    size: A4 portrait;
-    margin: calc(var(--page-margin-mm) * 1mm);
-  }
-
-  .report-card-container {
-    width: calc((var(--page-width-mm) - 2 * var(--page-margin-mm)) * 1mm) !important;
-    margin: 0 auto !important;
-  }
-
-  #reportCard {
-    width: calc(((var(--page-width-mm) - 2 * var(--page-margin-mm)) * 1mm) / var(--print-scale)) !important;
-    transform: scale(var(--print-scale)) !important;
-    transform-origin: top center !important;
-  }
-
-  .report-card {
-    font-size: 11px !important;
-    line-height: 1.12 !important;
-  }
-
-  .subjects-table th, .subjects-table td {
-    font-size: 10px !important;
-    line-height: 1.1 !important;
-    padding: 1px 2px !important;
-  }
-
-  .subject-cell { font-size: 10px !important; padding-left: 3px !important; }
-  .teacher-cell { font-size: 9px !important; padding-left: 2px !important; }
-  .summary-table td { font-size: 11px !important; }
-}
-`;
-
-  const esc = (s) =>
-    String(s ?? "").replace(
-      /[&<>"']/g,
-      (m) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        }[m])
-    );
-
-  const renderCells = (cells = []) =>
-    cells
-      .map((c) => {
-        const cls = `${c.isAvg ? "avg-cell" : "score-cell"} ${
-          c.isLow ? "low-score" : ""
-        }`;
-        return `<td class="${cls}">${esc(c.value)}</td>`;
-      })
-      .join("");
-
-  const renderSubjectRows = (subjects = []) =>
-    subjects
-      .map((r) => {
-        return `<tr class="subject-row">
-          <td class="code-cell">${esc(r.code)}</td>
-          <td class="subject-cell">${esc(r.title)}</td>
-          ${renderCells(r.cells)}
-          <td class="coef-cell">${esc(r.coef)}</td>
-          <td class="total-cell">${esc(r.total)}</td>
-          <td class="remark-cell"><span class="${esc(r.remarkClass)}">${esc(
-          r.remark
-        )}</span></td>
-          <td class="teacher-cell">${esc(r.teacher)}</td>
-        </tr>`;
-      })
-      .join("");
-
-  const cardsHTML = reportCards
-    .map((rc) => {
-      const logoUrl =
-        rc.logoUrl && rc.logoUrl.trim() ? rc.logoUrl : defaultLogoUrl;
-      const colsHead = rc.columns
-        .map((c) => `<th>${esc(c.label)}</th>`)
-        .join("");
-      const generalRows = renderSubjectRows(rc.generalSubjects);
-      const profRows = renderSubjectRows(rc.professionalSubjects);
-
-      const gradingRows = (grading || [])
-        .map((g) => {
-          // simple class mapping by lower bound
-          let remarkClass = "remark-good";
-          const min = Number(g.band_min);
-          if (!Number.isNaN(min)) {
-            if (min >= 18) remarkClass = "remark-excellent";
-            else if (min >= 16) remarkClass = "remark-vgood";
-            else if (min >= 14) remarkClass = "remark-good";
-            else if (min >= 12) remarkClass = "remark-fairly-good";
-            else if (min >= 10) remarkClass = "remark-average";
-            else remarkClass = "remark-weak";
-          }
-          return `<tr><td>${esc(g.band_min)}-${esc(
-            g.band_max
-          )}:</td><td><span class="${remarkClass}">${esc(
-            g.comment
-          )}</span></td></tr>`;
+  try {
+    const css = `
+    /* =============================== Report Card Styles =============================== */
+    /* Base page setup */
+    @page {
+      size: A4;
+      margin: 10mm;
+    }
+    
+    body, html {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      font-size: 12px;
+      line-height: 1.3;
+      background: white;
+    }
+    
+    /* Report card wrapper - ensures one card per page */
+    .report-card-wrapper {
+      page-break-after: always;
+      page-break-inside: avoid;
+      break-after: page;
+      break-inside: avoid;
+      background: white;
+      padding: 0;
+      margin: 0;
+      max-height: 277mm; /* A4 height minus margins */
+      overflow: hidden; /* Prevent bleeding */
+    }
+    
+    /* Main Report Card Container */
+    .report-card {
+      width: 100%;
+      background: white;
+      border: 1px solid #204080;
+      padding: 8px;
+      box-sizing: border-box;
+      position: relative;
+    }
+    
+    /* Document Header */
+    .document-header {
+      border-bottom: 1px solid #204080;
+      padding: 6px;
+      margin-bottom: 6px;
+      background: white;
+      border-radius: 4px;
+    }
+    
+    .header-content {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    
+    .left-section, .right-section {
+      flex: 1;
+      text-align: center;
+      font-size: 10px;
+      line-height: 1.3;
+    }
+    
+    .center-emblem {
+      flex: 0 0 80px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+    
+    .center-text {
+      text-align: center;
+      margin-top: 3px;
+      font-size: 9px;
+    }
+    
+    .igniting-text {
+      font-weight: bold;
+      font-size: 9px;
+      color: #204080;
+    }
+    
+    .center-motto {
+      font-style: italic;
+      font-size: 8px;
+      color: #c9a96e;
+    }
+    
+    .report-card-logo {
+      height: 50px;
+      width: 50px;
+      object-fit: cover;
+    }
+    
+    /* Header Text */
+    .republic-text {
+      font-weight: bold;
+      font-size: 10px;
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      color: #204080;
+    }
+    
+    .motto {
+      font-style: italic;
+      font-size: 9px;
+      margin-bottom: 2px;
+      color: #c9a96e;
+      font-weight: 600;
+    }
+    
+    .ministry {
+      font-weight: bold;
+      font-size: 9px;
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      color: #204080;
+    }
+    
+    .department {
+      font-weight: bold;
+      font-size: 9px;
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      color: #204080;
+    }
+    
+    .school-name-header {
+      font-weight: bold;
+      font-size: 9px;
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      color: #204080;
+    }
+    
+    .location {
+      font-size: 9px;
+      color: #666;
+      margin-bottom: 2px;
+    }
+
+    /* Document Title */
+    .document-title {
+      text-align: center;
+      margin-top: 4px;
+    }
+    
+    .document-title h1 {
+      font-size: 16px;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin: 0 0 3px 0;
+      color: #204080;
+    }
+    
+    .term-info {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 5px;
+    }
+    
+    /* Student Information */
+    .student-info {
+      margin-bottom: 6px;
+      padding: 6px;
+      border-radius: 4px;
+      background: white;
+      border: 1px solid #204080;
+    }
+    
+    .info-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 8px 3px;
+    }
+    
+    .info-table td {
+      padding: 3px 4px;
+      font-size: 11px;
+      vertical-align: middle;
+    }
+    
+    .info-table .label {
+      font-weight: bold;
+      width: 110px;
+      color: #204080;
+      white-space: nowrap;
+    }
+    
+    .info-table .value {
+      border-bottom: 1px solid #204080;
+      min-width: 130px;
+      font-weight: 600;
+      color: #333;
+    }
+    
+    /* Subjects Section */
+    .subjects-section {
+      margin-bottom: 6px;
+    }
+    
+    .section-header {
+      background: #204080;
+      color: #fff;
+      text-align: center;
+      padding: 4px;
+      margin-bottom: 0;
+      border-radius: 4px 4px 0 0;
+    }
+    
+    .section-header h3 {
+      font-size: 12px;
+      font-weight: bold;
+      text-transform: uppercase;
+      margin: 0;
+    }
+    
+    .subjects-table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid #204080;
+    }
+    
+    .low-score {
+      color: #cc0000;
+    }
+    
+    .subjects-table th,
+    .subjects-table td {
+      border: 1px solid #204080;
+      padding: 2px 2px;
+      font-size: 10px;
+      text-align: center;
+      vertical-align: middle;
+      line-height: 1.2;
+    }
+    
+    .subjects-table th {
+      background: #e8eeff;
+      font-weight: bold;
+      text-transform: uppercase;
+      color: #204080;
+      height: 20px;
+      font-size: 9px;
+    }
+    
+    .code-cell {
+      font-weight: bold;
+      color: #204080;
+      width: 35px;
+    }
+    
+    .subject-cell {
+      text-align: left;
+      padding-left: 4px;
+      font-weight: normal;
+      color: #333;
+      width: 120px;
+      font-size: 10px;
+    }
+    
+    .score-cell,
+    .avg-cell,
+    .coef-cell,
+    .total-cell {
+      font-weight: bold;
+      color: #333;
+      width: 28px;
+      font-size: 10px;
+    }
+    
+    .avg-cell,
+    .total-cell {
+      font-weight: bold;
+      color: #204080;
+    }
+    
+    .remark-cell {
+      width: 55px;
+    }
+    
+    .remark-cell span {
+      font-size: 9px;
+      font-weight: bold;
+      display: inline-block;
+      min-width: 45px;
+      color: #333;
+    }
+    
+    /* Grade Colors */
+    .remark-excellent { color: #0d5f0d; }
+    .remark-vgood { color: #1a5f1a; }
+    .remark-good { color: #204080; }
+    .remark-fairly-good { color: #b8860b; }
+    .remark-average { color: #ff8c00; }
+    .remark-weak { color: #cc0000; }
+    
+    .teacher-cell {
+      text-align: left;
+      padding-left: 3px;
+      font-size: 9px;
+      color: #666;
+      width: 65px;
+    }
+    
+    .subtotal-row {
+      background: #e8eeff;
+      font-weight: bold;
+      border-top: 1px solid #204080;
+    }
+    
+    .subtotal-label {
+      text-transform: uppercase;
+      font-size: 10px;
+      color: #204080;
+      text-align: right;
+      padding-right: 5px;
+    }
+    
+    .subtotal-value {
+      font-size: 10px;
+      font-weight: bold;
+      color: #204080;
+    }
+    
+    .subtotal-remark {
+      font-weight: bold;
+      color: #204080;
+    }
+    
+    /* Performance Summary */
+    .performance-summary {
+      margin-bottom: 6px;
+      padding: 6px;
+      border-radius: 4px;
+      background: white;
+      border: 1px solid #204080;
+    }
+    
+    .summary-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 8px 3px;
+    }
+    
+    .summary-table td {
+      padding: 3px 4px;
+      font-size: 11px;
+      font-weight: bold;
+    }
+    
+    .summary-label {
+      color: #204080;
+      text-transform: uppercase;
+    }
+    
+    .summary-value {
+      color: #333;
+      border-bottom: 1px solid #204080;
+      min-width: 70px;
+    }
+    
+    /* Bottom Section */
+    .bottom-section {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    
+    .left-column,
+    .center-column,
+    .right-column {
+      flex: 1;
+    }
+    
+    .conduct-section,
+    .grading-scale,
+    .admin-section {
+      padding: 6px;
+      border-radius: 4px;
+      border: 1px solid #204080;
+      background: white;
+      height: 100%;
+    }
+    
+    .conduct-section h4,
+    .grading-scale h4,
+    .admin-section h4 {
+      text-align: center;
+      font-weight: bold;
+      font-size: 11px;
+      color: #204080;
+      border-bottom: 1px solid #204080;
+      padding-bottom: 4px;
+      margin: 0 0 4px 0;
+    }
+    
+    .conduct-table,
+    .scale-table,
+    .admin-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0 3px;
+    }
+    
+    .conduct-table td,
+    .scale-table td,
+    .admin-table td {
+      padding: 2px 3px;
+      font-size: 10px;
+    }
+    
+    .conduct-table td:first-child,
+    .scale-table td:first-child,
+    .admin-table td:first-child {
+      font-weight: bold;
+      color: #204080;
+    }
+    
+    .conduct-table td:last-child,
+    .scale-table td:last-child,
+    .admin-table td:last-child {
+      text-align: right;
+      font-weight: bold;
+      color: #333;
+    }
+    
+    /* Signature Section - Added space before signatures */
+    .signature-section {
+      display: flex;
+      gap: 6px;
+      margin: 12px 0 6px 0; /* Added top margin for spacing */
+      padding-top: 6px;
+      border-top: 1px dashed #eee; /* Subtle separator */
+    }
+    
+    .signature-box {
+      flex: 1;
+      padding: 6px;
+      border-radius: 4px;
+      border: 1px solid #204080;
+      text-align: center;
+      background: white;
+      min-height: 60px;
+    }
+    
+    .signature-title {
+      font-weight: bold;
+      text-transform: uppercase;
+      font-size: 10px;
+      margin-bottom: 5px;
+      color: #204080;
+    }
+    
+    .signature-line {
+      background-color: #204080;
+      margin: 8px 0;
+      height: 1px;
+      width: 100%;
+    }
+    
+    .signature-name {
+      font-weight: bold;
+      font-size: 10px;
+      color: #333;
+      margin-bottom: 3px;
+    }
+    
+    .signature-date {
+      font-size: 9px;
+      font-style: italic;
+      color: #666;
+    }
+    
+    /* Watermark */
+    .report-card::before {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) rotate(-15deg);
+      width: 350px;
+      height: 350px;
+      background: var(--wm) no-repeat center;
+      background-size: contain;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.05;
+    }
+    
+    /* Footer */
+    .footer-text {
+      display: flex;
+      justify-content: center;
+      font-size: 9px;
+      color: #666;
+      margin-top: 6px;
+      text-align: center;
+    }
+    
+    /* Auto-adjust for different content sizes */
+    @media print {
+      * {
+        -webkit-print-color-adjust: exact !important;
+        color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      
+      /* Overflow detection - if the card is too tall, adjust font sizes */
+      .report-card-wrapper.overflow-adjust .report-card {
+        font-size: 10px;
+      }
+      
+      .report-card-wrapper.overflow-adjust h1 {
+        font-size: 14px;
+      }
+      
+      .report-card-wrapper.overflow-adjust .subjects-table th,
+      .report-card-wrapper.overflow-adjust .subjects-table td {
+        font-size: 9px;
+        padding: 1px 1px;
+      }
+      
+      .report-card-wrapper.overflow-adjust .signature-section {
+        margin-top: 8px;
+      }
+      
+      .report-card-wrapper.overflow-adjust .signature-box {
+        min-height: 50px;
+      }
+      
+      /* Extreme overflow (many subjects) */
+      .report-card-wrapper.overflow-severe .report-card {
+        font-size: 9px;
+      }
+      
+      .report-card-wrapper.overflow-severe .subjects-table th,
+      .report-card-wrapper.overflow-severe .subjects-table td {
+        font-size: 8px;
+        padding: 1px 0;
+      }
+      
+      body, html {
+        width: 210mm;
+        height: 297mm;
+      }
+      
+      .report-card-wrapper {
+        page-break-after: always;
+        page-break-inside: avoid;
+        break-after: page;
+        break-inside: avoid;
+      }
+      
+      .report-card {
+        border: none;
+      }
+    }`;
+
+    const esc = (s) =>
+      String(s ?? "").replace(
+        /[&<>"']/g,
+        (m) =>
+          ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+          }[m])
+      );
+
+    const renderCells = (cells = []) =>
+      cells
+        .map((c) => {
+          const cls = `${c.isAvg ? "avg-cell" : "score-cell"} ${
+            c.isLow ? "low-score" : ""
+          }`;
+          return `<td class="${cls}">${esc(c.value)}</td>`;
         })
         .join("");
 
-      const conductRows = `
-        <tr><td>Days Present:</td><td>${esc(
-          rc.conduct?.attendanceDays ?? ""
-        )}/${esc(rc.conduct?.totalDays ?? "")}</td></tr>
-        <tr><td>Times Late:</td><td>${esc(
-          rc.conduct?.timesLate ?? ""
-        )}</td></tr>
-        <tr><td>Disciplinary Actions:</td><td>${esc(
-          rc.conduct?.disciplinaryActions ?? ""
-        )}</td></tr>
-      `;
+    const renderSubjectRows = (subjects = []) =>
+      subjects
+        .map((r) => {
+          return `<tr class="subject-row">
+            <td class="code-cell">${esc(r.code)}</td>
+            <td class="subject-cell">${esc(r.title)}</td>
+            ${renderCells(r.cells)}
+            <td class="coef-cell">${esc(r.coef)}</td>
+            <td class="total-cell">${esc(r.total)}</td>
+            <td class="remark-cell"><span class="${esc(r.remarkClass)}">${esc(
+            r.remark
+          )}</span></td>
+            <td class="teacher-cell">${esc(r.teacher)}</td>
+          </tr>`;
+        })
+        .join("");
 
-      return `
-<section class="report-card" style="--wm: url('${logoUrl}')">
-  <div class="document-header">
-    <div class="header-content">
-      <div class="left-section">
-        <div class="republic-text">REPUBLIC OF CAMEROON</div>
-        <div class="motto">Peace • Work • Fatherland</div>
-        <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
+    const cardsHTML = reportCards
+      .map((rc, index) => {
+        const logoUrl =
+          rc.logoUrl && rc.logoUrl.trim() ? rc.logoUrl : defaultLogoUrl;
+        const colsHead = rc.columns
+          .map((c) => `<th>${esc(c.label)}</th>`)
+          .join("");
+
+        // Check if this card has many subjects (might need adjustment)
+        const totalSubjects =
+          (rc.generalSubjects?.length || 0) +
+          (rc.professionalSubjects?.length || 0);
+
+        // Add overflow classes based on number of subjects
+        let overflowClass = "";
+        if (totalSubjects > 14) {
+          overflowClass = "overflow-severe";
+        } else if (totalSubjects > 10) {
+          overflowClass = "overflow-adjust";
+        }
+
+        const generalRows = renderSubjectRows(rc.generalSubjects);
+        const profRows = renderSubjectRows(rc.professionalSubjects);
+
+        const gradingRows = (grading || [])
+          .map((g) => {
+            // simple class mapping by lower bound
+            let remarkClass = "remark-good";
+            const min = Number(g.band_min);
+            if (!Number.isNaN(min)) {
+              if (min >= 18) remarkClass = "remark-excellent";
+              else if (min >= 16) remarkClass = "remark-vgood";
+              else if (min >= 14) remarkClass = "remark-good";
+              else if (min >= 12) remarkClass = "remark-fairly-good";
+              else if (min >= 10) remarkClass = "remark-average";
+              else remarkClass = "remark-weak";
+            }
+            return `<tr><td>${esc(g.band_min)}-${esc(
+              g.band_max
+            )}:</td><td><span class="${remarkClass}">${esc(
+              g.comment
+            )}</span></td></tr>`;
+          })
+          .join("");
+
+        const conductRows = `
+          <tr><td>Days Present:</td><td>${esc(
+            rc.conduct?.attendanceDays ?? ""
+          )}/${esc(rc.conduct?.totalDays ?? "")}</td></tr>
+          <tr><td>Times Late:</td><td>${esc(
+            rc.conduct?.timesLate ?? ""
+          )}</td></tr>
+          <tr><td>Disciplinary Actions:</td><td>${esc(
+            rc.conduct?.disciplinaryActions ?? ""
+          )}</td></tr>
+        `;
+
+        return `
+          <div class="report-card-wrapper ${overflowClass}">
+            <div class="report-card" style="--wm: url('${logoUrl}')">
+              <!-- Document Header -->
+              <div class="document-header">
+                <div class="header-content">
+                  <div class="left-section">
+                    <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
+                    <div class="motto">PAIX - TRAVAIL - PATRIE</div>
+                    <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
+                    <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                  
+                  <div class="center-emblem">
+                    <img src="${logoUrl}" alt="" class="report-card-logo" />
+                    <div class="center-text">
+                      <div class="igniting-text">IGNITING ''Preneurs</div>
+                      <div class="center-motto">Motto: Welfare, Productivity, Self Actualization</div>
+                    </div>
+                  </div>
+                  
+                  <div class="right-section">
+                    <div class="republic-text">REPUBLIC OF CAMEROON</div>
+                    <div class="motto">PEACE - WORK - FATHERLAND</div>
+                    <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
+                    <div class="department">DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE</div>
+                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
+                    <div class="location">AZIRE - MANKON</div>
+                  </div>
+                </div>
+                
+                <div class="document-title">
+                  <h1>ACADEMIC REPORT CARD</h1>
+                  <div class="term-info">${esc(rc.student.term)} • ${esc(
+          rc.student.academicYear
+        )}</div>
+                </div>
+              </div>
+              
+              <!-- Student Information -->
+              <div class="student-info">
+                <table class="info-table">
+                  <tbody>
+                    <tr>
+                      <td class="label">Student Name:</td>
+                      <td class="value">${esc(rc.student.name)}</td>
+                      <td class="label">Class:</td>
+                      <td class="value">${esc(rc.student.class)}</td>
+                    </tr>
+                    <tr>
+                      <td class="label">Registration No:</td>
+                      <td class="value">${esc(
+                        rc.student.registrationNumber
+                      )}</td>
+                      <td class="label">Specialty:</td>
+                      <td class="value">${esc(rc.student.option)}</td>
+                    </tr>
+                    <tr>
+                      <td class="label">Date of Birth:</td>
+                      <td class="value">${esc(rc.student.dateOfBirth)}</td>
+                      <td class="label">Academic Year:</td>
+                      <td class="value">${esc(rc.student.academicYear)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- General Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      ${colsHead}
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${generalRows}
+                    <tr class="subtotal-row">
+                      <td colspan="${
+                        rc.subtotalColspan
+                      }" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">${esc(
+                        rc.subtotals.general.totalWeighted
+                      )}</td>
+                      <td class="subtotal-remark"><span class="${esc(
+                        rc.subtotals.general.remarkClass
+                      )}">${esc(rc.subtotals.general.remark)}</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Professional Subjects -->
+              <div class="subjects-section">
+                <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
+                <table class="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>CODE</th>
+                      <th>SUBJECT TITLE</th>
+                      ${colsHead}
+                      <th>COEF</th>
+                      <th>TOTAL</th>
+                      <th>REMARK</th>
+                      <th>TEACHER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${profRows}
+                    <tr class="subtotal-row">
+                      <td colspan="${
+                        rc.subtotalColspan
+                      }" class="subtotal-label">SUB TOTAL:</td>
+                      <td class="subtotal-value">${esc(
+                        rc.subtotals.professional.totalWeighted
+                      )}</td>
+                      <td class="subtotal-remark"><span class="${esc(
+                        rc.subtotals.professional.remarkClass
+                      )}">${esc(rc.subtotals.professional.remark)}</span></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Performance Summary -->
+              <div class="performance-summary">
+                <table class="summary-table">
+                  <tbody>
+                    <tr>
+                      <td class="summary-label">GRAND TOTAL:</td>
+                      <td class="summary-value">${esc(rc.termTotals.total)}</td>
+                      <td class="summary-label">STUDENT AVERAGE:</td>
+                      <td class="summary-value">${esc(
+                        rc.termTotals.average
+                      )}/20</td>
+                    </tr>
+                    <tr>
+                      <td class="summary-label">CLASS AVERAGE:</td>
+                      <td class="summary-value">${esc(
+                        rc.classStatistics.classAverage
+                      )}/20</td>
+                      <td class="summary-label">CLASS RANK:</td>
+                      <td class="summary-value">${esc(
+                        rc.termTotals.rank
+                      )}° of ${esc(rc.termTotals.outOf)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Bottom Section -->
+              <div class="bottom-section">
+                <div class="left-column">
+                  <div class="conduct-section">
+                    <h4>CONDUCT & ATTENDANCE</h4>
+                    <table class="conduct-table">
+                      <tbody>
+                        ${conductRows}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="center-column">
+                  <div class="grading-scale">
+                    <h4>GRADING SCALE</h4>
+                    <table class="scale-table">
+                      <tbody>
+                        ${gradingRows}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                
+                <div class="right-column">
+                  <div class="admin-section">
+                    <h4>ADMINISTRATION</h4>
+                    <table class="admin-table">
+                      <tbody>
+                        <tr>
+                          <td>Class Master:</td>
+                          <td>${esc(
+                            (rc.administration.classMaster || "").toUpperCase()
+                          )}</td>
+                        </tr>
+                        <tr>
+                          <td>Decision:</td>
+                          <td><span class="remark-good">${esc(
+                            rc.administration.decision || ""
+                          )}</span></td>
+                        </tr>
+                        <tr>
+                          <td>Next Term:</td>
+                          <td>${esc(
+                            rc.administration.nextTermStarts || ""
+                          )}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Signatures with added space -->
+              <div class="signature-section">
+                <div class="signature-box">
+                  <div class="signature-title">CLASS MASTER</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">${esc(
+                    (rc.administration.classMaster || "").toUpperCase()
+                  )}</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PRINCIPAL</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">${esc(
+                    (rc.administration.principal || "").toUpperCase()
+                  )}</div>
+                  <div class="signature-date">Date, Signature & Seal</div>
+                </div>
+                
+                <div class="signature-box">
+                  <div class="signature-title">PARENT/GUARDIAN</div>
+                  <div class="signature-line"></div>
+                  <div class="signature-name">${esc(
+                    (rc.administration.parents || "").toUpperCase()
+                  )}</div>
+                  <div class="signature-date">Date & Signature</div>
+                </div>
+              </div>
+              
+              <div class="footer-text">© ${new Date().getFullYear()} Izzy Tech Team – Official Document | Votech (S7) Academy</div>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+
+    return `<!DOCTYPE html>
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <title>Report Cards</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <style>${css}</style>
+      <script>
+        // Enhanced overflow detection
+        window.addEventListener('load', function() {
+          // Check each report card wrapper
+          var wrappers = document.querySelectorAll('.report-card-wrapper');
+          wrappers.forEach(function(wrapper) {
+            var content = wrapper.querySelector('.report-card');
+            // If content height exceeds wrapper container
+            if (content && content.offsetHeight > wrapper.offsetHeight * 0.98) {
+              // Check if severe overflow (very tall content)
+              if (content.offsetHeight > wrapper.offsetHeight * 1.1) {
+                wrapper.classList.add('overflow-severe');
+              } else {
+                wrapper.classList.add('overflow-adjust');
+              }
+            }
+          });
+        });
+      </script>
+    </head>
+    <body>
+      <div class="batch-wrapper">
+        ${cardsHTML}
       </div>
-      <div class="center-emblem">
-        <img src="${logoUrl}" alt="Logo" class="report-card-logo" />
-      </div>
-      <div class="right-section">
-        <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
-        <div class="motto">Paix • Travail • Patrie</div>
-        <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
-      </div>
-    </div>
-
-    <div class="school-info">
-      <div class="school-name">${esc(rc.schoolName)}</div>
-      <div class="school-location">${esc(rc.schoolLocation)}</div>
-      <div class="school-motto">${esc(rc.schoolMotto)}</div>
-    </div>
-
-    <div class="document-title">
-      <h1>ACADEMIC REPORT CARD</h1>
-      <div class="term-info">${esc(rc.student.term)} • ${esc(
-        rc.student.academicYear
-      )}</div>
-    </div>
-  </div>
-
-  <div class="student-info">
-    <table class="info-table">
-      <tbody>
-        <tr>
-          <td class="label">Student Name:</td>
-          <td class="value">${esc(rc.student.name)}</td>
-          <td class="label">Class:</td>
-          <td class="value">${esc(rc.student.class)}</td>
-        </tr>
-        <tr>
-          <td class="label">Registration No:</td>
-          <td class="value">${esc(rc.student.registrationNumber)}</td>
-          <td class="label">Specialty:</td>
-          <td class="value">${esc(rc.student.option)}</td>
-        </tr>
-        <tr>
-          <td class="label">Date of Birth:</td>
-          <td class="value">${esc(rc.student.dateOfBirth)}</td>
-          <td class="label">Academic Year:</td>
-          <td class="value">${esc(rc.student.academicYear)}</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <!-- General Subjects -->
-  <div class="subjects-section">
-    <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
-    <table class="subjects-table">
-      <thead>
-        <tr>
-          <th>CODE</th>
-          <th>SUBJECT TITLE</th>
-          ${colsHead}
-          <th>COEF</th>
-          <th>TOTAL</th>
-          <th>REMARK</th>
-          <th>TEACHER</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${generalRows}
-        <tr class="subtotal-row">
-          <td colspan="${
-            rc.subtotalColspan
-          }" class="subtotal-label">SUB TOTAL:</td>
-          <td class="subtotal-value">${esc(
-            rc.subtotals.general.totalWeighted
-          )}</td>
-          <td class="subtotal-remark"><span class="${esc(
-            rc.subtotals.general.remarkClass
-          )}">${esc(rc.subtotals.general.remark)}</span></td>
-          <td></td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Professional Subjects -->
-  <div class="subjects-section">
-    <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
-    <table class="subjects-table">
-      <thead>
-        <tr>
-          <th>CODE</th>
-          <th>SUBJECT TITLE</th>
-          ${colsHead}
-          <th>COEF</th>
-          <th>TOTAL</th>
-          <th>REMARK</th>
-          <th>TEACHER</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${profRows}
-        <tr class="subtotal-row">
-          <td colspan="${
-            rc.subtotalColspan
-          }" class="subtotal-label">SUB TOTAL:</td>
-          <td class="subtotal-value">${esc(
-            rc.subtotals.professional.totalWeighted
-          )}</td>
-          <td class="subtotal-remark"><span class="${esc(
-            rc.subtotals.professional.remarkClass
-          )}">${esc(rc.subtotals.professional.remark)}</span></td>
-          <td></td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Performance Summary -->
-  <div class="performance-summary">
-    <table class="summary-table">
-      <tbody>
-        <tr>
-          <td class="summary-label">GRAND TOTAL:</td>
-          <td class="summary-value">${esc(rc.termTotals.total)}</td>
-          <td class="summary-label">STUDENT AVERAGE:</td>
-          <td class="summary-value">${esc(rc.termTotals.average)}/20</td>
-        </tr>
-        <tr>
-          <td class="summary-label">CLASS AVERAGE:</td>
-          <td class="summary-value">${esc(
-            rc.classStatistics.classAverage
-          )}/20</td>
-          <td class="summary-label">CLASS RANK:</td>
-          <td class="summary-value">${esc(rc.termTotals.rank)}° of ${esc(
-        rc.termTotals.outOf
-      )}</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Bottom Section -->
-  <div class="bottom-section">
-    <div class="left-column">
-      <div class="conduct-section">
-        <h4>CONDUCT & ATTENDANCE</h4>
-        <table class="conduct-table">
-          <tbody>
-            ${conductRows}
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="center-column">
-      <div class="grading-scale">
-        <h4>GRADING SCALE</h4>
-        <table class="scale-table">
-          <tbody>
-            ${gradingRows}
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="right-column">
-      <div class="admin-section">
-        <h4>ADMINISTRATION</h4>
-        <table class="admin-table">
-          <tbody>
-            <tr>
-              <td>Class Master:</td>
-              <td>${esc(
-                (rc.administration.classMaster || "").toUpperCase()
-              )}</td>
-            </tr>
-            <tr>
-              <td>Decision:</td>
-              <td><span class="remark-good">${esc(
-                rc.administration.decision || ""
-              )}</span></td>
-            </tr>
-            <tr>
-              <td>Next Term:</td>
-              <td>${esc(rc.administration.nextTermStarts || "")}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <!-- Signatures -->
-  <div class="signature-section">
-    <div class="signature-box">
-      <div class="signature-title">CLASS MASTER</div>
-      <div class="signature-line"></div>
-      <div class="signature-name">${esc(
-        (rc.administration.classMaster || "").toUpperCase()
-      )}</div>
-      <div class="signature-date">Date & Signature</div>
-    </div>
-    <div class="signature-box">
-      <div class="signature-title">PRINCIPAL</div>
-      <div class="signature-line"></div>
-      <div class="signature-name">${esc(
-        (rc.administration.principal || "").toUpperCase()
-      )}</div>
-      <div class="signature-date">Date, Signature & Seal</div>
-    </div>
-    <div class="signature-box">
-      <div class="signature-title">PARENT/GUARDIAN</div>
-      <div class="signature-line"></div>
-      <div class="signature-name">${rc.administration.parents.toUpperCase()}</div>
-      <div class="signature-date">Date & Signature</div>
-    </div>
-  </div>
-
-  <span class="footer-text">© ${esc(
-    rc.year
-  )} Izzy Tech Team – Official Document | Votech (S7) Academy</span>
-</section>`;
-    })
-    .join("");
-
-  return `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>Report Cards</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <style>${css}</style>
-  </head>
-  <body>
-    <div class="batch-wrapper">
-      ${cardsHTML}
-    </div>
-  </body>
-</html>`;
+    </body>
+  </html>`;
+  } catch (error) {
+    console.error("Error generating HTML:", error);
+    return `<!DOCTYPE html>
+    <html>
+      <head>
+        <title>Error generating report cards</title>
+      </head>
+      <body>
+        <h1>Error generating report cards</h1>
+        <p>There was an error processing the report cards. Please try again or contact support.</p>
+        <pre>${error.message || "Unknown error"}</pre>
+      </body>
+    </html>`;
+  }
 }
-
 function selectedTermKey(rawTerm) {
   const t = String(rawTerm ?? "annual")
     .trim()
@@ -1960,38 +1922,63 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
   const defaultLogoUrl = `${req.protocol}://${req.get("host")}/public/logo.png`;
   const html = buildHTML(reportCards, { defaultLogoUrl }, grading);
 
-  // Render HTML to PDF via Puppeteer
-  // const browser = await puppeteer.launch({
-  //   args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  // });
+  const filePath = path.join(__dirname, "reportCards-test.html");
 
-  function findChromium() {
-    const candidates = [
-      "/usr/bin/chromium-browser",
-      "/usr/bin/chromium",
-      "/usr/bin/google-chrome",
-      "/usr/bin/google-chrome-stable",
-    ];
-    return candidates.find(fs.existsSync);
-  }
-
-  const executablePath = findChromium();
+  // Write the HTML to a file
+  fs.writeFile(filePath, html, "utf8", (err) => {
+    if (err) {
+      console.error("Error writing HTML file:", err);
+    } else {
+      console.log("HTML file created successfully at", filePath);
+    }
+  });
 
   const browser = await puppeteer.launch({
-    executablePath,
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-software-rasterizer",
-    ],
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
+
+  // function findChromium() {
+  //   const candidates = [
+  //     "/usr/bin/chromium-browser",
+  //     "/usr/bin/chromium",
+  //     "/usr/bin/google-chrome",
+  //     "/usr/bin/google-chrome-stable",
+  //   ];
+  //   return candidates.find(fs.existsSync);
+  // }t
+
+  // const executablePath = findChromium();
+
+  // const browser = await puppeteer.launch(
+  //   executablePath,
+  //   headless: true,
+  //   args: [
+  //     "--no-sandbox",
+  //     "--disable-setuid-sandbox",
+  //     "--disable-dev-shm-usage",
+  //     "--disable-gpu",
+  //     "--disable-software-rasterizer",
+  //   ],
+  // });
 
   try {
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle0" });
+    await page.setContent(html, { waitUntil: "load" });
+
+    // Wait for all images to finish loading
+    await page.evaluate(async () => {
+      const selectors = Array.from(document.images).map((img) => {
+        if (img.complete) return;
+        return new Promise((resolve, reject) => {
+          img.addEventListener("load", resolve);
+          img.addEventListener("error", resolve); // still resolve on error
+        });
+      });
+      await Promise.all(selectors);
+    });
+
+    // Wait for fonts to be ready
+    await page.evaluateHandle("document.fonts.ready");
 
     const pdfBuffer = await page.pdf({
       format: "A4",
@@ -2008,14 +1995,22 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
       studentClass.name
     )}-${sanitizeFilename(meta.termLabel)}-report-cards.pdf`;
 
-    res.writeHead(200, {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "Content-Length": pdfBuffer.length,
-    });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", pdfBuffer.length);
 
-    res.end(pdfBuffer);
+    // CORS
+    res.setHeader("Access-Control-Allow-Origin", "*"); // or specific origin
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization"
+    );
+
+    res.status(200).end(pdfBuffer);
+
     // Report card PDF generated successfully
+  } catch (err) {
+    return next(err);
   } finally {
     await browser.close();
   }
