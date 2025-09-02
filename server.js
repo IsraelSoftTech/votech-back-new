@@ -11,8 +11,8 @@ const app = require("./app");
 const basePort = parseInt(process.env.PORT || "5000", 10);
 
 // Best-effort port cleanup, then single bind attempt
-const { exec } = require('child_process');
-exec(process.platform === 'win32' ? `for /f "tokens=5" %a in ('netstat -ano ^| findstr :${basePort} ^| findstr LISTENING') do taskkill /F /PID %a` : `lsof -ti tcp:${basePort} | xargs kill -9`, () => {});
+//const { exec } = require('child_process');
+//exec(process.platform === 'win32' ? `for /f "tokens=5" %a in ('netstat -ano ^| findstr :${basePort} ^| findstr LISTENING') do taskkill /F /PID %a` : `lsof -ti tcp:${basePort} | xargs kill -9`, () => {});
 
 function startOnce(port) {
   const server = app.listen(port, "0.0.0.0", () => {
