@@ -182,6 +182,23 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
+    // Check Admin4 limit (maximum 2 Admin4 accounts)
+    if (role === 'Admin4') {
+      const existingUserRole = existingUser.rows[0].role;
+      
+      // Only check limit if the user is not already Admin4
+      if (existingUserRole !== 'Admin4') {
+        const admin4Count = await pool.query(
+          'SELECT COUNT(*) FROM users WHERE role = $1',
+          ['Admin4']
+        );
+        
+        if (parseInt(admin4Count.rows[0].count) >= 2) {
+          return res.status(400).json({ error: 'Maximum of 2 Admin4 accounts allowed' });
+        }
+      }
+    }
+
     // Check if username conflicts with other users
     const usernameConflict = await pool.query(
       'SELECT * FROM users WHERE username = $1 AND id != $2',

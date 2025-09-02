@@ -3,7 +3,29 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
+  connectionString: process.env.DATABASE_URL,
+  // Optimize connection pool to prevent resource exhaustion
+  max: 20, // Maximum number of clients in the pool
+  idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+  connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection could not be established
+  maxUses: 7500, // Close (and replace) a connection after it has been used 7500 times
+  allowExitOnIdle: true // Allow the pool to exit if all connections are idle
+});
+
+// Handle pool errors to prevent crashes
+pool.on('error', (err, client) => {
+  console.error('Unexpected error on idle client', err);
+});
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  pool.end();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  pool.end();
+  process.exit(0);
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
