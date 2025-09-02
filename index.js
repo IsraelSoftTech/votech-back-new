@@ -24,31 +24,22 @@ function killPort(port) {
   });
 }
 
-async function startStrictOnPort(port) {
+async function startOnce(port) {
   await killPort(port);
   const server = app.listen(port, '0.0.0.0', () => {
     console.log(`Server running on port ${port}`);
   });
-  server.on('error', async (err) => {
+  server.on('error', (err) => {
     if (err && err.code === 'EADDRINUSE') {
-      console.warn(`Port ${port} still in use after cleanup. Retrying once...`);
-      await killPort(port);
-      setTimeout(() => {
-        app.listen(port, '0.0.0.0', () => {
-          console.log(`Server running on port ${port}`);
-        }).on('error', (e2) => {
-          console.error(`Failed to bind to port ${port}:`, e2.message);
-          process.exit(1);
-        });
-      }, 500);
+      console.error(`Failed to bind to port ${port}: address in use`);
     } else {
       console.error('Failed to start server:', err);
-      process.exit(1);
     }
+    process.exit(1);
   });
 }
 
-startStrictOnPort(basePort).catch((err) => {
+startOnce(basePort).catch((err) => {
   console.error('Failed to start server:', err);
   process.exit(1);
 });
