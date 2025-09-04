@@ -1922,33 +1922,33 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
   const defaultLogoUrl = `${req.protocol}://${req.get("host")}/public/logo.png`;
   const html = buildHTML(reportCards, { defaultLogoUrl }, grading);
 
-  // const browser = await puppeteer.launch({
-  //   args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  // });
-
-  function findChromium() {
-    const candidates = [
-      "/usr/bin/chromium-browser",
-      "/usr/bin/chromium",
-      "/usr/bin/google-chrome",
-      "/usr/bin/google-chrome-stable",
-    ];
-    return candidates.find(fs.existsSync);
-  }
-
-  const executablePath = findChromium();
-
   const browser = await puppeteer.launch({
-    executablePath,
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-software-rasterizer",
-    ],
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
+
+  // function findChromium() {
+  //   const candidates = [
+  //     "/usr/bin/chromium-browser",
+  //     "/usr/bin/chromium",
+  //     "/usr/bin/google-chrome",
+  //     "/usr/bin/google-chrome-stable",
+  //   ];
+  //   return candidates.find(fs.existsSync);
+  // }
+
+  // const executablePath = findChromium();
+
+  // const browser = await puppeteer.launch({
+  //   executablePath,
+  //   headless: true,
+  //   args: [
+  //     "--no-sandbox",
+  //     "--disable-setuid-sandbox",
+  //     "--disable-dev-shm-usage",
+  //     "--disable-gpu",
+  //     "--disable-software-rasterizer",
+  //   ],
+  // });
 
   try {
     const page = await browser.newPage();
