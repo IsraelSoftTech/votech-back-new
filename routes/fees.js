@@ -222,6 +222,89 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
+// Reconcile a student's fee type total (set to an exact amount)
+router.put('/reconcile', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const { student_id, fee_type, total_amount } = req.body || {};
+
+  try {
+    const studentId = parseInt(student_id);
+    const desiredTotal = parseFloat(total_amount);
+    if (!studentId || !fee_type || Number.isNaN(desiredTotal) || desiredTotal < 0) {
+      return res.status(400).json({ error: 'Invalid payload. Require student_id, fee_type, total_amount >= 0' });
+    }
+
+    // Fetch student's class and expected fees
+    const sRes = await pool.query(
+      "SELECT s.id as student_id, s.class_id, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1",
+      [studentId]
+    );
+    if (sRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+
+    const srow = sRes.rows[0];
+    const keyMap = {
+      registration: 'registration_fee',
+      bus: 'bus_fee',
+      internship: 'internship_fee',
+      remedial: 'remedial_fee',
+      tuition: 'tuition_fee',
+      pta: 'pta_fee',
+    };
+    const ft = String(fee_type || '').trim().toLowerCase();
+    const feeKey = keyMap[ft];
+    if (!feeKey) return res.status(400).json({ error: 'Invalid fee type' });
+
+    const expected = parseFloat(String(srow[feeKey] || '0').replace(/,/g, '')) || 0;
+    if (desiredTotal > expected) {
+      return res.status(400).json({ error: `Desired total exceeds expected for ${fee_type}`, expected });
+    }
+
+    // Start transaction
+    await pool.query('BEGIN');
+
+    // Delete existing payments for this student + fee_type
+    await pool.query(
+      'DELETE FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2)',
+      [studentId, fee_type]
+    );
+
+    // Insert a single consolidated record if desiredTotal > 0
+    if (desiredTotal > 0) {
+      await pool.query(
+        'INSERT INTO fees (student_id, class_id, fee_type, amount) VALUES ($1, $2, $3, $4)',
+        [studentId, srow.class_id, fee_type, desiredTotal]
+      );
+    }
+
+    await pool.query('COMMIT');
+
+    try {
+      const ipAddress = getIpAddress(req);
+      const userAgent = getUserAgent(req);
+      await logUserActivity(
+        userId,
+        'update',
+        `Reconciled ${fee_type} to ${desiredTotal}`,
+        'fees',
+        studentId,
+        fee_type,
+        ipAddress,
+        userAgent
+      );
+    } catch (logErr) {
+      console.warn('Non-critical: failed to log reconcile activity', logErr);
+    }
+
+    return res.json({ message: 'Fee reconciled successfully', student_id: studentId, fee_type, total_amount: desiredTotal });
+  } catch (error) {
+    await pool.query('ROLLBACK').catch(() => {});
+    console.error('Error reconciling fee total:', error);
+    return res.status(500).json({ error: 'Error reconciling fee total', details: error.message });
+  }
+});
+
 // Get class fee stats
 router.get('/class/:classId', authenticateToken, async (req, res) => {
   const userId = req.user.id;
@@ -247,7 +330,7 @@ router.get('/class/:classId', authenticateToken, async (req, res) => {
     // Get all students in class
     let resultStudents;
     resultStudents = await pool.query(
-      "SELECT s.id, s.full_name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.class_id = $1",
+      "SELECT s.id, s.student_id as student_code, s.full_name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.class_id = $1",
       [classId]
     );
 
@@ -307,7 +390,8 @@ router.get('/class/:classId', authenticateToken, async (req, res) => {
       const totalBalance = totalExpected - totalPaid;
 
       return {
-        student_id: student.id,
+        id: student.id,
+        student_id: student.student_code,
         full_name: student.full_name,
         balance,
         total_expected: totalExpected,
