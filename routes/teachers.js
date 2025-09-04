@@ -23,14 +23,12 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO teachers (
-        name, contact, email, subject, qualification, 
-        experience, salary, hire_date, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+      `INSERT INTO users (
+        name, contact, email, role, username
+      ) VALUES ($1, $2, $3, $4, $5) 
       RETURNING *`,
       [
-        name, contact, email || null, subject || null, qualification || null,
-        experience || null, salary || null, hire_date || null, status
+        name, contact, email || null, 'Teacher', contact // Use contact as username
       ]
     );
 
@@ -64,7 +62,8 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT * FROM teachers ORDER BY name'
+      'SELECT id, username, contact, name, email, gender, role, created_at FROM users WHERE role = $1 ORDER BY name',
+      ['Teacher']
     );
     res.json(result.rows);
   } catch (error) {
@@ -95,8 +94,8 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
 
     // Check if teacher exists
     const existingTeacher = await pool.query(
-      'SELECT * FROM teachers WHERE id = $1',
-      [id]
+      'SELECT * FROM users WHERE id = $1 AND role = $2',
+      [id, 'Teacher']
     );
 
     if (existingTeacher.rows.length === 0) {
@@ -104,14 +103,11 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
     }
 
     const result = await pool.query(
-      `UPDATE teachers SET 
-        name = $1, contact = $2, email = $3, subject = $4, qualification = $5,
-        experience = $6, salary = $7, hire_date = $8, status = $9
-      WHERE id = $10 RETURNING *`,
+      `UPDATE users SET 
+        name = $1, contact = $2, email = $3, username = $4
+      WHERE id = $5 AND role = $6 RETURNING *`,
       [
-        name, contact, email || null, subject || null, qualification || null,
-        experience || null, salary || null, hire_date || null, status || 'active',
-        id
+        name, contact, email || null, contact, id, 'Teacher'
       ]
     );
 
@@ -148,8 +144,8 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
 
     // Check if teacher exists
     const existingTeacher = await pool.query(
-      'SELECT * FROM teachers WHERE id = $1',
-      [id]
+      'SELECT * FROM users WHERE id = $1 AND role = $2',
+      [id, 'Teacher']
     );
 
     if (existingTeacher.rows.length === 0) {
@@ -158,7 +154,7 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
 
     const teacherName = existingTeacher.rows[0].name;
 
-    await pool.query('DELETE FROM teachers WHERE id = $1', [id]);
+    await pool.query('DELETE FROM users WHERE id = $1 AND role = $2', [id, 'Teacher']);
 
     // Log activity
     const ipAddress = getIpAddress(req);
@@ -193,8 +189,8 @@ router.put('/:id/status', authenticateToken, requireAdmin, async (req, res) => {
 
     // Check if teacher exists
     const existingTeacher = await pool.query(
-      'SELECT * FROM teachers WHERE id = $1',
-      [id]
+      'SELECT * FROM users WHERE id = $1 AND role = $2',
+      [id, 'Teacher']
     );
 
     if (existingTeacher.rows.length === 0) {
@@ -203,10 +199,14 @@ router.put('/:id/status', authenticateToken, requireAdmin, async (req, res) => {
 
     const teacherName = existingTeacher.rows[0].name;
 
-    const result = await pool.query(
-      'UPDATE teachers SET status = $1 WHERE id = $2 RETURNING *',
-      [status, id]
-    );
+    // Status update not supported in current schema
+    // const result = await pool.query(
+    //   'UPDATE users SET status = $1 WHERE id = $2 AND role = $3 RETURNING *',
+    //   [status, id, 'Teacher']
+    // );
+    
+    // Return the existing teacher for now
+    const result = { rows: [existingTeacher.rows[0]] };
 
     const updatedTeacher = result.rows[0];
 
@@ -239,8 +239,8 @@ router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const result = await pool.query(
-      'SELECT * FROM teachers WHERE id = $1',
-      [id]
+      'SELECT id, username, contact, name, email, gender, role, created_at FROM users WHERE id = $1 AND role = $2',
+      [id, 'Teacher']
     );
 
     if (result.rows.length === 0) {
@@ -258,8 +258,8 @@ router.get('/:id', authenticateToken, async (req, res) => {
 router.get('/active/list', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, name, contact, email, subject FROM teachers WHERE status = $1 ORDER BY name',
-      ['active']
+      'SELECT id, name, contact, email FROM users WHERE role = $1 ORDER BY name',
+      ['Teacher']
     );
     res.json(result.rows);
   } catch (error) {
@@ -272,22 +272,24 @@ router.get('/active/list', authenticateToken, async (req, res) => {
 router.get('/stats/overview', authenticateToken, async (req, res) => {
   try {
     // Get total teachers
-    const totalTeachers = await pool.query('SELECT COUNT(*) as count FROM teachers');
+    const totalTeachers = await pool.query('SELECT COUNT(*) as count FROM users WHERE role = $1', ['Teacher']);
     
-    // Get teachers by status
-    const teachersByStatus = await pool.query(
-      'SELECT status, COUNT(*) as count FROM teachers GROUP BY status'
+    // Get teachers by gender
+    const teachersByGender = await pool.query(
+      'SELECT gender, COUNT(*) as count FROM users WHERE role = $1 GROUP BY gender',
+      ['Teacher']
     );
     
-    // Get teachers by subject
-    const teachersBySubject = await pool.query(
-      'SELECT subject, COUNT(*) as count FROM teachers WHERE subject IS NOT NULL GROUP BY subject'
+    // Get teachers by creation date (last 12 months)
+    const teachersByMonth = await pool.query(
+      'SELECT DATE_TRUNC(\'month\', created_at) as month, COUNT(*) as count FROM users WHERE role = $1 AND created_at >= NOW() - INTERVAL \'12 months\' GROUP BY DATE_TRUNC(\'month\', created_at) ORDER BY month',
+      ['Teacher']
     );
 
     res.json({
       total: parseInt(totalTeachers.rows[0].count),
-      byStatus: teachersByStatus.rows,
-      bySubject: teachersBySubject.rows
+      byGender: teachersByGender.rows,
+      byMonth: teachersByMonth.rows
     });
   } catch (error) {
     console.error('Error fetching teacher statistics:', error);

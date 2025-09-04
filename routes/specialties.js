@@ -25,10 +25,10 @@ router.get('/', authenticateToken, async (req, res) => {
 // Create new specialty
 router.post('/', authenticateToken, restrictAdmin1ReadOnly, async (req, res) => {
   try {
-    const { name, description } = req.body;
+    const { name, abbreviation } = req.body;
     const result = await pool.query(
-      'INSERT INTO specialties (name, description) VALUES ($1, $2) RETURNING *',
-      [name, description]
+      'INSERT INTO specialties (name, abbreviation) VALUES ($1, $2) RETURNING *',
+      [name, abbreviation]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -41,10 +41,10 @@ router.post('/', authenticateToken, restrictAdmin1ReadOnly, async (req, res) => 
 router.put('/:id', authenticateToken, restrictAdmin1ReadOnly, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description } = req.body;
+    const { name, abbreviation } = req.body;
     const result = await pool.query(
-      'UPDATE specialties SET name = $1, description = $2 WHERE id = $3 RETURNING *',
-      [name, description, id]
+      'UPDATE specialties SET name = $1, abbreviation = $2 WHERE id = $3 RETURNING *',
+      [name, abbreviation, id]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Specialty not found' });
