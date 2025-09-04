@@ -4,7 +4,9 @@ const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
+
 const createAttendanceRouter = require('./routes/attendance');
+const createStaffAttendanceRouter = require('./routes/staff-attendance');
 const createDisciplineCasesRouter = require('./routes/discipline_cases');
 
 const app = express();
@@ -63,8 +65,9 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
-// Mount attendance router
+
 app.use('/api/attendance', createAttendanceRouter(pool, authenticateToken));
+app.use('/api/staff-attendance', createStaffAttendanceRouter(pool, authenticateToken));
 app.use('/api/discipline-cases', createDisciplineCasesRouter(pool, authenticateToken));
 
 // Health

@@ -1,8 +1,9 @@
 var DataTypes = require("sequelize").DataTypes;
 var _academic_years = require("./academic_years");
-
 var _attendance_records = require("./attendance_records");
 var _attendance_sessions = require("./attendance_sessions");
+
+
 var _classes = require("./classes");
 var _fees = require("./fees");
 var _group_participants = require("./group_participants");
@@ -31,9 +32,10 @@ var _vocational = require("./vocational");
 
 function initModels(sequelize) {
   var academic_years = _academic_years(sequelize, DataTypes);
-
   var attendance_records = _attendance_records(sequelize, DataTypes);
   var attendance_sessions = _attendance_sessions(sequelize, DataTypes);
+
+
   var classes = _classes(sequelize, DataTypes);
   var fees = _fees(sequelize, DataTypes);
   var group_participants = _group_participants(sequelize, DataTypes);
@@ -61,6 +63,7 @@ function initModels(sequelize) {
   var vocational = _vocational(sequelize, DataTypes);
 
 
+
   attendance_records.belongsTo(attendance_sessions, { as: "session", foreignKey: "session_id"});
   attendance_sessions.hasMany(attendance_records, { as: "attendance_records", foreignKey: "session_id"});
   attendance_sessions.belongsTo(classes, { as: "class", foreignKey: "class_id"});
@@ -81,10 +84,11 @@ function initModels(sequelize) {
   groups.hasMany(group_participants, { as: "group_participants", foreignKey: "group_id"});
   specialty_classes.belongsTo(specialties, { as: "specialty", foreignKey: "specialty_id"});
   specialties.hasMany(specialty_classes, { as: "specialty_classes", foreignKey: "specialty_id"});
-  students.belongsTo(specialties, { as: "specialty", foreignKey: "specialty_id"});
-  specialties.hasMany(students, { as: "students", foreignKey: "specialty_id"});
   attendance_records.belongsTo(students, { as: "student", foreignKey: "student_id"});
   students.hasMany(attendance_records, { as: "attendance_records", foreignKey: "student_id"});
+  students.belongsTo(specialties, { as: "specialty", foreignKey: "specialty_id"});
+  specialties.hasMany(students, { as: "students", foreignKey: "specialty_id"});
+
   subject_classifications.belongsTo(subjects, { as: "subject", foreignKey: "subject_id"});
   subjects.hasMany(subject_classifications, { as: "subject_classifications", foreignKey: "subject_id"});
   subject_coefficients.belongsTo(subjects, { as: "subject", foreignKey: "subject_id"});
@@ -92,8 +96,7 @@ function initModels(sequelize) {
   teacher_assignments.belongsTo(subjects, { as: "subject", foreignKey: "subject_id"});
   subjects.hasMany(teacher_assignments, { as: "teacher_assignments", foreignKey: "subject_id"});
 
-  attendance_sessions.belongsTo(users, { as: "taken_by_user", foreignKey: "taken_by"});
-  users.hasMany(attendance_sessions, { as: "attendance_sessions", foreignKey: "taken_by"});
+
   group_participants.belongsTo(users, { as: "user", foreignKey: "user_id"});
   users.hasMany(group_participants, { as: "group_participants", foreignKey: "user_id"});
   groups.belongsTo(users, { as: "creator", foreignKey: "creator_id"});
@@ -119,11 +122,12 @@ function initModels(sequelize) {
   user_activities.belongsTo(users, { as: "user", foreignKey: "user_id"});
   users.hasMany(user_activities, { as: "user_activities", foreignKey: "user_id"});
   user_sessions.belongsTo(users, { as: "user", foreignKey: "user_id"});
+  attendance_sessions.belongsTo(users, { as: "taken_by_user", foreignKey: "taken_by"});
+  users.hasMany(attendance_sessions, { as: "attendance_sessions", foreignKey: "taken_by"});
   users.hasMany(user_sessions, { as: "user_sessions", foreignKey: "user_id"});
 
   return {
     academic_years,
-    
     attendance_records,
     attendance_sessions,
     classes,

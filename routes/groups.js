@@ -225,7 +225,12 @@ router.post('/:groupId/messages/with-file', authenticateToken, upload.single('fi
     }
     
     // Upload file to FTP
-    const fileName = `group-${group_id}-${Date.now()}-${req.file.originalname}`; // Remove nested directory
+    const originalName = req.file.originalname || 'file';
+    const sanitizedOriginal = originalName.replace(/[^\w\-. ]/g, '_');
+    const extension = sanitizedOriginal.includes('.') ? sanitizedOriginal.split('.').pop() : '';
+    const baseName = sanitizedOriginal.replace(/\.[^.]+$/, '');
+    const limitedBase = baseName.length > 40 ? baseName.slice(0, 40) : baseName;
+    const fileName = `group-${group_id}-${Date.now()}-${limitedBase}${extension ? '.' + extension : ''}`;
     let fileUrl;
     
     try {
@@ -236,11 +241,16 @@ router.post('/:groupId/messages/with-file', authenticateToken, upload.single('fi
       return res.status(500).json({ error: 'Failed to upload file' });
     }
     
+    // Truncate file_name to fit DB column limits (varchar(50))
+    const safeFileName = originalName.length > 50 ? originalName.slice(0, 50) : originalName;
+
     // Save message with file info
+    const safeFileType = (req.file.mimetype || '').slice(0, 50);
+
     const result = await pool.query(
       `INSERT INTO messages (sender_id, group_id, content, file_url, file_name, file_type) 
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [sender_id, group_id, content || '', fileUrl, req.file.originalname, req.file.mimetype]
+      [sender_id, group_id, content || '', fileUrl, safeFileName, safeFileType]
     );
     
     // Get the message with sender info

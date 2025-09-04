@@ -318,6 +318,17 @@ CREATE TABLE IF NOT EXISTS teacher_assignments (
     UNIQUE(teacher_id, class_id, subject_id)
 );
 
+-- Teacher Disciplinary Cases
+CREATE TABLE IF NOT EXISTS teacher_discipline_cases (
+    id SERIAL PRIMARY KEY,
+    teacher_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    case_name VARCHAR(200) NOT NULL,
+    description TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- User Activity Tracking Tables
 CREATE TABLE IF NOT EXISTS user_sessions (
     id SERIAL PRIMARY KEY,
@@ -390,7 +401,9 @@ CREATE TABLE IF NOT EXISTS case_reports (
     sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Attendance (re-added for new server)
+
+
+-- Attendance (for students only)
 CREATE TABLE IF NOT EXISTS attendance_sessions (
     id SERIAL PRIMARY KEY,
     type VARCHAR(10) NOT NULL CHECK (type IN ('student','teacher')),
@@ -411,6 +424,24 @@ CREATE TABLE IF NOT EXISTS attendance_records (
     CHECK ((student_id IS NOT NULL AND teacher_id IS NULL) OR (student_id IS NULL AND teacher_id IS NOT NULL))
 );
 
+-- Staff Attendance Records
+CREATE TABLE IF NOT EXISTS staff_attendance_records (
+    id SERIAL PRIMARY KEY,
+    date DATE NOT NULL,
+    staff_name VARCHAR(255) NOT NULL,
+    time_in TIME,
+    time_out TIME,
+    classes_taught TEXT,
+    status VARCHAR(50) NOT NULL CHECK (status IN ('Present', 'Absent', 'Late', 'Half Day')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(date, staff_name)
+);
+
+-- Index for better performance on date queries
+CREATE INDEX IF NOT EXISTS idx_staff_attendance_date ON staff_attendance_records(date);
+CREATE INDEX IF NOT EXISTS idx_staff_attendance_staff_name ON staff_attendance_records(staff_name);
+
 -- Discipline Cases table
 CREATE TABLE IF NOT EXISTS discipline_cases (
     id SERIAL PRIMARY KEY,
@@ -424,6 +455,8 @@ CREATE TABLE IF NOT EXISTS discipline_cases (
     resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     resolution_notes TEXT NULL
 );
+
+-- Teacher Discipline Cases table removed
 
 -- Events table
 CREATE TABLE IF NOT EXISTS events (
@@ -439,6 +472,26 @@ CREATE TABLE IF NOT EXISTS events (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- HODs table for managing Heads of Departments
+CREATE TABLE IF NOT EXISTS hods (
+    id SERIAL PRIMARY KEY,
+    department_name VARCHAR(255) NOT NULL,
+    hod_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
+    suspended BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- HOD Teachers table for managing teachers under each HOD
+CREATE TABLE IF NOT EXISTS hod_teachers (
+    id SERIAL PRIMARY KEY,
+    hod_id INTEGER REFERENCES hods(id) ON DELETE CASCADE,
+    teacher_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(hod_id, teacher_id)
+);
+
 -- Indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_status ON user_sessions(status);
@@ -451,6 +504,8 @@ CREATE INDEX IF NOT EXISTS idx_discipline_cases_student ON discipline_cases(stud
 CREATE INDEX IF NOT EXISTS idx_discipline_cases_class ON discipline_cases(class_id);
 CREATE INDEX IF NOT EXISTS idx_discipline_cases_status ON discipline_cases(status);
 CREATE INDEX IF NOT EXISTS idx_discipline_cases_recorded_at ON discipline_cases(recorded_at);
+
+-- Indexes for teacher discipline cases removed
 
 
 

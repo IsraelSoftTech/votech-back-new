@@ -257,11 +257,7 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Cannot delete subject. It is assigned to one or more classes.' });
     }
 
-    // Check if subject is used in timetables
-    const timetableUsage = await pool.query('SELECT COUNT(*) FROM timetable_entries WHERE subject_id = $1', [id]);
-    if (parseInt(timetableUsage.rows[0].count) > 0) {
-      return res.status(400).json({ error: 'Cannot delete subject. It is used in timetables.' });
-    }
+    // Timetables feature removed; skip timetable usage check
 
     // Log the activity before deletion
     await logUserActivity(req.user.id, 'delete', `Deleted subject: ${existingSubject.rows[0].name}`, 'subject', id, existingSubject.rows[0].name, ipAddress, userAgent);

@@ -23,6 +23,14 @@ module.exports = function(sequelize, DataTypes) {
         key: 'id'
       }
     },
+    teacher_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'users',
+        key: 'id'
+      }
+    },
     status: {
       type: DataTypes.STRING(10),
       allowNull: false

@@ -25,9 +25,12 @@ const messagesRouter = require("./routes/messages");
 const studentsRouter = require("./routes/students");
 const monitorRouter = require("./routes/monitor");
 const vocationalRouter = require("./routes/vocational");
+const hodsRouter = require("./routes/hods");
+const teacherDisciplineRouter = require("./routes/teacher-discipline-cases");
 
 // Factory routers needing pool/authenticate
 const createAttendanceRouter = require("./routes/attendance");
+const createStaffAttendanceRouter = require("./routes/staff-attendance");
 const createDisciplineCasesRouter = require("./routes/discipline_cases");
 const { pool, authenticateToken } = require("./routes/utils");
 
@@ -116,14 +119,18 @@ app.use("/api/asset-categories", assetCategoriesRouter);
 app.use("/api/budget-heads", budgetHeadsRouter);
 app.use("/api/monitor", monitorRouter);
 app.use("/api/vocational", vocationalRouter);
+app.use("/api/hods", hodsRouter);
 app.use("/api/students", studentsRouter);
+app.use("/api/teacher-discipline-cases", teacherDisciplineRouter);
 
 // Factory routes (pool + auth)
 app.use("/api/attendance", createAttendanceRouter(pool, authenticateToken));
+app.use("/api/staff-attendance", createStaffAttendanceRouter(pool, authenticateToken));
 app.use(
   "/api/discipline-cases",
   createDisciplineCasesRouter(pool, authenticateToken)
 );
+// Removed teacher-discipline-cases router
 
 // v1 academic/marks domain
 app.use("/api/v1/academic-years", accademicYearRouter);

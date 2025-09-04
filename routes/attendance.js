@@ -14,24 +14,6 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
     }
   });
 
-  // Get approved teachers for selection
-  router.get('/teachers', authenticateToken, async (req, res) => {
-    try {
-      const result = await pool.query(`
-        SELECT 
-          t.user_id as id,
-          t.full_name,
-          t.contact
-        FROM teachers t
-        ORDER BY t.full_name ASC
-      `);
-      res.json(result.rows);
-    } catch (error) {
-      console.error('Error fetching teachers:', error);
-      res.status(500).json({ error: 'Failed to fetch teachers' });
-    }
-  });
-
   // Get students by class
   router.get('/:classId/students', authenticateToken, async (req, res) => {
     const { classId } = req.params;
@@ -47,11 +29,11 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
     }
   });
 
-  // Start attendance session
+  // Start attendance session (students only)
   router.post('/start', authenticateToken, async (req, res) => {
     const { type, class_id, session_time } = req.body;
-    if (!type || !['student', 'teacher'].includes(String(type).toLowerCase())) {
-      return res.status(400).json({ error: 'Invalid type. Must be student or teacher' });
+    if (!type || type !== 'student') {
+      return res.status(400).json({ error: 'Invalid type. Must be student' });
     }
     try {
       console.log('Received session_time:', session_time);
@@ -68,28 +50,28 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
     }
   });
 
-  // Bulk mark attendance (supports both students and teachers)
+  // Bulk mark attendance (students only)
   router.post('/:sessionId/mark-bulk', authenticateToken, async (req, res) => {
     const { sessionId } = req.params;
-    const { records } = req.body; // [{student_id, status}] or [{teacher_id, status}]
+    const { records } = req.body; // [{student_id, status}]
     if (!Array.isArray(records) || records.length === 0) {
       return res.status(400).json({ error: 'records must be a non-empty array' });
     }
     
-    // Get session type to determine if it's student or teacher attendance
+    // Get session type to ensure it's student attendance
     const sessionResult = await pool.query('SELECT type FROM attendance_sessions WHERE id = $1', [sessionId]);
     if (sessionResult.rows.length === 0) {
       return res.status(404).json({ error: 'Session not found' });
     }
     const sessionType = sessionResult.rows[0].type;
     
-    // Validate records based on session type
+    if (sessionType !== 'student') {
+      return res.status(400).json({ error: 'Only student attendance is supported' });
+    }
+    
+    // Validate records for student attendance
     const valid = records.every(r => {
-      if (sessionType === 'student') {
-        return r && r.student_id && ['present', 'absent'].includes(r.status);
-      } else {
-        return r && r.teacher_id && ['present', 'absent'].includes(r.status);
-      }
+      return r && r.student_id && ['present', 'absent'].includes(r.status);
     });
     
     if (!valid) {
@@ -99,28 +81,15 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
     try {
       await pool.query('BEGIN');
       
-      if (sessionType === 'student') {
-        // Handle student attendance
-        const insertText = `
-          INSERT INTO attendance_records (session_id, student_id, status)
-          VALUES ($1, $2, $3)
-          ON CONFLICT (session_id, student_id)
-          DO UPDATE SET status = EXCLUDED.status, marked_at = NOW()
-        `;
-        for (const r of records) {
-          await pool.query(insertText, [sessionId, r.student_id, r.status]);
-        }
-      } else {
-        // Handle teacher attendance - store in attendance_records with teacher_id
-        const insertText = `
-          INSERT INTO attendance_records (session_id, teacher_id, status)
-          VALUES ($1, $2, $3)
-          ON CONFLICT (session_id, teacher_id)
-          DO UPDATE SET status = EXCLUDED.status, marked_at = NOW()
-        `;
-        for (const r of records) {
-          await pool.query(insertText, [sessionId, r.teacher_id, r.status]);
-        }
+      // Handle student attendance
+      const insertText = `
+        INSERT INTO attendance_records (session_id, student_id, status)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (session_id, student_id)
+        DO UPDATE SET status = EXCLUDED.status, marked_at = NOW()
+      `;
+      for (const r of records) {
+        await pool.query(insertText, [sessionId, r.student_id, r.status]);
       }
       
       await pool.query('COMMIT');
@@ -132,7 +101,7 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
     }
   });
 
-  // Today summary: students and teachers
+  // Today summary: students only
   router.get('/today-summary', authenticateToken, async (req, res) => {
     try {
       console.log('Fetching attendance summary...');
@@ -140,12 +109,11 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
         WITH recent_sessions AS (
           SELECT id, type FROM attendance_sessions
           WHERE session_time >= NOW() - INTERVAL '7 days'
+          AND type = 'student'
         )
         SELECT
-          COALESCE(SUM(CASE WHEN rs.type = 'student' AND ar.status = 'present' THEN 1 ELSE 0 END), 0) AS student_present,
-          COALESCE(SUM(CASE WHEN rs.type = 'student' AND ar.status = 'absent' THEN 1 ELSE 0 END), 0) AS student_absent,
-          COALESCE(SUM(CASE WHEN rs.type = 'teacher' AND ar.status = 'present' THEN 1 ELSE 0 END), 0) AS teacher_present,
-          COALESCE(SUM(CASE WHEN rs.type = 'teacher' AND ar.status = 'absent' THEN 1 ELSE 0 END), 0) AS teacher_absent
+          COALESCE(SUM(CASE WHEN ar.status = 'present' THEN 1 ELSE 0 END), 0) AS student_present,
+          COALESCE(SUM(CASE WHEN ar.status = 'absent' THEN 1 ELSE 0 END), 0) AS student_absent
         FROM recent_sessions rs
         LEFT JOIN attendance_records ar ON ar.session_id = rs.id
       `;
@@ -153,7 +121,7 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
       const row = result.rows[0] || {};
       const summary = {
         students: { present: Number(row.student_present || 0), absent: Number(row.student_absent || 0) },
-        teachers: { present: Number(row.teacher_present || 0), absent: Number(row.teacher_absent || 0) }
+        teachers: { present: 0, absent: 0 } // Always 0 for teachers
       };
       console.log('Attendance summary:', summary);
       res.json(summary);
@@ -163,26 +131,7 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
     }
   });
 
-  // Debug endpoint to get all sessions (for debugging)
-  router.get('/all-sessions', authenticateToken, async (req, res) => {
-    try {
-      console.log('Fetching all sessions for debugging...');
-      const result = await pool.query(
-        `SELECT s.id, LOWER(s.type) as type, s.session_time, c.name as class_name
-         FROM attendance_sessions s
-         LEFT JOIN classes c ON s.class_id = c.id
-         ORDER BY s.session_time DESC
-         LIMIT 20`
-      );
-      console.log(`Found ${result.rows.length} total sessions:`, result.rows);
-      res.json(result.rows);
-    } catch (error) {
-      console.error('Error fetching all sessions:', error);
-      res.status(500).json({ error: 'Failed to fetch all sessions' });
-    }
-  });
-
-  // List of today's sessions with type, class and time
+  // List of today's sessions (students only)
   router.get('/today-sessions', authenticateToken, async (req, res) => {
     try {
       console.log('Fetching recent sessions...');
@@ -192,6 +141,7 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
          FROM attendance_sessions s
          LEFT JOIN classes c ON s.class_id = c.id
          WHERE s.session_time >= NOW() - INTERVAL '7 days'
+         AND s.type = 'student'
          ORDER BY s.session_time DESC`
       );
       console.log(`Found ${result.rows.length} recent sessions:`, result.rows);
@@ -202,31 +152,7 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
     }
   });
 
-  // Debug endpoint to check stored dates
-  router.get('/debug-dates', authenticateToken, async (req, res) => {
-    try {
-      console.log('Debug: Checking stored dates...');
-      const result = await pool.query(`
-        SELECT 
-          id, 
-          type, 
-          session_time,
-          session_time::date as stored_date,
-          session_time AT TIME ZONE 'UTC' as utc_time,
-          session_time AT TIME ZONE 'UTC' AT TIME ZONE 'UTC' as double_utc
-        FROM attendance_sessions 
-        ORDER BY session_time DESC 
-        LIMIT 10
-      `);
-      console.log('Debug dates result:', result.rows);
-      res.json(result.rows);
-    } catch (error) {
-      console.error('Error debugging dates:', error);
-      res.status(500).json({ error: 'Failed to debug dates' });
-    }
-  });
-
-  // Export attendance report
+  // Export attendance report (students only)
   router.get('/export', authenticateToken, async (req, res) => {
     try {
       const type = String(req.query.type || '').toLowerCase();
@@ -235,16 +161,16 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
       
       console.log('=== EXPORT REQUEST ===');
       console.log('Type:', type);
-      // Class ID processed
+      console.log('Class ID:', classId);
       console.log('Date:', date);
       
-      if (!['student', 'teacher'].includes(type)) {
-        return res.status(400).json({ error: 'Invalid type' });
+      if (type !== 'student') {
+        return res.status(400).json({ error: 'Only student attendance export is supported' });
       }
       if (!date) {
         return res.status(400).json({ error: 'date is required (YYYY-MM-DD)' });
       }
-      if (type === 'student' && !classId) {
+      if (!classId) {
         return res.status(400).json({ error: 'classId is required for student attendance' });
       }
 
@@ -256,9 +182,10 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
         WHERE type = $1 
         AND session_time >= $2::timestamp 
         AND session_time < $2::timestamp + INTERVAL '1 day'
+        AND class_id = $3
         ORDER BY session_time ASC
       `;
-      const sessionsResult = await pool.query(sessionsQuery, [type, date]);
+      const sessionsResult = await pool.query(sessionsQuery, [type, date, classId]);
       const sessions = sessionsResult.rows;
       console.log(`Found ${sessions.length} sessions:`, sessions);
 
@@ -267,69 +194,41 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
         return res.json({
           type,
           date,
-          className: type === 'student' ? 'N/A' : null,
+          className: 'N/A',
           sessions: [],
           rows: []
         });
       }
 
-      // Step 2: Filter sessions by class if needed
-      let filteredSessions = sessions;
-      if (type === 'student' && classId) {
-        filteredSessions = sessions.filter(s => s.class_id === classId);
-        // Filtered to class
-      }
+      // Step 2: Get class name and students
+      console.log('Step 2: Getting students...');
+      const classResult = await pool.query('SELECT name FROM classes WHERE id = $1', [classId]);
+      const className = classResult.rows[0]?.name || 'Unknown Class';
+      const studentsResult = await pool.query(
+        'SELECT id, full_name, sex FROM students WHERE class_id = $1 ORDER BY full_name ASC',
+        [classId]
+      );
+      const people = studentsResult.rows;
+      console.log(`Found ${people.length} students for class ${className}:`, people);
 
-      // Step 3: Get people (students or teachers)
-      console.log('Step 3: Getting people...');
-      let people = [];
-      let className = null;
-      
-      if (type === 'student') {
-        // Get class name and students
-        const classResult = await pool.query('SELECT name FROM classes WHERE id = $1', [classId]);
-        className = classResult.rows[0]?.name || 'Unknown Class';
-        const studentsResult = await pool.query(
-          'SELECT id, full_name, sex FROM students WHERE class_id = $1 ORDER BY full_name ASC',
-          [classId]
-        );
-        people = studentsResult.rows;
-        // Found students for class
-      } else {
-        // Get all approved teachers
-        const teachersResult = await pool.query(`
-          SELECT 
-            t.user_id as id,
-            t.full_name,
-            'N/A' as sex
-          FROM teachers t
-          ORDER BY t.full_name ASC
-        `);
-        people = teachersResult.rows;
-        console.log(`Found ${people.length} approved teachers:`, people);
-      }
-
-      // Step 4: Get attendance records for these sessions
-      console.log('Step 4: Getting attendance records...');
-      const sessionIds = filteredSessions.map(s => s.id);
-      const recordsQuery = type === 'student'
-        ? `SELECT session_id, student_id, status FROM attendance_records WHERE session_id = ANY($1)`
-        : `SELECT session_id, teacher_id, status FROM attendance_records WHERE session_id = ANY($1)`;
+      // Step 3: Get attendance records for these sessions
+      console.log('Step 3: Getting attendance records...');
+      const sessionIds = sessions.map(s => s.id);
+      const recordsQuery = `SELECT session_id, student_id, status FROM attendance_records WHERE session_id = ANY($1)`;
       const recordsResult = await pool.query(recordsQuery, [sessionIds]);
       const records = recordsResult.rows;
       console.log(`Found ${records.length} attendance records:`, records);
 
-      // Step 5: Build the report
-      console.log('Step 5: Building report...');
-      const sessionTimes = filteredSessions.map(s => 
+      // Step 4: Build the report
+      console.log('Step 4: Building report...');
+      const sessionTimes = sessions.map(s => 
         new Date(s.session_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       );
       
       const rows = people.map(person => {
-        const statuses = filteredSessions.map(session => {
+        const statuses = sessions.map(session => {
           const record = records.find(r => {
-            const personId = type === 'student' ? r.student_id : r.teacher_id;
-            return personId === person.id && r.session_id === session.id;
+            return r.student_id === person.id && r.session_id === session.id;
           });
           return record ? (record.status === 'present' ? 'P' : 'A') : '';
         });
@@ -384,4 +283,4 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
   });
 
   return router;
-}; 
+};

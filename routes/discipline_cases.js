@@ -3,7 +3,7 @@ const express = require('express');
 module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
   const router = express.Router();
 
-  // Get all discipline cases (all users can see all cases)
+  // Get all discipline cases (students only)
   router.get('/', authenticateToken, async (req, res) => {
     try {
       const query = `
@@ -14,23 +14,21 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
           dc.recorded_at,
           dc.resolved_at,
           dc.resolution_notes,
-          dc.case_type,
+          'student' as case_type,
           s.full_name as student_name,
           s.sex as student_sex,
           c.name as class_name,
-          t.name as teacher_name,
-          t.role as teacher_role,
+          NULL as teacher_name,
+          NULL as teacher_role,
           u.username as recorded_by_username,
           u.name as recorded_by_name,
           u.role as recorded_by_role
         FROM discipline_cases dc
         LEFT JOIN students s ON dc.student_id = s.id
         LEFT JOIN classes c ON dc.class_id = c.id
-        LEFT JOIN users t ON dc.teacher_id = t.id
         LEFT JOIN users u ON dc.recorded_by = u.id
         ORDER BY dc.recorded_at DESC
       `;
-      
       const result = await pool.query(query);
       res.json(result.rows);
     } catch (error) {
@@ -66,14 +64,18 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
     }
   });
 
-  // Get teachers for selection (users with teacher role)
+  // Get teachers for selection — return all users so you can pick anyone;
+  // submission will auto-map/create a teachers row if needed.
   router.get('/teachers', authenticateToken, async (req, res) => {
     try {
       const result = await pool.query(`
-        SELECT u.id, u.username, u.name, u.role
-        FROM users u
-        WHERE u.role IN ('Teacher', 'Discipline', 'Psychosocialist', 'Admin1')
-        ORDER BY u.name ASC
+        SELECT 
+          id,        -- users.id (will be mapped to teachers.id on POST if needed)
+          username,
+          name,
+          role
+        FROM users
+        ORDER BY COALESCE(name, username) ASC
       `);
       res.json(result.rows);
     } catch (error) {
@@ -91,7 +93,7 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
       return res.status(400).json({ error: 'case_description is required' });
     }
     
-    if (!student_id && !teacher_id) {
+    if (!student_id) {
       return res.status(400).json({ error: 'Either student_id or teacher_id is required' });
     }
     
@@ -113,21 +115,54 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
           RETURNING *
         `;
         params = [student_id, class_id, case_description, case_type || 'student', req.user.id];
-      } else {
-        // Teacher case
-        query = `
-          INSERT INTO discipline_cases (teacher_id, case_description, case_type, recorded_by)
-          VALUES ($1, $2, $3, $4)
-          RETURNING *
-        `;
-        params = [teacher_id, case_description, case_type || 'teacher', req.user.id];
       }
       
       const result = await pool.query(query, params);
       res.status(201).json(result.rows[0]);
     } catch (error) {
       console.error('Error creating discipline case:', error);
+      if (error && error.code === '23503') {
+        return res.status(400).json({ error: 'Invalid foreign key provided (class or teacher).' });
+      }
       res.status(500).json({ error: 'Failed to create discipline case' });
+    }
+  });
+
+  // Alias: Create a new TEACHER discipline case via this router
+  // This ensures environments that only mount /api/discipline-cases still support teacher case creation
+  router.post('/teacher', authenticateToken, async (req, res) => {
+    const { teacher_id, class_id, case_description } = req.body;
+    if (!teacher_id || !case_description) {
+      return res.status(400).json({ error: 'teacher_id and case_description are required' });
+    }
+    try {
+      const userCheck = await pool.query('SELECT id FROM users WHERE id = $1 LIMIT 1', [teacher_id]);
+      if (userCheck.rows.length === 0) {
+        return res.status(400).json({ error: 'Invalid teacher_id. Please select a valid teacher.' });
+      }
+      let result;
+      if (class_id) {
+        result = await pool.query(
+          `INSERT INTO teacher_discipline_cases (teacher_id, class_id, case_description, status, recorded_by)
+           VALUES ($1, $2, $3, 'not resolved', $4)
+           RETURNING *`,
+          [teacher_id, class_id, case_description, req.user.id]
+        );
+      } else {
+        result = await pool.query(
+          `INSERT INTO teacher_discipline_cases (teacher_id, case_description, status, recorded_by)
+           VALUES ($1, $2, 'not resolved', $3)
+           RETURNING *`,
+          [teacher_id, case_description, req.user.id]
+        );
+      }
+      res.status(201).json(result.rows[0]);
+    } catch (error) {
+      console.error('Error creating teacher discipline case (alias):', error);
+      if (error && error.code === '23503') {
+        return res.status(400).json({ error: 'Invalid foreign key provided (class or teacher).' });
+      }
+      res.status(500).json({ error: 'Failed to create teacher discipline case' });
     }
   });
 
@@ -142,10 +177,13 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
 
     try {
       // Check if user can update this case
-      const checkResult = await pool.query(
-        'SELECT recorded_by FROM discipline_cases WHERE id = $1',
-        [id]
-      );
+      // Check only student cases
+      const checkStudent = await pool.query('SELECT recorded_by FROM discipline_cases WHERE id = $1', [id]);
+      const existsInStudent = checkStudent.rows.length > 0;
+      if (!existsInStudent) {
+        return res.status(404).json({ error: 'Discipline case not found' });
+      }
+      const recordedBy = checkStudent.rows[0].recorded_by;
       
       if (checkResult.rows.length === 0) {
         return res.status(404).json({ error: 'Discipline case not found' });
@@ -153,25 +191,20 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
       
       const caseRecord = checkResult.rows[0];
       
-      // Only Admin users or the user who recorded the case can update it
-      if (!req.user.role.startsWith('Admin') && caseRecord.recorded_by !== req.user.id) {
+      // Only Admin, Discipline, Psychosocialist (case-insensitive), or the user who recorded the case can update it
+      const roleLower = String(req.user.role || '').toLowerCase();
+      const isPrivilegedRole = roleLower.startsWith('admin') || roleLower === 'discipline' || roleLower === 'psychosocialist' || roleLower === 'psycho';
+      if (!isPrivilegedRole && recordedBy !== req.user.id) {
         return res.status(403).json({ error: 'Access denied. You can only update cases you recorded.' });
       }
 
       const updateFields = status === 'resolved' 
         ? 'status = $2, resolved_at = NOW(), resolved_by = $3, resolution_notes = $4'
-        : 'status = $2, resolved_at = NULL, resolved_by = NULL, resolution_notes = $4';
-      
-      const params = status === 'resolved' 
+        : 'status = $2, resolved_at = NULL, resolved_by = NULL, resolution_notes = $3';
+      const paramsStudent = status === 'resolved' 
         ? [id, status, req.user.id, resolution_notes || null]
         : [id, status, resolution_notes || null];
-
-      const result = await pool.query(`
-        UPDATE discipline_cases 
-        SET ${updateFields}
-        WHERE id = $1
-        RETURNING *
-      `, params);
+      const result = await pool.query(`UPDATE discipline_cases SET ${updateFields} WHERE id = $1 RETURNING *`, paramsStudent);
       
       res.json(result.rows[0]);
     } catch (error) {
@@ -185,20 +218,16 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
     const { id } = req.params;
     
     try {
-      // Check if user can delete this case
-      const checkResult = await pool.query(
-        'SELECT recorded_by FROM discipline_cases WHERE id = $1',
-        [id]
-      );
-      
-      if (checkResult.rows.length === 0) {
+      // Check only student cases
+      const checkStudent = await pool.query('SELECT recorded_by FROM discipline_cases WHERE id = $1', [id]);
+      const existsInStudent = checkStudent.rows.length > 0;
+      if (!existsInStudent) {
         return res.status(404).json({ error: 'Discipline case not found' });
       }
-      
-      const caseRecord = checkResult.rows[0];
+      const recordedBy = checkStudent.rows[0].recorded_by;
       
       // Only Admin users or the user who recorded the case can delete it
-      if (!req.user.role.startsWith('Admin') && caseRecord.recorded_by !== req.user.id) {
+      if (!req.user.role.startsWith('Admin') && recordedBy !== req.user.id) {
         return res.status(403).json({ error: 'Access denied. You can only delete cases you recorded.' });
       }
       
