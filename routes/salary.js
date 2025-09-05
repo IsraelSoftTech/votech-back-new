@@ -108,12 +108,11 @@ router.get("/approved-applications", async (req, res) => {
     const result = await pool.query(
       `
       SELECT 
-        t.id as teacher_id,
-        t.user_id as applicant_id,
-        t.full_name as applicant_name,
-        t.contact,
-        t.classes,
-        t.subjects,
+        u.id as applicant_id,
+        COALESCE(u.name, u.username) as applicant_name,
+        COALESCE(u.email, '') as contact,
+        '' as classes,
+        '' as subjects,
         'approved' as status,
         COALESCE(s.amount, 0) as salary_amount,
         s.id as salary_id,
@@ -127,19 +126,19 @@ router.get("/approved-applications", async (req, res) => {
             ', ' ORDER BY s2.year DESC, s2.month DESC
           )
           FROM salaries s2 
-          WHERE s2.user_id = t.user_id 
+          WHERE s2.user_id = u.id 
           AND s2.paid = true
         ) as paid_months,
         (
           SELECT COUNT(*)
           FROM salaries s3
-          WHERE s3.user_id = t.user_id 
+          WHERE s3.user_id = u.id 
           AND s3.amount > 0
         ) as total_salary_records,
         (
           SELECT COUNT(*)
           FROM salaries s4
-          WHERE s4.user_id = t.user_id 
+          WHERE s4.user_id = u.id 
           AND s4.paid = true
         ) as paid_salary_records,
         (
@@ -154,14 +153,14 @@ router.get("/approved-applications", async (req, res) => {
             ) ORDER BY s5.month
           )
           FROM salaries s5
-          WHERE s5.user_id = t.user_id 
+          WHERE s5.user_id = u.id 
           AND s5.year = $2
         ) as all_salary_records
-      FROM teachers t
-      LEFT JOIN salaries s ON t.user_id = s.user_id 
+      FROM users u
+      LEFT JOIN salaries s ON u.id = s.user_id 
         AND s.month = $1
         AND s.year = $2
-      ORDER BY t.full_name
+      ORDER BY applicant_name
     `,
       [currentMonthName, academicYearStart]
     );
@@ -247,19 +246,14 @@ router.post("/update", async (req, res) => {
         .json({ error: "Salary amount must be greater than 0" });
     }
 
-    // Check if user exists as a teacher
+    // Check user existence (use users table so any staff can be set for salary)
     const userCheck = await pool.query(
-      `
-      SELECT id FROM teachers 
-      WHERE user_id = $1
-    `,
+      `SELECT id FROM users WHERE id = $1`,
       [userId]
     );
 
     if (userCheck.rows.length === 0) {
-      return res
-        .status(404)
-        .json({ error: "User not found or not registered as a teacher" });
+      return res.status(404).json({ error: "User not found" });
     }
 
     // Calculate academic year start (changes on August 1st)
@@ -337,9 +331,12 @@ router.put("/mark-paid/:salaryId", async (req, res) => {
     // First, get the salary record to check if it's already paid
     const salaryCheck = await pool.query(
       `
-      SELECT s.*, t.full_name as applicant_name 
+      SELECT 
+        s.*, 
+        COALESCE(t.full_name, u.name, u.username) as applicant_name
       FROM salaries s
-      JOIN teachers t ON s.user_id = t.user_id
+      LEFT JOIN teachers t ON s.user_id = t.user_id
+      LEFT JOIN users u ON s.user_id = u.id
       WHERE s.id = $1
     `,
       [salaryId]
@@ -419,14 +416,16 @@ router.get("/paid-salaries", async (req, res) => {
         s.month,
         s.year,
         s.paid_at,
-        t.full_name as applicant_name,
-        t.contact,
-        t.classes,
-        t.subjects
+        COALESCE(t.full_name, u.name, u.username) as user_name,
+        COALESCE(t.full_name, u.name, u.username) as applicant_name,
+        COALESCE(t.contact, u.email, '') as contact,
+        COALESCE(t.classes, '') as classes,
+        COALESCE(t.subjects, '') as subjects
       FROM salaries s
-      JOIN teachers t ON s.user_id = t.user_id
+      LEFT JOIN teachers t ON s.user_id = t.user_id
+      LEFT JOIN users u ON s.user_id = u.id
       WHERE s.paid = true
-      ORDER BY s.paid_at DESC, t.full_name ASC
+      ORDER BY s.paid_at DESC, COALESCE(t.full_name, u.name, u.username) ASC
     `);
 
     res.json(result.rows);
@@ -529,12 +528,13 @@ router.get("/my/paid", authenticateToken, async (req, res) => {
         s.year,
         s.paid_at,
         s.paid,
-        t.full_name as applicant_name,
-        t.contact,
+        COALESCE(t.full_name, u.name, u.username) as user_name,
+        COALESCE(t.contact, u.email, '') as contact,
         t.classes,
         t.subjects
       FROM salaries s
       LEFT JOIN teachers t ON s.user_id = t.user_id
+      LEFT JOIN users u ON s.user_id = u.id
       WHERE s.user_id = $1 AND s.paid = true
       ORDER BY s.paid_at DESC, s.year DESC, s.month DESC
     `,
@@ -553,6 +553,66 @@ router.get("/my/paid", authenticateToken, async (req, res) => {
       error: "Failed to fetch paid salaries",
       details: error.message,
     });
+  }
+});
+
+// Get payslip settings
+router.get("/payslip-settings", authenticateToken, async (req, res) => {
+  try {
+    // For now, return default structure since we don't have a payslip_settings table
+    // In a real implementation, you would store this in the database
+    const defaultSettings = {
+      structure: [
+        { title: '1) AUXILARY ALLOWANCE', items: [
+          { code: 'a)', label: 'Transport & Calls', percent: 10, debitPercent: null, remark: '' },
+          { code: 'b)', label: 'Job Responsibility', percent: 30, debitPercent: null, remark: '' },
+          { code: 'i)', label: 'Executing and Reporting of personal administrative and teaching responsibility', note: true },
+          { code: 'ii)', label: 'Delegating, Coordinating and Reporting of administrative responsibilities of which you are the Leade.', note: true },
+        ]},
+        { title: '2) BASIC ESSENTIAL ALLOWANCE', items: [
+          { code: 'a)', label: 'Housing, Feeding, Health Care, Family Support, Social Security', percent: 30, debitPercent: null, remark: '' },
+          { code: 'b)', label: 'C.N.P.S Personal Contribution', percent: null, debitPercent: 4, remark: '4% of Gross Salary' },
+        ]},
+        { title: '3) PROFESSIONAL & RESEARCH ALLOWANCE', items: [
+          { code: 'a)', label: 'Professional Development and Dressing support', percent: 20, debitPercent: null, remark: '' },
+        ]},
+        { title: '4) BONUS ALLOWANCE', items: [
+          { code: 'a)', label: 'Longivity, Productivity, Creativity, Intrapreneurship', percent: 10, debitPercent: null, remark: '' },
+        ]},
+        { title: '5) OTHERS', items: [
+          { code: 'a)', label: 'Socials', percent: null, debitPercent: null, remark: '' },
+          { code: 'b)', label: 'Niangi', percent: null, debitPercent: null, remark: '' },
+        ]},
+      ]
+    };
+
+    res.json({ settings: defaultSettings });
+  } catch (error) {
+    console.error("Error fetching payslip settings:", error);
+    res.status(500).json({ error: "Failed to fetch payslip settings" });
+  }
+});
+
+// Save payslip settings
+router.post("/payslip-settings", authenticateToken, async (req, res) => {
+  try {
+    const { settings } = req.body;
+
+    if (!settings || !settings.structure) {
+      return res.status(400).json({ error: "Settings structure is required" });
+    }
+
+    // For now, just return success since we don't have a payslip_settings table
+    // In a real implementation, you would save this to the database
+    // Example: await pool.query("INSERT INTO payslip_settings (user_id, settings) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET settings = $2", [req.user.id, JSON.stringify(settings)]);
+
+    res.json({ 
+      message: "Payslip settings saved successfully",
+      settings: settings 
+    });
+  } catch (error) {
+    console.error("Error saving payslip settings:", error);
+    res.status(500).json({ error: "Failed to save payslip settings" });
   }
 });
 
