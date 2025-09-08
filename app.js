@@ -47,6 +47,7 @@ const studentRouterV1 = require("./src/routes/students.route");
 const reportCardRouter = require("./src/routes/reportCard.route");
 const contentRouter = require("./src/routes/content.route");
 const globalErrorController = require("./src/controllers/error.controller");
+const departmentRouter = require("./src/routes/department.route");
 
 const app = express();
 
@@ -75,10 +76,12 @@ const corsOptions = {
 };
 
 // Middleware
-if (process.env.NODE_ENV !== 'production') {
+if (process.env.NODE_ENV !== "production") {
   app.use((req, res, next) => {
-    if (req.method !== 'OPTIONS') {
-      console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+    if (req.method !== "OPTIONS") {
+      console.log(
+        `[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`
+      );
     }
     next();
   });
@@ -125,7 +128,10 @@ app.use("/api/teacher-discipline-cases", teacherDisciplineRouter);
 
 // Factory routes (pool + auth)
 app.use("/api/attendance", createAttendanceRouter(pool, authenticateToken));
-app.use("/api/staff-attendance", createStaffAttendanceRouter(pool, authenticateToken));
+app.use(
+  "/api/staff-attendance",
+  createStaffAttendanceRouter(pool, authenticateToken)
+);
 app.use(
   "/api/discipline-cases",
   createDisciplineCasesRouter(pool, authenticateToken)
@@ -144,6 +150,7 @@ app.use("/api/v1/marks", marksRouter);
 app.use("/api/v1/students", studentRouterV1);
 app.use("/api/v1/report-cards", reportCardRouter);
 app.use("/api/v1/content", contentRouter);
+app.use("/api/v1/departments", departmentRouter);
 
 // Startup message
 console.log("✅ Server routes mounted successfully");
