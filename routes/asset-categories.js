@@ -17,10 +17,20 @@ router.get('/', authenticateToken, async (req, res) => {
 // Create new asset category
 router.post('/', authenticateToken, async (req, res) => {
   try {
-    const { name, description, depreciation_rate, useful_life } = req.body;
+    const { name, description, default_depreciation_rate, useful_life_years } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+
     const result = await pool.query(
-      'INSERT INTO asset_categories (name, description, depreciation_rate, useful_life) VALUES ($1, $2, $3, $4) RETURNING *',
-      [name, description, depreciation_rate, useful_life]
+      'INSERT INTO asset_categories (name, description, default_depreciation_rate, useful_life_years) VALUES ($1, $2, $3, $4) RETURNING *',
+      [
+        name, 
+        description || null, 
+        default_depreciation_rate ? parseFloat(default_depreciation_rate) : null,
+        useful_life_years ? parseInt(useful_life_years) : null
+      ]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -33,10 +43,21 @@ router.post('/', authenticateToken, async (req, res) => {
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, depreciation_rate, useful_life } = req.body;
+    const { name, description, default_depreciation_rate, useful_life_years } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+
     const result = await pool.query(
-      'UPDATE asset_categories SET name = $1, description = $2, depreciation_rate = $3, useful_life = $4 WHERE id = $5 RETURNING *',
-      [name, description, depreciation_rate, useful_life, id]
+      'UPDATE asset_categories SET name = $1, description = $2, default_depreciation_rate = $3, useful_life_years = $4 WHERE id = $5 RETURNING *',
+      [
+        name, 
+        description || null, 
+        default_depreciation_rate ? parseFloat(default_depreciation_rate) : null,
+        useful_life_years ? parseInt(useful_life_years) : null,
+        id
+      ]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Asset category not found' });

@@ -7,13 +7,62 @@ const router = express.Router();
 router.get('/summary', authenticateToken, async (req, res) => {
   try {
     const { start_date, end_date, type } = req.query;
-    let query = `
-      SELECT 
-        COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as total_income,
-        COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as total_expenses,
-        COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE -amount END), 0) as net_income
-      FROM financial_transactions
+    
+    // Get income from fees (student payments)
+    let feesIncomeQuery = `
+      SELECT COALESCE(SUM(amount), 0) as total_income
+      FROM fees
       WHERE 1=1
+    `;
+    
+    // Get expenditure from inventory (expenditure type)
+    let expenditureQuery = `
+      SELECT COALESCE(SUM(estimated_cost), 0) as total_expenditure
+      FROM inventory
+      WHERE type = 'expenditure'
+    `;
+    
+    // Get asset purchases from inventory (income type with asset category)
+    let assetQuery = `
+      SELECT COALESCE(SUM(estimated_cost), 0) as total_assets
+      FROM inventory
+      WHERE type = 'income' AND asset_category IS NOT NULL
+    `;
+    
+    // Get salary data
+    let salaryQuery = `
+      SELECT 
+        COALESCE(SUM(amount), 0) as total_expected,
+        COALESCE(SUM(CASE WHEN paid = true THEN amount ELSE 0 END), 0) as total_paid
+      FROM salaries
+      WHERE 1=1
+    `;
+    
+    // Get detailed fee breakdown
+    let feeBreakdownQuery = `
+      SELECT 
+        fee_type,
+        COALESCE(SUM(amount), 0) as total_amount,
+        COUNT(*) as payment_count
+      FROM fees
+      WHERE 1=1
+      GROUP BY fee_type
+      ORDER BY total_amount DESC
+    `;
+    
+    // Get class-wise fee totals
+    let classFeeQuery = `
+      SELECT 
+        c.name as class_name,
+        COALESCE(SUM(f.amount), 0) as total_fees_collected,
+        COUNT(DISTINCT f.student_id) as students_paid,
+        c.total_fee as class_total_fee
+      FROM fees f
+      JOIN students s ON f.student_id = s.id
+      JOIN classes c ON s.class_id = c.id
+      WHERE 1=1
+      GROUP BY c.id, c.name, c.total_fee
+      ORDER BY total_fees_collected DESC
     `;
     
     const params = [];
@@ -21,24 +70,85 @@ router.get('/summary', authenticateToken, async (req, res) => {
     
     if (start_date) {
       paramCount++;
-      query += ` AND transaction_date >= $${paramCount}`;
+      feesIncomeQuery += ` AND paid_at >= $${paramCount}`;
+      salaryQuery += ` AND created_at >= $${paramCount}`;
+      feeBreakdownQuery += ` AND paid_at >= $${paramCount}`;
+      classFeeQuery += ` AND f.paid_at >= $${paramCount}`;
       params.push(start_date);
     }
     
     if (end_date) {
       paramCount++;
-      query += ` AND transaction_date <= $${paramCount}`;
+      feesIncomeQuery += ` AND paid_at <= $${paramCount}`;
+      salaryQuery += ` AND created_at <= $${paramCount}`;
+      feeBreakdownQuery += ` AND paid_at <= $${paramCount}`;
+      classFeeQuery += ` AND f.paid_at <= $${paramCount}`;
       params.push(end_date);
     }
     
-    if (type) {
-      paramCount++;
-      query += ` AND type = $${paramCount}`;
-      params.push(type);
-    }
+    const [feesIncomeResult, expenditureResult, assetResult, salaryResult, feeBreakdownResult, classFeeResult] = await Promise.all([
+      pool.query(feesIncomeQuery, params),
+      pool.query(expenditureQuery, params),
+      pool.query(assetQuery, params),
+      pool.query(salaryQuery, params),
+      pool.query(feeBreakdownQuery, params),
+      pool.query(classFeeQuery, params)
+    ]);
     
-    const result = await pool.query(query, params);
-    res.json(result.rows[0]);
+    const totalIncome = parseFloat(feesIncomeResult.rows[0]?.total_income || 0);
+    const totalExpenditure = parseFloat(expenditureResult.rows[0]?.total_expenditure || 0);
+    const totalAssets = parseFloat(assetResult.rows[0]?.total_assets || 0);
+    const salaryExpected = parseFloat(salaryResult.rows[0]?.total_expected || 0);
+    const salaryPaid = parseFloat(salaryResult.rows[0]?.total_paid || 0);
+    const salaryOwed = salaryExpected - salaryPaid;
+    
+    // Calculate comprehensive totals
+    const totalExpectedIncome = totalIncome + totalAssets; // Fees + Asset purchases
+    const totalExpectedExpenditure = totalExpenditure + salaryExpected; // Inventory + Salaries
+    const netIncome = totalIncome - totalExpenditure - salaryPaid;
+    
+    const summary = {
+      // Core financial data
+      total_income: totalIncome,
+      total_expenditure: totalExpenditure,
+      total_assets: totalAssets,
+      net_income: netIncome,
+      period_value: start_date && end_date ? `${start_date} to ${end_date}` : 'All Time',
+      
+      // Fee reports
+      fee_reports: {
+        total_fees_collected: totalIncome,
+        fee_breakdown: feeBreakdownResult.rows.map(row => ({
+          fee_type: row.fee_type,
+          amount: parseFloat(row.total_amount),
+          payment_count: parseInt(row.payment_count)
+        })),
+        class_wise_totals: classFeeResult.rows.map(row => ({
+          class_name: row.class_name,
+          fees_collected: parseFloat(row.total_fees_collected),
+          students_paid: parseInt(row.students_paid),
+          class_total_fee: parseFloat(row.class_total_fee || 0)
+        }))
+      },
+      
+      // Salary reports
+      salary_reports: {
+        total_expected: salaryExpected,
+        total_paid: salaryPaid,
+        total_owed: salaryOwed,
+        payment_percentage: salaryExpected > 0 ? (salaryPaid / salaryExpected) * 100 : 0
+      },
+      
+      // Comprehensive summary
+      comprehensive_summary: {
+        total_expected_income: totalExpectedIncome,
+        total_expected_expenditure: totalExpectedExpenditure,
+        net_worth: totalIncome - totalExpenditure - salaryPaid,
+        financial_health: netIncome > 0 ? 'Positive' : netIncome === 0 ? 'Balanced' : 'Negative'
+      }
+    };
+    
+    res.json(summary);
   } catch (error) {
     console.error('Error fetching financial summary:', error);
     res.status(500).json({ error: 'Failed to fetch financial summary' });
@@ -50,43 +160,61 @@ router.get('/balance-sheet', authenticateToken, async (req, res) => {
   try {
     const { as_of_date } = req.query;
     
-    // Get assets
+    // Get assets from inventory (equipment purchases)
     const assetsResult = await pool.query(`
       SELECT 
-        'assets' as category,
-        COALESCE(SUM(book_value), 0) as total
+        COALESCE(SUM(estimated_cost), 0) as total_assets
       FROM inventory 
-      WHERE type = 'asset' AND status = 'active'
+      WHERE type = 'income' AND asset_category IS NOT NULL
     `);
     
-    // Get liabilities
-    const liabilitiesResult = await pool.query(`
+    // Get income from fees
+    const incomeResult = await pool.query(`
       SELECT 
-        'liabilities' as category,
-        COALESCE(SUM(amount), 0) as total
-      FROM financial_transactions 
-      WHERE type = 'liability' AND status = 'outstanding'
+        COALESCE(SUM(amount), 0) as total_income
+      FROM fees
     `);
     
-    // Get equity
-    const equityResult = await pool.query(`
+    // Get expenditure from inventory (expenditure type)
+    const expenditureResult = await pool.query(`
       SELECT 
-        'equity' as category,
-        COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE -amount END), 0) as total
-      FROM financial_transactions
+        COALESCE(SUM(estimated_cost), 0) as total_expenditure
+      FROM inventory 
+      WHERE type = 'expenditure'
     `);
+    
+    const totalAssets = parseFloat(assetsResult.rows[0]?.total_assets || 0);
+    const totalIncome = parseFloat(incomeResult.rows[0]?.total_income || 0);
+    const totalExpenditure = parseFloat(expenditureResult.rows[0]?.total_expenditure || 0);
+    const netWorth = totalIncome - totalExpenditure;
     
     const balanceSheet = {
-      assets: assetsResult.rows[0]?.total || 0,
-      liabilities: liabilitiesResult.rows[0]?.total || 0,
-      equity: equityResult.rows[0]?.total || 0,
-      total_liabilities_equity: (liabilitiesResult.rows[0]?.total || 0) + (equityResult.rows[0]?.total || 0)
+      assets: {
+        total_assets: totalAssets,
+        current_assets: totalAssets,
+        depreciation: 0
+      },
+      liabilities: {
+        total_liabilities: 0
+      },
+      equity: {
+        total_income: totalIncome,
+        total_expenditure: totalExpenditure,
+        net_worth: netWorth
+      },
+      totals: {
+        total_assets: totalAssets,
+        total_liabilities: 0,
+        total_equity: netWorth,
+        liabilities_plus_equity: netWorth
+      },
+      as_of_date: as_of_date || new Date().toISOString().split('T')[0]
     };
     
     res.json(balanceSheet);
   } catch (error) {
     console.error('Error fetching balance sheet:', error);
-    res.status(500).json({ error: 'Failed to fetch balance sheet' });
+    res.status(500).json({ error: 'Failed to fetch balance sheet', details: error.message });
   }
 });
 
