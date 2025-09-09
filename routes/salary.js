@@ -7,6 +7,23 @@ require("dotenv").config();
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
+// Ensure CNPS preferences table exists
+async function ensureCnpsPreferencesTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cnps_preferences (
+        user_id INTEGER PRIMARY KEY,
+        excluded BOOLEAN NOT NULL DEFAULT false,
+        updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+  } catch (e) {
+    console.error('Failed to ensure cnps_preferences table:', e.message);
+  }
+}
+
+ensureCnpsPreferencesTable();
+
 
 // Authentication middleware function (copied from server.js)
 function authenticateToken(req, res, next) {
@@ -120,6 +137,7 @@ router.get("/approved-applications", async (req, res) => {
         s.month as salary_month,
         s.year as salary_year,
         s.paid_at,
+        COALESCE(cp.excluded, false) as cnps_excluded,
         (
           SELECT STRING_AGG(
             CONCAT(s2.month, '/', s2.year), 
@@ -160,6 +178,7 @@ router.get("/approved-applications", async (req, res) => {
       LEFT JOIN salaries s ON u.id = s.user_id 
         AND s.month = $1
         AND s.year = $2
+      LEFT JOIN cnps_preferences cp ON cp.user_id = u.id
       ORDER BY applicant_name
     `,
       [currentMonthName, academicYearStart]
@@ -420,10 +439,13 @@ router.get("/paid-salaries", async (req, res) => {
         COALESCE(t.full_name, u.name, u.username) as applicant_name,
         COALESCE(t.contact, u.email, '') as contact,
         COALESCE(t.classes, '') as classes,
-        COALESCE(t.subjects, '') as subjects
+        COALESCE(t.subjects, '') as subjects,
+        COALESCE(cp.excluded, false) as cnps_excluded,
+        s.user_id
       FROM salaries s
       LEFT JOIN teachers t ON s.user_id = t.user_id
       LEFT JOIN users u ON s.user_id = u.id
+      LEFT JOIN cnps_preferences cp ON cp.user_id = s.user_id
       WHERE s.paid = true
       ORDER BY s.paid_at DESC, COALESCE(t.full_name, u.name, u.username) ASC
     `);
@@ -432,6 +454,41 @@ router.get("/paid-salaries", async (req, res) => {
   } catch (error) {
     console.error("Error fetching paid salaries:", error);
     res.status(500).json({ error: "Failed to fetch paid salaries" });
+  }
+});
+
+// Get CNPS preference for a user
+router.get('/cnps/:userId', authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const result = await pool.query(`SELECT excluded FROM cnps_preferences WHERE user_id = $1`, [userId]);
+    const excluded = result.rows.length ? !!result.rows[0].excluded : false;
+    res.json({ userId: parseInt(userId, 10), excluded });
+  } catch (error) {
+    console.error('Error fetching CNPS preference:', error);
+    res.status(500).json({ error: 'Failed to fetch CNPS preference' });
+  }
+});
+
+// Set CNPS preference for a user
+router.put('/cnps/:userId', authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { excluded } = req.body || {};
+    if (typeof excluded !== 'boolean') {
+      return res.status(400).json({ error: 'excluded boolean is required' });
+    }
+    await ensureCnpsPreferencesTable();
+    await pool.query(`
+      INSERT INTO cnps_preferences (user_id, excluded, updated_at)
+      VALUES ($1, $2, CURRENT_TIMESTAMP)
+      ON CONFLICT (user_id)
+      DO UPDATE SET excluded = EXCLUDED.excluded, updated_at = CURRENT_TIMESTAMP
+    `, [userId, excluded]);
+    res.json({ message: 'CNPS preference updated', userId: parseInt(userId, 10), excluded });
+  } catch (error) {
+    console.error('Error updating CNPS preference:', error);
+    res.status(500).json({ error: 'Failed to update CNPS preference' });
   }
 });
 

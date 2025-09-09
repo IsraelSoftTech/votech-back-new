@@ -94,9 +94,9 @@ router.post('/', authenticateToken, async (req, res) => {
         
         const { department_name, hod_user_id, subject_id, teacher_ids } = req.body;
         
-        // Validate required fields
-        if (!department_name || !hod_user_id || !subject_id) {
-            return res.status(400).json({ error: 'Department name, HOD user, and subject are required' });
+        // Validate required fields (subject now optional)
+        if (!department_name || !hod_user_id) {
+            return res.status(400).json({ error: 'Department name and HOD user are required' });
         }
         
         // Check if department already exists
@@ -113,7 +113,7 @@ router.post('/', authenticateToken, async (req, res) => {
         const hodResult = await client.query(
             `INSERT INTO hods (department_name, hod_user_id, subject_id) 
              VALUES ($1, $2, $3) RETURNING *`,
-            [department_name, hod_user_id, subject_id]
+            [department_name, hod_user_id, subject_id || null]
         );
         
         const hod = hodResult.rows[0];
@@ -176,7 +176,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
             `UPDATE hods 
              SET department_name = $1, hod_user_id = $2, subject_id = $3, updated_at = CURRENT_TIMESTAMP
              WHERE id = $4 RETURNING *`,
-            [department_name, hod_user_id, subject_id, id]
+            [department_name, hod_user_id, subject_id || null, id]
         );
         
         // Remove existing teachers
