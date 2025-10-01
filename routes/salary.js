@@ -399,6 +399,160 @@ router.put("/mark-paid/:salaryId", async (req, res) => {
   }
 });
 
+// Undo salary payment
+router.put("/undo-paid/:salaryId", async (req, res) => {
+  try {
+    const { salaryId } = req.params;
+
+    // Ensure salary record exists
+    const salaryCheck = await pool.query(
+      `
+      SELECT 
+        s.*, 
+        COALESCE(t.full_name, u.name, u.username) as applicant_name
+      FROM salaries s
+      LEFT JOIN teachers t ON s.user_id = t.user_id
+      LEFT JOIN users u ON s.user_id = u.id
+      WHERE s.id = $1
+    `,
+      [salaryId]
+    );
+
+    if (salaryCheck.rows.length === 0) {
+      return res.status(404).json({ error: "Salary record not found" });
+    }
+
+    const salaryRecord = salaryCheck.rows[0];
+
+    if (salaryRecord.paid !== true) {
+      return res.status(400).json({ error: "Salary is not marked as paid" });
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE salaries 
+      SET paid = false, paid_at = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING *
+    `,
+      [salaryId]
+    );
+
+    res.json({
+      message: "Salary payment undone successfully",
+      salary: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Error undoing salary payment:", error);
+    res.status(500).json({ error: "Failed to undo salary payment" });
+  }
+});
+
+// Edit a paid salary (change month/year)
+router.put("/edit-paid/:salaryId", async (req, res) => {
+  try {
+    const { salaryId } = req.params;
+    const { monthNumber, year } = req.body || {};
+
+    if (!monthNumber || monthNumber < 1 || monthNumber > 12) {
+      return res.status(400).json({ error: "Valid monthNumber (1-12) is required" });
+    }
+
+    // Fetch the salary
+    const sres = await pool.query(
+      `
+      SELECT s.* FROM salaries s WHERE s.id = $1
+    `,
+      [salaryId]
+    );
+    if (sres.rows.length === 0) {
+      return res.status(404).json({ error: "Salary record not found" });
+    }
+    const current = sres.rows[0];
+
+    // Determine target month/year
+    const targetMonth = getMonthName(parseInt(monthNumber, 10));
+    const targetYear = year ? parseInt(year, 10) : current.year;
+
+    // If there is an existing record for the target month/year for this user, handle intelligently
+    const targetRes = await pool.query(
+      `SELECT * FROM salaries WHERE user_id = $1 AND month = $2 AND year = $3`,
+      [current.user_id, targetMonth, targetYear]
+    );
+
+    if (targetRes.rows.length > 0) {
+      const target = targetRes.rows[0];
+
+      // If it's the same record, nothing to change
+      if (String(target.id) === String(current.id)) {
+        return res.json({ message: "No changes needed", salary: current });
+      }
+
+      // If target is already paid, we cannot move
+      if (target.paid === true) {
+        return res.status(409).json({ error: "Target month is already paid for this user" });
+      }
+
+      // Move "paid" status from current to target within a transaction
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        // Unset current paid
+        await client.query(
+          `UPDATE salaries SET paid = false, paid_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          [current.id]
+        );
+        // Set target paid
+        await client.query(
+          `UPDATE salaries SET paid = true, paid_at = COALESCE($1, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+          [current.paid_at, target.id]
+        );
+        await client.query('COMMIT');
+
+        const finalTarget = await pool.query(`SELECT * FROM salaries WHERE id = $1`, [target.id]);
+        return res.json({ message: "Paid salary moved to target month", salary: finalTarget.rows[0] });
+      } catch (txErr) {
+        await client.query('ROLLBACK');
+        console.error('Transaction failed editing paid salary:', txErr);
+        return res.status(500).json({ error: "Failed to edit paid salary" });
+      } finally {
+        client.release();
+      }
+    }
+
+    // No existing target record: update current record's month/year
+    const updated = await pool.query(
+      `
+      UPDATE salaries
+      SET month = $1, year = $2, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $3
+      RETURNING *
+    `,
+      [targetMonth, targetYear, salaryId]
+    );
+
+    res.json({ message: "Paid salary updated", salary: updated.rows[0] });
+  } catch (error) {
+    console.error("Error editing paid salary:", error);
+    res.status(500).json({ error: "Failed to edit paid salary" });
+  }
+});
+
+// Delete a salary record (paid or not)
+router.delete("/:salaryId", async (req, res) => {
+  try {
+    const { salaryId } = req.params;
+    const del = await pool.query(`DELETE FROM salaries WHERE id = $1`, [salaryId]);
+    if (del.rowCount === 0) {
+      return res.status(404).json({ error: "Salary record not found" });
+    }
+    res.json({ message: "Salary record deleted" });
+  } catch (error) {
+    console.error("Error deleting salary record:", error);
+    res.status(500).json({ error: "Failed to delete salary record" });
+  }
+});
+
 // Get salary history for a user
 router.get("/user/:userId", async (req, res) => {
   try {
@@ -408,10 +562,11 @@ router.get("/user/:userId", async (req, res) => {
       `
       SELECT 
         s.*,
-        t.full_name as applicant_name,
-        t.contact
+        COALESCE(t.full_name, u.name, u.username) as applicant_name,
+        COALESCE(t.contact, u.email, '') as contact
       FROM salaries s
-      JOIN teachers t ON s.user_id = t.user_id
+      LEFT JOIN teachers t ON s.user_id = t.user_id
+      LEFT JOIN users u ON s.user_id = u.id
       WHERE s.user_id = $1
       ORDER BY s.year DESC, s.month DESC
     `,
