@@ -15,6 +15,7 @@ router.get('/', async (req, res) => {
       FROM students s 
       LEFT JOIN classes c ON s.class_id = c.id 
       LEFT JOIN specialties sp ON s.specialty_id = sp.id 
+      WHERE s."deletedAt" IS NULL
       ORDER BY s.full_name
     `);
     res.json(result.rows);
@@ -116,7 +117,7 @@ router.put('/:id', authenticateToken, upload.single('photo'), async (req, res) =
     });
     if (!fields.length) return res.status(400).json({ error: 'No fields to update' });
     idx += 1; vals.push(id);
-    const result = await pool.query(`UPDATE students SET ${fields.join(',')} WHERE id=$${idx} RETURNING *`, vals);
+    const result = await pool.query(`UPDATE students SET ${fields.join(',')} WHERE id=$${idx} AND "deletedAt" IS NULL RETURNING *`, vals);
     res.json({ message: 'Student updated successfully', student: result.rows[0] });
   } catch (e) {
     console.error('Update student error:', e);
@@ -128,9 +129,16 @@ router.put('/:id', authenticateToken, upload.single('photo'), async (req, res) =
 router.delete('/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
-    await pool.query('DELETE FROM students WHERE id=$1', [id]);
+    // Only update if the student exists and is not already deleted
+    const result = await pool.query('UPDATE students SET "deletedAt"=CURRENT_TIMESTAMP WHERE id=$1 AND "deletedAt" IS NULL RETURNING id', [id]);
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Student not found or already deleted' });
+    }
+    
     res.json({ message: 'Student deleted successfully' });
   } catch (e) {
+    console.error('Delete student error:', e);
     res.status(500).json({ error: 'Failed to delete student' });
   }
 });
