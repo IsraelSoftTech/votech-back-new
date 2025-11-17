@@ -106,7 +106,7 @@ const createSubject = catchAsync(async (req, res, next) => {
     );
   }
 
-  await CRUDSubject.create(req.body, res);
+  await CRUDSubject.create(req.body, res, req);
 });
 
 const readOneSubject = catchAsync(async (req, res, next) => {
@@ -123,7 +123,7 @@ const updateSubject = catchAsync(async (req, res, next) => {
 });
 
 const deleteSubject = catchAsync(async (req, res, next) => {
-  await CRUDSubject.delete(req.params.id, res);
+  await CRUDSubject.delete(req.params.id, res, req);
 });
 
 const fileterdSubjects = catchAsync(async (req, res, next) => {

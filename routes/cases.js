@@ -1,57 +1,64 @@
-const express = require('express');
-const { Pool } = require('pg');
-const puppeteer = require('puppeteer');
-const fs = require('fs');
-const path = require('path');
+const express = require("express");
+const { Pool } = require("pg");
+const puppeteer = require("puppeteer");
+const fs = require("fs");
+const path = require("path");
 const router = express.Router();
-require('dotenv').config();
+require("dotenv").config();
+
+const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+
+const db =
+  process.env.NODE_ENV === "desktop"
+    ? process.env.DATABASE_URL_LOCAL
+    : process.env.DATABASE_URL;
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
+  connectionString: db,
 });
 
 // Authentication middleware
 const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
+  const authHeader = req.headers["authorization"];
   if (!authHeader) {
-    return res.status(401).json({ error: 'No authorization header' });
+    return res.status(401).json({ error: "No authorization header" });
   }
-  const token = authHeader.split(' ')[1];
+  const token = authHeader.split(" ")[1];
   if (!token) {
-    return res.status(401).json({ error: 'No token provided' });
+    return res.status(401).json({ error: "No token provided" });
   }
 
   // Special handling for Admin3 hardcoded token
-  if (token === 'admin3-special-token-2024') {
+  if (token === "admin3-special-token-2024") {
     // Create a mock user object for Admin3
     req.user = {
       id: 999,
-      username: 'Admin3',
-      role: 'Admin3',
-      name: 'System Administrator'
+      username: "Admin3",
+      role: "Admin3",
+      name: "System Administrator",
     };
     return next();
   }
 
   try {
-    const jwt = require('jsonwebtoken');
-    const user = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const jwt = require("jsonwebtoken");
+    const user = jwt.verify(token, process.env.JWT_SECRET || "your-secret-key");
     req.user = user;
     next();
   } catch (err) {
-    return res.status(403).json({ error: 'Invalid token' });
+    return res.status(403).json({ error: "Invalid token" });
   }
 };
 
 // Generate unique case number
 const generateCaseNumber = async () => {
-  const result = await pool.query('SELECT COUNT(*) FROM cases');
+  const result = await pool.query("SELECT COUNT(*) FROM cases");
   const count = parseInt(result.rows[0].count) + 1;
-  return `CASE${new Date().getFullYear()}${count.toString().padStart(4, '0')}`;
+  return `CASE${new Date().getFullYear()}${count.toString().padStart(4, "0")}`;
 };
 
 // Get all cases
-router.get('/', authenticateToken, async (req, res) => {
+router.get("/", authenticateToken, async (req, res) => {
   try {
     const query = `
       SELECT 
@@ -71,13 +78,13 @@ router.get('/', authenticateToken, async (req, res) => {
     const result = await pool.query(query);
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching cases:', error);
-    res.status(500).json({ error: 'Failed to fetch cases' });
+    console.error("Error fetching cases:", error);
+    res.status(500).json({ error: "Failed to fetch cases" });
   }
 });
 
 // Get case by ID
-router.get('/:id', authenticateToken, async (req, res) => {
+router.get("/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const query = `
@@ -97,17 +104,17 @@ router.get('/:id', authenticateToken, async (req, res) => {
     `;
     const result = await pool.query(query, [id]);
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Case not found' });
+      return res.status(404).json({ error: "Case not found" });
     }
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error fetching case:', error);
-    res.status(500).json({ error: 'Failed to fetch case' });
+    console.error("Error fetching case:", error);
+    res.status(500).json({ error: "Failed to fetch case" });
   }
 });
 
 // Create new case
-router.post('/', authenticateToken, async (req, res) => {
+router.post("/", authenticateToken, async (req, res) => {
   try {
     const {
       student_id,
@@ -115,11 +122,11 @@ router.post('/', authenticateToken, async (req, res) => {
       issue_type,
       issue_description,
       priority,
-      notes
+      notes,
     } = req.body;
 
     const caseNumber = await generateCaseNumber();
-    
+
     const query = `
       INSERT INTO cases (
         case_number, student_id, class_id, issue_type, issue_description, 
@@ -127,30 +134,31 @@ router.post('/', authenticateToken, async (req, res) => {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
     `;
-    
+
     const values = [
       caseNumber,
       student_id,
       class_id,
       issue_type,
       issue_description,
-      priority || 'medium',
+      priority || "medium",
       req.user.id, // assigned_to
       req.user.id, // created_by
-      new Date().toISOString().split('T')[0], // started_date
-      notes
+      new Date().toISOString().split("T")[0], // started_date
+      notes,
     ];
 
     const result = await pool.query(query, values);
+    await logChanges("cases", result.rows[0].id, ChangeTypes.create, req.user);
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error creating case:', error);
-    res.status(500).json({ error: 'Failed to create case' });
+    console.error("Error creating case:", error);
+    res.status(500).json({ error: "Failed to create case" });
   }
 });
 
 // Update case
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put("/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -159,8 +167,15 @@ router.put('/:id', authenticateToken, async (req, res) => {
       status,
       priority,
       notes,
-      resolved_date
+      resolved_date,
     } = req.body;
+
+    const oldRecord = await pool.query("SELECT * FROM cases WHERE id = $1", [
+      id,
+    ]);
+    if (oldRecord.rows.length === 0) {
+      return res.status(404).json({ error: "Case not found" });
+    }
 
     const query = `
       UPDATE cases 
@@ -183,37 +198,69 @@ router.put('/:id', authenticateToken, async (req, res) => {
       priority,
       notes,
       resolved_date,
-      id
+      id,
     ];
 
     const result = await pool.query(query, values);
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Case not found' });
+      return res.status(404).json({ error: "Case not found" });
     }
+    const fieldsChanged = {};
+    const old = oldRecord.rows[0];
+    const updated = result.rows[0];
+    if (old.issue_type !== updated.issue_type)
+      fieldsChanged.issue_type = {
+        before: old.issue_type,
+        after: updated.issue_type,
+      };
+    if (old.issue_description !== updated.issue_description)
+      fieldsChanged.issue_description = {
+        before: old.issue_description,
+        after: updated.issue_description,
+      };
+    if (old.status !== updated.status)
+      fieldsChanged.status = { before: old.status, after: updated.status };
+    if (old.priority !== updated.priority)
+      fieldsChanged.priority = {
+        before: old.priority,
+        after: updated.priority,
+      };
+    if (old.notes !== updated.notes)
+      fieldsChanged.notes = { before: old.notes, after: updated.notes };
+    if (old.resolved_date !== updated.resolved_date)
+      fieldsChanged.resolved_date = {
+        before: old.resolved_date,
+        after: updated.resolved_date,
+      };
+    await logChanges("cases", id, ChangeTypes.update, req.user, fieldsChanged);
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating case:', error);
-    res.status(500).json({ error: 'Failed to update case' });
+    console.error("Error updating case:", error);
+    res.status(500).json({ error: "Failed to update case" });
   }
 });
 
 // Delete case
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete("/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await pool.query('DELETE FROM cases WHERE id = $1 RETURNING *', [id]);
+    const result = await pool.query(
+      "DELETE FROM cases WHERE id = $1 RETURNING *",
+      [id]
+    );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Case not found' });
+      return res.status(404).json({ error: "Case not found" });
     }
-    res.json({ message: 'Case deleted successfully' });
+    await logChanges("cases", id, ChangeTypes.delete, req.user);
+    res.json({ message: "Case deleted successfully" });
   } catch (error) {
-    console.error('Error deleting case:', error);
-    res.status(500).json({ error: 'Failed to delete case' });
+    console.error("Error deleting case:", error);
+    res.status(500).json({ error: "Failed to delete case" });
   }
 });
 
 // Get case sessions
-router.get('/:id/sessions', authenticateToken, async (req, res) => {
+router.get("/:id/sessions", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const query = `
@@ -226,21 +273,17 @@ router.get('/:id/sessions', authenticateToken, async (req, res) => {
     const result = await pool.query(query, [id]);
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching case sessions:', error);
-    res.status(500).json({ error: 'Failed to fetch case sessions' });
+    console.error("Error fetching case sessions:", error);
+    res.status(500).json({ error: "Failed to fetch case sessions" });
   }
 });
 
 // Create case session
-router.post('/:id/sessions', authenticateToken, async (req, res) => {
+router.post("/:id/sessions", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const {
-      session_date,
-      session_time,
-      session_type,
-      session_notes
-    } = req.body;
+    const { session_date, session_time, session_type, session_notes } =
+      req.body;
 
     const query = `
       INSERT INTO case_sessions (
@@ -255,36 +298,48 @@ router.post('/:id/sessions', authenticateToken, async (req, res) => {
       session_time,
       session_type,
       session_notes,
-      req.user.id
+      req.user.id,
     ];
 
     const result = await pool.query(query, values);
-    
+
     // Update case session counts
-    await pool.query(`
+    await pool.query(
+      `
       UPDATE cases 
       SET sessions_scheduled = sessions_scheduled + 1
       WHERE id = $1
-    `, [id]);
+    `,
+      [id]
+    );
 
+    await logChanges(
+      "case_sessions",
+      result.rows[0].id,
+      ChangeTypes.create,
+      req.user
+    );
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error creating case session:', error);
-    res.status(500).json({ error: 'Failed to create case session' });
+    console.error("Error creating case session:", error);
+    res.status(500).json({ error: "Failed to create case session" });
   }
 });
 
 // Update case session
-router.put('/sessions/:sessionId', authenticateToken, async (req, res) => {
+router.put("/sessions/:sessionId", authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const {
-      session_date,
-      session_time,
-      session_type,
-      session_notes,
-      status
-    } = req.body;
+    const { session_date, session_time, session_type, session_notes, status } =
+      req.body;
+
+    const oldRecord = await pool.query(
+      "SELECT * FROM case_sessions WHERE id = $1",
+      [sessionId]
+    );
+    if (oldRecord.rows.length === 0) {
+      return res.status(404).json({ error: "Session not found" });
+    }
 
     const query = `
       UPDATE case_sessions 
@@ -305,42 +360,78 @@ router.put('/sessions/:sessionId', authenticateToken, async (req, res) => {
       session_type,
       session_notes,
       status,
-      sessionId
+      sessionId,
     ];
 
     const result = await pool.query(query, values);
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Session not found' });
+      return res.status(404).json({ error: "Session not found" });
     }
+    const fieldsChanged = {};
+    const old = oldRecord.rows[0];
+    const updated = result.rows[0];
+    if (old.session_date !== updated.session_date)
+      fieldsChanged.session_date = {
+        before: old.session_date,
+        after: updated.session_date,
+      };
+    if (old.session_time !== updated.session_time)
+      fieldsChanged.session_time = {
+        before: old.session_time,
+        after: updated.session_time,
+      };
+    if (old.session_type !== updated.session_type)
+      fieldsChanged.session_type = {
+        before: old.session_type,
+        after: updated.session_type,
+      };
+    if (old.session_notes !== updated.session_notes)
+      fieldsChanged.session_notes = {
+        before: old.session_notes,
+        after: updated.session_notes,
+      };
+    if (old.status !== updated.status)
+      fieldsChanged.status = { before: old.status, after: updated.status };
+    await logChanges(
+      "case_sessions",
+      sessionId,
+      ChangeTypes.update,
+      req.user,
+      fieldsChanged
+    );
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating case session:', error);
-    res.status(500).json({ error: 'Failed to update case session' });
+    console.error("Error updating case session:", error);
+    res.status(500).json({ error: "Failed to update case session" });
   }
 });
 
 // Delete case session
-router.delete('/sessions/:sessionId', authenticateToken, async (req, res) => {
+router.delete("/sessions/:sessionId", authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const result = await pool.query('DELETE FROM case_sessions WHERE id = $1 RETURNING *', [sessionId]);
+    const result = await pool.query(
+      "DELETE FROM case_sessions WHERE id = $1 RETURNING *",
+      [sessionId]
+    );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Session not found' });
+      return res.status(404).json({ error: "Session not found" });
     }
-    res.json({ message: 'Session deleted successfully' });
+    await logChanges("case_sessions", sessionId, ChangeTypes.delete, req.user);
+    res.json({ message: "Session deleted successfully" });
   } catch (error) {
-    console.error('Error deleting case session:', error);
-    res.status(500).json({ error: 'Failed to delete case session' });
+    console.error("Error deleting case session:", error);
+    res.status(500).json({ error: "Failed to delete case session" });
   }
 });
 
 // Send case report
-router.post('/:id/send-report', authenticateToken, async (req, res) => {
+router.post("/:id/send-report", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { report_type, report_content, sent_to } = req.body;
 
-    console.log('Starting report generation for case:', id);
+    console.log("Starting report generation for case:", id);
 
     // Get comprehensive case details
     const caseQuery = `
@@ -364,11 +455,11 @@ router.post('/:id/send-report', authenticateToken, async (req, res) => {
     `;
     const caseResult = await pool.query(caseQuery, [id]);
     if (caseResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Case not found' });
+      return res.status(404).json({ error: "Case not found" });
     }
 
     const caseData = caseResult.rows[0];
-    console.log('Case data retrieved:', caseData.case_number);
+    console.log("Case data retrieved:", caseData.case_number);
 
     // Get case sessions
     const sessionsQuery = `
@@ -380,10 +471,15 @@ router.post('/:id/send-report', authenticateToken, async (req, res) => {
     `;
     const sessionsResult = await pool.query(sessionsQuery, [id]);
     const sessions = sessionsResult.rows;
-    console.log('Sessions retrieved:', sessions.length);
+    console.log("Sessions retrieved:", sessions.length);
 
     // Generate comprehensive text report
-    const reportText = generateTextReport(caseData, sessions, report_type, report_content);
+    const reportText = generateTextReport(
+      caseData,
+      sessions,
+      report_type,
+      report_content
+    );
 
     // Create report record
     const reportQuery = `
@@ -398,11 +494,11 @@ router.post('/:id/send-report', authenticateToken, async (req, res) => {
       report_type,
       report_content,
       sent_to,
-      req.user.id
+      req.user.id,
     ];
 
     const reportResult = await pool.query(reportQuery, reportValues);
-    console.log('Report record created:', reportResult.rows[0].id);
+    console.log("Report record created:", reportResult.rows[0].id);
 
     // Send comprehensive report message to admin
     const messageQuery = `
@@ -411,17 +507,23 @@ router.post('/:id/send-report', authenticateToken, async (req, res) => {
     `;
 
     await pool.query(messageQuery, [req.user.id, sent_to, reportText]);
-    console.log('Comprehensive report sent to admin');
+    console.log("Comprehensive report sent to admin");
 
+    await logChanges(
+      "case_reports",
+      reportResult.rows[0].id,
+      ChangeTypes.create,
+      req.user
+    );
     res.json({
-      message: 'Report sent successfully',
-      report: reportResult.rows[0]
+      message: "Report sent successfully",
+      report: reportResult.rows[0],
     });
   } catch (error) {
-    console.error('Error sending case report:', error);
-    res.status(500).json({ 
-      error: 'Failed to send case report',
-      details: error.message 
+    console.error("Error sending case report:", error);
+    res.status(500).json({
+      error: "Failed to send case report",
+      details: error.message,
     });
   }
 });
@@ -434,37 +536,45 @@ function generateTextReport(caseData, sessions, reportType, reportContent) {
   let report = `📋 CASE REPORT - ${caseData.case_number}\n`;
   report += `Generated: ${currentDate} at ${currentTime}\n`;
   report += `Report Type: ${reportType}\n`;
-  report += `Generated by: ${caseData.created_by_name || 'System'}\n`;
-  report += `\n${'='.repeat(50)}\n\n`;
+  report += `Generated by: ${caseData.created_by_name || "System"}\n`;
+  report += `\n${"=".repeat(50)}\n\n`;
 
   // Case Information
   report += `🏫 CASE INFORMATION\n`;
-  report += `${'─'.repeat(30)}\n`;
+  report += `${"─".repeat(30)}\n`;
   report += `Case Number: ${caseData.case_number}\n`;
   report += `Status: ${caseData.status.toUpperCase()}\n`;
   report += `Priority: ${caseData.priority.toUpperCase()}\n`;
-  report += `Started Date: ${new Date(caseData.started_date).toLocaleDateString()}\n`;
+  report += `Started Date: ${new Date(
+    caseData.started_date
+  ).toLocaleDateString()}\n`;
   if (caseData.resolved_date) {
-    report += `Resolved Date: ${new Date(caseData.resolved_date).toLocaleDateString()}\n`;
+    report += `Resolved Date: ${new Date(
+      caseData.resolved_date
+    ).toLocaleDateString()}\n`;
   }
   report += `Sessions: ${caseData.sessions_completed} completed, ${caseData.sessions_scheduled} scheduled\n`;
   report += `\n`;
 
   // Student Information
   report += `👤 STUDENT INFORMATION\n`;
-  report += `${'─'.repeat(30)}\n`;
-  report += `Name: ${caseData.student_name || 'N/A'}\n`;
-  report += `Student ID: ${caseData.student_id || 'N/A'}\n`;
-  report += `Class: ${caseData.class_name || 'N/A'}\n`;
-  report += `Date of Birth: ${caseData.date_of_birth ? new Date(caseData.date_of_birth).toLocaleDateString() : 'N/A'}\n`;
-  report += `Father's Name: ${caseData.father_name || 'N/A'}\n`;
-  report += `Mother's Name: ${caseData.mother_name || 'N/A'}\n`;
-  report += `Guardian Contact: ${caseData.guardian_contact || 'N/A'}\n`;
+  report += `${"─".repeat(30)}\n`;
+  report += `Name: ${caseData.student_name || "N/A"}\n`;
+  report += `Student ID: ${caseData.student_id || "N/A"}\n`;
+  report += `Class: ${caseData.class_name || "N/A"}\n`;
+  report += `Date of Birth: ${
+    caseData.date_of_birth
+      ? new Date(caseData.date_of_birth).toLocaleDateString()
+      : "N/A"
+  }\n`;
+  report += `Father's Name: ${caseData.father_name || "N/A"}\n`;
+  report += `Mother's Name: ${caseData.mother_name || "N/A"}\n`;
+  report += `Guardian Contact: ${caseData.guardian_contact || "N/A"}\n`;
   report += `\n`;
 
   // Case Details
   report += `📝 CASE DETAILS\n`;
-  report += `${'─'.repeat(30)}\n`;
+  report += `${"─".repeat(30)}\n`;
   report += `Issue Type: ${caseData.issue_type}\n`;
   report += `Issue Description:\n${caseData.issue_description}\n`;
   if (caseData.notes) {
@@ -474,11 +584,13 @@ function generateTextReport(caseData, sessions, reportType, reportContent) {
 
   // Counseling Sessions
   report += `📅 COUNSELING SESSIONS\n`;
-  report += `${'─'.repeat(30)}\n`;
+  report += `${"─".repeat(30)}\n`;
   if (sessions.length > 0) {
     sessions.forEach((session, index) => {
       report += `${index + 1}. Session ${sessions.length - index}\n`;
-      report += `   Date: ${new Date(session.session_date).toLocaleDateString()}\n`;
+      report += `   Date: ${new Date(
+        session.session_date
+      ).toLocaleDateString()}\n`;
       report += `   Time: ${session.session_time}\n`;
       report += `   Type: ${session.session_type}\n`;
       report += `   Status: ${session.status}\n`;
@@ -493,20 +605,22 @@ function generateTextReport(caseData, sessions, reportType, reportContent) {
 
   // Additional Report Content
   report += `📋 ADDITIONAL REPORT CONTENT\n`;
-  report += `${'─'.repeat(30)}\n`;
+  report += `${"─".repeat(30)}\n`;
   report += `${reportContent}\n`;
   report += `\n`;
 
   // Summary
   report += `📊 SUMMARY\n`;
-  report += `${'─'.repeat(30)}\n`;
+  report += `${"─".repeat(30)}\n`;
   report += `Total Sessions: ${sessions.length}\n`;
-  report += `Case Duration: ${Math.ceil((new Date() - new Date(caseData.started_date)) / (1000 * 60 * 60 * 24))} days\n`;
+  report += `Case Duration: ${Math.ceil(
+    (new Date() - new Date(caseData.started_date)) / (1000 * 60 * 60 * 24)
+  )} days\n`;
   report += `Current Status: ${caseData.status}\n`;
   report += `Priority Level: ${caseData.priority}\n`;
   report += `\n`;
 
-  report += `${'='.repeat(50)}\n`;
+  report += `${"=".repeat(50)}\n`;
   report += `End of Report\n`;
   report += `Report ID: ${caseData.case_number}_${Date.now()}`;
 
@@ -514,7 +628,7 @@ function generateTextReport(caseData, sessions, reportType, reportContent) {
 }
 
 // Get students for case creation
-router.get('/students/list', authenticateToken, async (req, res) => {
+router.get("/students/list", authenticateToken, async (req, res) => {
   try {
     const query = `
       SELECT s.student_id, s.full_name, c.name as class_name, c.id as class_id
@@ -525,25 +639,25 @@ router.get('/students/list', authenticateToken, async (req, res) => {
     const result = await pool.query(query);
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching students:', error);
-    res.status(500).json({ error: 'Failed to fetch students' });
+    console.error("Error fetching students:", error);
+    res.status(500).json({ error: "Failed to fetch students" });
   }
 });
 
 // Get classes for case creation
-router.get('/classes/list', authenticateToken, async (req, res) => {
+router.get("/classes/list", authenticateToken, async (req, res) => {
   try {
-    const query = 'SELECT id, name FROM classes ORDER BY name';
+    const query = "SELECT id, name FROM classes ORDER BY name";
     const result = await pool.query(query);
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching classes:', error);
-    res.status(500).json({ error: 'Failed to fetch classes' });
+    console.error("Error fetching classes:", error);
+    res.status(500).json({ error: "Failed to fetch classes" });
   }
 });
 
 // Get admin users for sending reports
-router.get('/admins/list', authenticateToken, async (req, res) => {
+router.get("/admins/list", authenticateToken, async (req, res) => {
   try {
     // Query for only Admin1 users
     const query = `
@@ -556,9 +670,9 @@ router.get('/admins/list', authenticateToken, async (req, res) => {
     // Found Admin1 users
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching Admin1 users:', error);
-    res.status(500).json({ error: 'Failed to fetch Admin1 users' });
+    console.error("Error fetching Admin1 users:", error);
+    res.status(500).json({ error: "Failed to fetch Admin1 users" });
   }
 });
 
-module.exports = router; 
+module.exports = router;

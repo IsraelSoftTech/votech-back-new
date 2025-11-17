@@ -1,66 +1,98 @@
-const express = require('express');
-const { Pool } = require('pg');
-require('dotenv').config();
+const express = require("express");
+const { Pool } = require("pg");
+require("dotenv").config();
+const { logChanges, ChangeTypes } = require("../src/utils/logChanges.util");
 
 const router = express.Router();
+const db =
+  process.env.NODE_ENV === "desktop"
+    ? process.env.DATABASE_URL_LOCAL
+    : process.env.DATABASE_URL;
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
+  connectionString: db,
 });
 
 // Activity logging function
-const logUserActivity = async (userId, activityType, activityDescription, entityType = null, entityId = null, entityName = null, ipAddress = null, userAgent = null) => {
+const logUserActivity = async (
+  userId,
+  activityType,
+  activityDescription,
+  entityType = null,
+  entityId = null,
+  entityName = null,
+  ipAddress = null,
+  userAgent = null
+) => {
   try {
-    await pool.query(`
+    await pool.query(
+      `
       INSERT INTO user_activities (user_id, activity_type, activity_description, entity_type, entity_id, entity_name, ip_address, user_agent)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    `, [userId, activityType, activityDescription, entityType, entityId, entityName, ipAddress, userAgent]);
+    `,
+      [
+        userId,
+        activityType,
+        activityDescription,
+        entityType,
+        entityId,
+        entityName,
+        ipAddress,
+        userAgent,
+      ]
+    );
   } catch (error) {
-    console.error('Error logging user activity:', error);
+    console.error("Error logging user activity:", error);
   }
 };
 
 // Authentication middleware
 const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
+  const authHeader = req.headers["authorization"];
   if (!authHeader) {
-    return res.status(401).json({ error: 'No authorization header' });
+    return res.status(401).json({ error: "No authorization header" });
   }
 
-  const token = authHeader.split(' ')[1];
+  const token = authHeader.split(" ")[1];
   if (!token) {
-    return res.status(401).json({ error: 'No token provided' });
+    return res.status(401).json({ error: "No token provided" });
   }
 
   // Special handling for Admin3 hardcoded token
-  if (token === 'admin3-special-token-2024') {
+  if (token === "admin3-special-token-2024") {
     // Create a mock user object for Admin3
     req.user = {
       id: 999,
-      username: 'Admin3',
-      role: 'Admin3',
-      name: 'System Administrator'
+      username: "Admin3",
+      role: "Admin3",
+      name: "System Administrator",
     };
     return next();
   }
 
   try {
-    const jwt = require('jsonwebtoken');
-    const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+    const jwt = require("jsonwebtoken");
+    const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
     const user = jwt.verify(token, JWT_SECRET);
     req.user = user;
     next();
   } catch (err) {
-    if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expired' });
+    if (err.name === "TokenExpiredError") {
+      return res.status(401).json({ error: "Token expired" });
     }
-    return res.status(403).json({ error: 'Invalid token' });
+    return res.status(403).json({ error: "Invalid token" });
   }
 };
 
 // Admin authorization middleware
 const requireAdmin = (req, res, next) => {
-  if (!['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin', 'Dean'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+  if (
+    !["Admin1", "Admin2", "Admin3", "Admin4", "admin", "Dean"].includes(
+      req.user.role
+    )
+  ) {
+    return res
+      .status(403)
+      .json({ error: "Access denied. Admin privileges required." });
   }
   next();
 };
@@ -87,25 +119,31 @@ const initializeSubjectsTable = async () => {
       FROM information_schema.columns 
       WHERE table_name = 'subjects' AND column_name IN ('description', 'credits', 'department', 'updated_at')
     `);
-    
-    const existingColumns = columns.rows.map(row => row.column_name);
-    
-    if (!existingColumns.includes('description')) {
-      await pool.query('ALTER TABLE subjects ADD COLUMN description TEXT');
+
+    const existingColumns = columns.rows.map((row) => row.column_name);
+
+    if (!existingColumns.includes("description")) {
+      await pool.query("ALTER TABLE subjects ADD COLUMN description TEXT");
     }
-    if (!existingColumns.includes('credits')) {
-      await pool.query('ALTER TABLE subjects ADD COLUMN credits INTEGER DEFAULT 0');
+    if (!existingColumns.includes("credits")) {
+      await pool.query(
+        "ALTER TABLE subjects ADD COLUMN credits INTEGER DEFAULT 0"
+      );
     }
-    if (!existingColumns.includes('department')) {
-      await pool.query('ALTER TABLE subjects ADD COLUMN department VARCHAR(100)');
+    if (!existingColumns.includes("department")) {
+      await pool.query(
+        "ALTER TABLE subjects ADD COLUMN department VARCHAR(100)"
+      );
     }
-    if (!existingColumns.includes('updated_at')) {
-      await pool.query('ALTER TABLE subjects ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+    if (!existingColumns.includes("updated_at")) {
+      await pool.query(
+        "ALTER TABLE subjects ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+      );
     }
 
     // Subjects table initialized with correct schema
   } catch (error) {
-    console.error('Error initializing subjects table:', error);
+    console.error("Error initializing subjects table:", error);
   }
 };
 
@@ -113,7 +151,7 @@ const initializeSubjectsTable = async () => {
 initializeSubjectsTable();
 
 // Get all subjects
-router.get('/', authenticateToken, async (req, res) => {
+router.get("/", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT s.*, 
@@ -122,53 +160,65 @@ router.get('/', authenticateToken, async (req, res) => {
       LEFT JOIN class_subjects cs ON s.id = cs.subject_id
       ORDER BY s.name
     `);
-    
+
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching subjects:', error);
-    res.status(500).json({ error: 'Failed to fetch subjects' });
+    console.error("Error fetching subjects:", error);
+    res.status(500).json({ error: "Failed to fetch subjects" });
   }
 });
 
 // Get subject by ID
-router.get('/:id', authenticateToken, async (req, res) => {
+router.get("/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await pool.query('SELECT * FROM subjects WHERE id = $1', [id]);
-    
+    const result = await pool.query("SELECT * FROM subjects WHERE id = $1", [
+      id,
+    ]);
+
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Subject not found' });
+      return res.status(404).json({ error: "Subject not found" });
     }
-    
+
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error fetching subject:', error);
-    res.status(500).json({ error: 'Failed to fetch subject' });
+    console.error("Error fetching subject:", error);
+    res.status(500).json({ error: "Failed to fetch subject" });
   }
 });
 
 // Create new subject (admin only)
-router.post('/', authenticateToken, requireAdmin, async (req, res) => {
+router.post("/", authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { name, code, description, credits, department } = req.body;
     const ipAddress = req.ip || req.connection.remoteAddress;
-    const userAgent = req.get('User-Agent');
+    const userAgent = req.get("User-Agent");
 
     if (!name) {
-      return res.status(400).json({ error: 'Subject name is required' });
+      return res.status(400).json({ error: "Subject name is required" });
     }
 
     // Check if subject name already exists
-    const existingSubject = await pool.query('SELECT id FROM subjects WHERE name = $1', [name]);
+    const existingSubject = await pool.query(
+      "SELECT id FROM subjects WHERE name = $1",
+      [name]
+    );
     if (existingSubject.rows.length > 0) {
-      return res.status(400).json({ error: 'Subject with this name already exists' });
+      return res
+        .status(400)
+        .json({ error: "Subject with this name already exists" });
     }
 
     // Check if subject code already exists (if provided)
     if (code) {
-      const existingCode = await pool.query('SELECT id FROM subjects WHERE code = $1', [code]);
+      const existingCode = await pool.query(
+        "SELECT id FROM subjects WHERE code = $1",
+        [code]
+      );
       if (existingCode.rows.length > 0) {
-        return res.status(400).json({ error: 'Subject with this code already exists' });
+        return res
+          .status(400)
+          .json({ error: "Subject with this code already exists" });
       }
     }
 
@@ -179,46 +229,80 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     );
 
     // Log the activity
-    await logUserActivity(req.user.id, 'create', `Created subject: ${name}`, 'subject', result.rows[0].id, name, ipAddress, userAgent);
+    await logUserActivity(
+      req.user.id,
+      "create",
+      `Created subject: ${name}`,
+      "subject",
+      result.rows[0].id,
+      name,
+      ipAddress,
+      userAgent
+    );
+
+    // Log changes for sync
+    await logChanges(
+      "subjects",
+      result.rows[0].id,
+      ChangeTypes.create,
+      req.user,
+      null
+    );
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error creating subject:', error);
-    res.status(500).json({ error: 'Failed to create subject' });
+    console.error("Error creating subject:", error);
+    res.status(500).json({ error: "Failed to create subject" });
   }
 });
 
 // Update subject (admin only)
-router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
+router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, code, description, credits, department } = req.body;
     const ipAddress = req.ip || req.connection.remoteAddress;
-    const userAgent = req.get('User-Agent');
+    const userAgent = req.get("User-Agent");
 
     if (!name) {
-      return res.status(400).json({ error: 'Subject name is required' });
+      return res.status(400).json({ error: "Subject name is required" });
     }
 
     // Check if subject exists
-    const existingSubject = await pool.query('SELECT * FROM subjects WHERE id = $1', [id]);
+    const existingSubject = await pool.query(
+      "SELECT * FROM subjects WHERE id = $1",
+      [id]
+    );
     if (existingSubject.rows.length === 0) {
-      return res.status(404).json({ error: 'Subject not found' });
+      return res.status(404).json({ error: "Subject not found" });
     }
 
     // Check if new name conflicts with existing subjects (excluding current subject)
-    const nameConflict = await pool.query('SELECT id FROM subjects WHERE name = $1 AND id != $2', [name, id]);
+    const nameConflict = await pool.query(
+      "SELECT id FROM subjects WHERE name = $1 AND id != $2",
+      [name, id]
+    );
     if (nameConflict.rows.length > 0) {
-      return res.status(400).json({ error: 'Subject with this name already exists' });
+      return res
+        .status(400)
+        .json({ error: "Subject with this name already exists" });
     }
 
     // Check if new code conflicts with existing subjects (excluding current subject)
     if (code) {
-      const codeConflict = await pool.query('SELECT id FROM subjects WHERE code = $1 AND id != $2', [code, id]);
+      const codeConflict = await pool.query(
+        "SELECT id FROM subjects WHERE code = $1 AND id != $2",
+        [code, id]
+      );
       if (codeConflict.rows.length > 0) {
-        return res.status(400).json({ error: 'Subject with this code already exists' });
+        return res
+          .status(400)
+          .json({ error: "Subject with this code already exists" });
       }
     }
+
+    // Capture before state for change tracking
+    const beforeState = existingSubject.rows[0];
 
     const result = await pool.query(
       `UPDATE subjects SET 
@@ -229,82 +313,140 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
     );
 
     // Log the activity
-    await logUserActivity(req.user.id, 'update', `Updated subject: ${name}`, 'subject', id, name, ipAddress, userAgent);
+    await logUserActivity(
+      req.user.id,
+      "update",
+      `Updated subject: ${name}`,
+      "subject",
+      id,
+      name,
+      ipAddress,
+      userAgent
+    );
+
+    // Log changes for sync with before/after states
+    const afterState = result.rows[0];
+    const fieldsChanged = {
+      before: {
+        name: beforeState.name,
+        code: beforeState.code,
+        description: beforeState.description,
+        credits: beforeState.credits,
+        department: beforeState.department,
+      },
+      after: {
+        name: afterState.name,
+        code: afterState.code,
+        description: afterState.description,
+        credits: afterState.credits,
+        department: afterState.department,
+      },
+    };
+
+    await logChanges(
+      "subjects",
+      id,
+      ChangeTypes.update,
+      req.user,
+      fieldsChanged
+    );
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating subject:', error);
-    res.status(500).json({ error: 'Failed to update subject' });
+    console.error("Error updating subject:", error);
+    res.status(500).json({ error: "Failed to update subject" });
   }
 });
 
 // Delete subject (admin only)
-router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
+router.delete("/:id", authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const ipAddress = req.ip || req.connection.remoteAddress;
-    const userAgent = req.get('User-Agent');
+    const userAgent = req.get("User-Agent");
 
     // Check if subject exists
-    const existingSubject = await pool.query('SELECT * FROM subjects WHERE id = $1', [id]);
+    const existingSubject = await pool.query(
+      "SELECT * FROM subjects WHERE id = $1",
+      [id]
+    );
     if (existingSubject.rows.length === 0) {
-      return res.status(404).json({ error: 'Subject not found' });
+      return res.status(404).json({ error: "Subject not found" });
     }
 
     // Check if subject is assigned to any classes
-    const classAssignments = await pool.query('SELECT COUNT(*) FROM class_subjects WHERE subject_id = $1', [id]);
+    const classAssignments = await pool.query(
+      "SELECT COUNT(*) FROM class_subjects WHERE subject_id = $1",
+      [id]
+    );
     if (parseInt(classAssignments.rows[0].count) > 0) {
-      return res.status(400).json({ error: 'Cannot delete subject. It is assigned to one or more classes.' });
+      return res.status(400).json({
+        error: "Cannot delete subject. It is assigned to one or more classes.",
+      });
     }
 
     // Timetables feature removed; skip timetable usage check
 
     // Log the activity before deletion
-    await logUserActivity(req.user.id, 'delete', `Deleted subject: ${existingSubject.rows[0].name}`, 'subject', id, existingSubject.rows[0].name, ipAddress, userAgent);
+    await logUserActivity(
+      req.user.id,
+      "delete",
+      `Deleted subject: ${existingSubject.rows[0].name}`,
+      "subject",
+      id,
+      existingSubject.rows[0].name,
+      ipAddress,
+      userAgent
+    );
 
-    await pool.query('DELETE FROM subjects WHERE id = $1', [id]);
+    // Log changes for sync with deleted data snapshot
+    await logChanges("subjects", id, ChangeTypes.delete, req.user, {
+      deletedData: existingSubject.rows[0],
+    });
 
-    res.json({ message: 'Subject deleted successfully' });
+    await pool.query("DELETE FROM subjects WHERE id = $1", [id]);
+
+    res.json({ message: "Subject deleted successfully" });
   } catch (error) {
-    console.error('Error deleting subject:', error);
-    res.status(500).json({ error: 'Failed to delete subject' });
+    console.error("Error deleting subject:", error);
+    res.status(500).json({ error: "Failed to delete subject" });
   }
 });
 
 // Get subjects by department
-router.get('/department/:department', authenticateToken, async (req, res) => {
+router.get("/department/:department", authenticateToken, async (req, res) => {
   try {
     const { department } = req.params;
     const result = await pool.query(
-      'SELECT * FROM subjects WHERE department = $1 ORDER BY name',
+      "SELECT * FROM subjects WHERE department = $1 ORDER BY name",
       [department]
     );
-    
+
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching subjects by department:', error);
-    res.status(500).json({ error: 'Failed to fetch subjects by department' });
+    console.error("Error fetching subjects by department:", error);
+    res.status(500).json({ error: "Failed to fetch subjects by department" });
   }
 });
 
 // Search subjects
-router.get('/search/:query', authenticateToken, async (req, res) => {
+router.get("/search/:query", authenticateToken, async (req, res) => {
   try {
     const { query } = req.params;
     const searchQuery = `%${query}%`;
-    
+
     const result = await pool.query(
       `SELECT * FROM subjects 
        WHERE name ILIKE $1 OR code ILIKE $1 OR description ILIKE $1
        ORDER BY name`,
       [searchQuery]
     );
-    
+
     res.json(result.rows);
   } catch (error) {
-    console.error('Error searching subjects:', error);
-    res.status(500).json({ error: 'Failed to search subjects' });
+    console.error("Error searching subjects:", error);
+    res.status(500).json({ error: "Failed to search subjects" });
   }
 });
 
-module.exports = router; 
+module.exports = router;

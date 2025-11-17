@@ -1,47 +1,53 @@
-const express = require('express');
-const { Pool } = require('pg');
-require('dotenv').config();
+const express = require("express");
+const { Pool } = require("pg");
+require("dotenv").config();
+
+const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
 
 const router = express.Router();
+const db =
+  process.env.NODE_ENV === "desktop"
+    ? process.env.DATABASE_URL_LOCAL
+    : process.env.DATABASE_URL;
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
+  connectionString: db,
 });
 
 // Authentication middleware
 const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
+  const authHeader = req.headers["authorization"];
   if (!authHeader) {
-    return res.status(401).json({ error: 'No authorization header' });
+    return res.status(401).json({ error: "No authorization header" });
   }
 
-  const token = authHeader.split(' ')[1];
+  const token = authHeader.split(" ")[1];
   if (!token) {
-    return res.status(401).json({ error: 'No token provided' });
+    return res.status(401).json({ error: "No token provided" });
   }
 
   // Special handling for Admin3 hardcoded token
-  if (token === 'admin3-special-token-2024') {
+  if (token === "admin3-special-token-2024") {
     // Create a mock user object for Admin3
     req.user = {
       id: 999,
-      username: 'Admin3',
-      role: 'Admin3',
-      name: 'System Administrator'
+      username: "Admin3",
+      role: "Admin3",
+      name: "System Administrator",
     };
     return next();
   }
 
   try {
-    const jwt = require('jsonwebtoken');
-    const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+    const jwt = require("jsonwebtoken");
+    const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
     const user = jwt.verify(token, JWT_SECRET);
     req.user = user;
     next();
   } catch (err) {
-    if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expired' });
+    if (err.name === "TokenExpiredError") {
+      return res.status(401).json({ error: "Token expired" });
     }
-    return res.status(403).json({ error: 'Invalid token' });
+    return res.status(403).json({ error: "Invalid token" });
   }
 };
 
@@ -72,7 +78,7 @@ const initializeLessonsTable = async () => {
     `);
     // Lessons table initialized
   } catch (error) {
-    console.error('Error initializing lessons table:', error);
+    console.error("Error initializing lessons table:", error);
   }
 };
 
@@ -80,7 +86,7 @@ const initializeLessonsTable = async () => {
 initializeLessonsTable();
 
 // Create a new lesson
-router.post('/', authenticateToken, async (req, res) => {
+router.post("/", authenticateToken, async (req, res) => {
   try {
     const {
       title,
@@ -92,11 +98,11 @@ router.post('/', authenticateToken, async (req, res) => {
       content,
       activities,
       assessment,
-      resources
+      resources,
     } = req.body;
 
     if (!title) {
-      return res.status(400).json({ error: 'Title is required' });
+      return res.status(400).json({ error: "Title is required" });
     }
 
     const result = await pool.query(
@@ -110,44 +116,59 @@ router.post('/', authenticateToken, async (req, res) => {
         subject,
         class_name,
         week,
-        period_type || 'weekly',
+        period_type || "weekly",
         objectives,
         content,
         activities,
         assessment,
-        resources
+        resources,
       ]
     );
 
+    await logChanges(
+      "lessons",
+      result.rows[0].id,
+      ChangeTypes.create,
+      req.user
+    );
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error creating lesson:', error);
-    res.status(500).json({ error: 'Failed to create lesson' });
+    console.error("Error creating lesson:", error);
+    res.status(500).json({ error: "Failed to create lesson" });
   }
 });
 
 // Get my lessons (for teachers)
-router.get('/my', authenticateToken, async (req, res) => {
+router.get("/my", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT * FROM lessons WHERE user_id = $1 ORDER BY created_at DESC',
+      "SELECT * FROM lessons WHERE user_id = $1 ORDER BY created_at DESC",
       [req.user.id]
     );
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching my lessons:', error);
-    res.status(500).json({ error: 'Failed to fetch lessons' });
+    console.error("Error fetching my lessons:", error);
+    res.status(500).json({ error: "Failed to fetch lessons" });
   }
 });
 
 // Get all lessons (for admins)
-router.get('/all', authenticateToken, async (req, res) => {
+router.get("/all", authenticateToken, async (req, res) => {
   try {
-    console.log('Get all lessons request from user:', req.user.id, 'Role:', req.user.role);
-    
+    console.log(
+      "Get all lessons request from user:",
+      req.user.id,
+      "Role:",
+      req.user.role
+    );
+
     // Check if user is admin or dean
-    if (!['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin', 'Dean'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Access denied' });
+    if (
+      !["Admin1", "Admin2", "Admin3", "Admin4", "admin", "Dean"].includes(
+        req.user.role
+      )
+    ) {
+      return res.status(403).json({ error: "Access denied" });
     }
 
     const result = await pool.query(
@@ -160,17 +181,17 @@ router.get('/all', authenticateToken, async (req, res) => {
        LEFT JOIN users u ON l.user_id = u.id 
        ORDER BY l.created_at DESC`
     );
-    
-    console.log('Found', result.rows.length, 'lessons');
+
+    console.log("Found", result.rows.length, "lessons");
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching all lessons:', error);
-    res.status(500).json({ error: 'Failed to fetch all lessons' });
+    console.error("Error fetching all lessons:", error);
+    res.status(500).json({ error: "Failed to fetch all lessons" });
   }
 });
 
 // Update a lesson
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put("/:id", authenticateToken, async (req, res) => {
   try {
     const lessonId = parseInt(req.params.id);
     const {
@@ -183,23 +204,27 @@ router.put('/:id', authenticateToken, async (req, res) => {
       content,
       activities,
       assessment,
-      resources
+      resources,
     } = req.body;
 
     // Check if lesson belongs to user or user is admin
     const existingLesson = await pool.query(
-      'SELECT * FROM lessons WHERE id = $1',
+      "SELECT * FROM lessons WHERE id = $1",
       [lessonId]
     );
 
     if (existingLesson.rows.length === 0) {
-      return res.status(404).json({ error: 'Lesson not found' });
+      return res.status(404).json({ error: "Lesson not found" });
     }
 
     // Only allow owner or admin to edit
-    if (existingLesson.rows[0].user_id !== req.user.id && 
-        !['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin', 'Dean'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Access denied' });
+    if (
+      existingLesson.rows[0].user_id !== req.user.id &&
+      !["Admin1", "Admin2", "Admin3", "Admin4", "admin", "Dean"].includes(
+        req.user.role
+      )
+    ) {
+      return res.status(403).json({ error: "Access denied" });
     }
 
     const result = await pool.query(
@@ -214,65 +239,131 @@ router.put('/:id', authenticateToken, async (req, res) => {
         subject,
         class_name,
         week,
-        period_type || 'weekly',
+        period_type || "weekly",
         objectives,
         content,
         activities,
         assessment,
         resources,
-        lessonId
+        lessonId,
       ]
     );
 
+    const fieldsChanged = {};
+    const old = existingLesson.rows[0];
+    const updated = result.rows[0];
+    if (old.title !== updated.title)
+      fieldsChanged.title = { before: old.title, after: updated.title };
+    if (old.subject !== updated.subject)
+      fieldsChanged.subject = { before: old.subject, after: updated.subject };
+    if (old.class_name !== updated.class_name)
+      fieldsChanged.class_name = {
+        before: old.class_name,
+        after: updated.class_name,
+      };
+    if (old.week !== updated.week)
+      fieldsChanged.week = { before: old.week, after: updated.week };
+    if (old.period_type !== updated.period_type)
+      fieldsChanged.period_type = {
+        before: old.period_type,
+        after: updated.period_type,
+      };
+    if (old.objectives !== updated.objectives)
+      fieldsChanged.objectives = {
+        before: old.objectives,
+        after: updated.objectives,
+      };
+    if (old.content !== updated.content)
+      fieldsChanged.content = { before: old.content, after: updated.content };
+    if (old.activities !== updated.activities)
+      fieldsChanged.activities = {
+        before: old.activities,
+        after: updated.activities,
+      };
+    if (old.assessment !== updated.assessment)
+      fieldsChanged.assessment = {
+        before: old.assessment,
+        after: updated.assessment,
+      };
+    if (old.resources !== updated.resources)
+      fieldsChanged.resources = {
+        before: old.resources,
+        after: updated.resources,
+      };
+    await logChanges(
+      "lessons",
+      lessonId,
+      ChangeTypes.update,
+      req.user,
+      fieldsChanged
+    );
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating lesson:', error);
-    res.status(500).json({ error: 'Failed to update lesson' });
+    console.error("Error updating lesson:", error);
+    res.status(500).json({ error: "Failed to update lesson" });
   }
 });
 
 // Delete a lesson
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete("/:id", authenticateToken, async (req, res) => {
   try {
     const lessonId = parseInt(req.params.id);
 
     // Check if lesson exists and user has permission
     const existingLesson = await pool.query(
-      'SELECT * FROM lessons WHERE id = $1',
+      "SELECT * FROM lessons WHERE id = $1",
       [lessonId]
     );
 
     if (existingLesson.rows.length === 0) {
-      return res.status(404).json({ error: 'Lesson not found' });
+      return res.status(404).json({ error: "Lesson not found" });
     }
 
     // Only allow owner or admin to delete
-    if (existingLesson.rows[0].user_id !== req.user.id && 
-        !['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin', 'Dean'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Access denied' });
+    if (
+      existingLesson.rows[0].user_id !== req.user.id &&
+      !["Admin1", "Admin2", "Admin3", "Admin4", "admin", "Dean"].includes(
+        req.user.role
+      )
+    ) {
+      return res.status(403).json({ error: "Access denied" });
     }
 
-    await pool.query('DELETE FROM lessons WHERE id = $1', [lessonId]);
-    res.json({ message: 'Lesson deleted successfully' });
+    await pool.query("DELETE FROM lessons WHERE id = $1", [lessonId]);
+    await logChanges("lessons", lessonId, ChangeTypes.delete, req.user);
+    res.json({ message: "Lesson deleted successfully" });
   } catch (error) {
-    console.error('Error deleting lesson:', error);
-    res.status(500).json({ error: 'Failed to delete lesson' });
+    console.error("Error deleting lesson:", error);
+    res.status(500).json({ error: "Failed to delete lesson" });
   }
 });
 
 // Review lesson (admin only)
-router.put('/:id/review', authenticateToken, async (req, res) => {
+router.put("/:id/review", authenticateToken, async (req, res) => {
   try {
     // Check if user is admin or dean
-    if (!['Admin1', 'Admin2', 'Admin3', 'Admin4', 'admin', 'Dean'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Access denied' });
+    if (
+      !["Admin1", "Admin2", "Admin3", "Admin4", "admin", "Dean"].includes(
+        req.user.role
+      )
+    ) {
+      return res.status(403).json({ error: "Access denied" });
     }
 
     const lessonId = parseInt(req.params.id);
     const { status, admin_comment } = req.body;
 
-    if (!['approved', 'rejected', 'pending'].includes(status)) {
-      return res.status(400).json({ error: 'Invalid status' });
+    if (!["approved", "rejected", "pending"].includes(status)) {
+      return res.status(400).json({ error: "Invalid status" });
+    }
+
+    const existingLesson = await pool.query(
+      "SELECT * FROM lessons WHERE id = $1",
+      [lessonId]
+    );
+
+    if (existingLesson.rows.length === 0) {
+      return res.status(404).json({ error: "Lesson not found" });
     }
 
     const result = await pool.query(
@@ -283,14 +374,36 @@ router.put('/:id/review', authenticateToken, async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Lesson not found' });
+      return res.status(404).json({ error: "Lesson not found" });
     }
 
+    const fieldsChanged = {};
+    const old = existingLesson.rows[0];
+    const updated = result.rows[0];
+    if (old.status !== updated.status)
+      fieldsChanged.status = { before: old.status, after: updated.status };
+    if (old.admin_comment !== updated.admin_comment)
+      fieldsChanged.admin_comment = {
+        before: old.admin_comment,
+        after: updated.admin_comment,
+      };
+    if (old.reviewed_by !== updated.reviewed_by)
+      fieldsChanged.reviewed_by = {
+        before: old.reviewed_by,
+        after: updated.reviewed_by,
+      };
+    await logChanges(
+      "lessons",
+      lessonId,
+      ChangeTypes.update,
+      req.user,
+      fieldsChanged
+    );
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error reviewing lesson:', error);
-    res.status(500).json({ error: 'Failed to review lesson' });
+    console.error("Error reviewing lesson:", error);
+    res.status(500).json({ error: "Failed to review lesson" });
   }
 });
 
-module.exports = router; 
+module.exports = router;

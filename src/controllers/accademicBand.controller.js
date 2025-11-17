@@ -4,6 +4,7 @@ const AppError = require("../utils/AppError");
 const catchAsync = require("../utils/catchAsync");
 const CRUD = require("../utils/Crud");
 const appResponder = require("../utils/appResponder");
+const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
 
 const AcademicBandModel = models.academic_bands;
 const tableName = AcademicBandModel.getTableName();
@@ -114,7 +115,7 @@ const include = [
 // Controller methods
 const createAcademicBand = catchAsync(async (req, res, next) => {
   await validateAcademicBandData(req.body);
-  await CRUDAcademicBand.create(req.body, res);
+  await CRUDAcademicBand.create(req.body, res, req);
 });
 
 const readOneAcademicBand = catchAsync(async (req, res, next) => {
@@ -131,7 +132,7 @@ const updateAcademicBand = catchAsync(async (req, res, next) => {
 });
 
 const deleteAcademicBand = catchAsync(async (req, res, next) => {
-  await CRUDAcademicBand.delete(req.params.id, res);
+  await CRUDAcademicBand.delete(req.params.id, res, req);
 });
 
 const saveAcademicBandsBatch = catchAsync(async (req, res, next) => {
@@ -171,22 +172,65 @@ const saveAcademicBandsBatch = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Transaction ensures atomicity
+  // Start transaction for atomicity
   const transaction = await AcademicBandModel.sequelize.transaction();
   try {
-    // Delete old bands for this year + class
+    // Fetch existing bands for this year + class
+    const oldBands = await AcademicBandModel.findAll({
+      where: { academic_year_id, class_id },
+      transaction,
+    });
+
+    // Log deletions
+    for (const oldBand of oldBands) {
+      const fieldsChanged = {};
+      for (const key in oldBand.toJSON()) {
+        fieldsChanged[key] = { before: oldBand[key] };
+      }
+
+      await logChanges(
+        AcademicBandModel.tableName,
+        oldBand.id,
+        ChangeTypes.delete,
+        req.user,
+        fieldsChanged
+      );
+    }
+
+    // Delete old bands
     await AcademicBandModel.destroy({
       where: { academic_year_id, class_id },
       transaction,
     });
 
-    // Insert new bands
+    // Prepare new bands
     const bandsToInsert = bands.map((b) => ({
       ...b,
       academic_year_id,
       class_id,
     }));
-    await AcademicBandModel.bulkCreate(bandsToInsert, { transaction });
+
+    // Insert new bands
+    const createdBands = await AcademicBandModel.bulkCreate(bandsToInsert, {
+      transaction,
+      returning: true,
+    });
+
+    // Log creations
+    for (const band of createdBands) {
+      const fieldsChanged = {};
+      for (const key in band.toJSON()) {
+        fieldsChanged[key] = { after: band[key] };
+      }
+
+      await logChanges(
+        AcademicBandModel.tableName,
+        band.id,
+        ChangeTypes.create,
+        req.user,
+        fieldsChanged
+      );
+    }
 
     await transaction.commit();
 

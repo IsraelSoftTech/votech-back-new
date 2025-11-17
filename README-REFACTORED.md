@@ -8,7 +8,7 @@ The backend has been refactored from a monolithic `server.js` file into a modula
 
 ## 📁 File Structure
 
-```
+```plain
 backend/
 ├── server-refactored.js          # Main server file (refactored)
 ├── server.js                     # Original heavy server file
@@ -49,133 +49,145 @@ This file contains common functions and middleware used across all route modules
 ## 🛣️ Route Modules
 
 ### 1. Authentication Routes (`routes/auth.js`)
+
 **Base Path**: `/api`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/test` | Test endpoint |
-| POST | `/setup-admin` | Create admin user |
-| POST | `/login` | User login |
-| POST | `/logout` | User logout |
-| POST | `/register` | User registration |
-| POST | `/check-user` | Check user existence |
-| POST | `/reset-password` | Reset user password |
-| POST | `/change-password` | Change user password |
+| Method | Endpoint           | Description          |
+| ------ | ------------------ | -------------------- |
+| GET    | `/test`            | Test endpoint        |
+| POST   | `/setup-admin`     | Create admin user    |
+| POST   | `/login`           | User login           |
+| POST   | `/logout`          | User logout          |
+| POST   | `/register`        | User registration    |
+| POST   | `/check-user`      | Check user existence |
+| POST   | `/reset-password`  | Reset user password  |
+| POST   | `/change-password` | Change user password |
 
 ### 2. Fee Management Routes (`routes/fees.js`)
+
 **Base Path**: `/api/fees`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/total/yearly` | Get yearly fee totals |
-| GET | `/student/:id` | Get student fee stats |
-| POST | `/` | Create fee payment |
-| GET | `/class/:classId` | Get class fee stats |
-| DELETE | `/payments/:id` | Delete payment record |
-| DELETE | `/student/:studentId` | Clear all student fees |
-| GET | `/payments/student/:studentId` | Get student payment details |
+| Method | Endpoint                       | Description                 |
+| ------ | ------------------------------ | --------------------------- |
+| GET    | `/total/yearly`                | Get yearly fee totals       |
+| GET    | `/student/:id`                 | Get student fee stats       |
+| POST   | `/`                            | Create fee payment          |
+| GET    | `/class/:classId`              | Get class fee stats         |
+| DELETE | `/payments/:id`                | Delete payment record       |
+| DELETE | `/student/:studentId`          | Clear all student fees      |
+| GET    | `/payments/student/:studentId` | Get student payment details |
 
 ### 3. Student Management Routes (`routes/students.js`)
+
 **Base Path**: `/api/students`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/analytics/daily` | Daily student analytics |
-| GET | `/analytics/monthly` | Monthly student analytics |
-| GET | `/search` | Search students |
-| GET | `/:id/picture` | Get student picture |
-| POST | `/` | Create student |
-| GET | `/` | Get all students |
-| DELETE | `/:id` | Delete student |
-| POST | `/import` | Import students from Excel |
+| Method | Endpoint             | Description                |
+| ------ | -------------------- | -------------------------- |
+| GET    | `/analytics/daily`   | Daily student analytics    |
+| GET    | `/analytics/monthly` | Monthly student analytics  |
+| GET    | `/search`            | Search students            |
+| GET    | `/:id/picture`       | Get student picture        |
+| POST   | `/`                  | Create student             |
+| GET    | `/`                  | Get all students           |
+| DELETE | `/:id`               | Delete student             |
+| POST   | `/import`            | Import students from Excel |
 
 ### 4. Class Management Routes (`routes/classes.js`)
+
 **Base Path**: `/api/classes`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Get all classes |
-| POST | `/` | Create class |
-| PUT | `/:id` | Update class |
-| DELETE | `/:id` | Delete class |
-| GET | `/:id` | Get class by ID |
-| GET | `/:id/students` | Get students in class |
-| GET | `/:id/stats` | Get class statistics |
+| Method | Endpoint        | Description           |
+| ------ | --------------- | --------------------- |
+| GET    | `/`             | Get all classes       |
+| POST   | `/`             | Create class          |
+| PUT    | `/:id`          | Update class          |
+| DELETE | `/:id`          | Delete class          |
+| GET    | `/:id`          | Get class by ID       |
+| GET    | `/:id/students` | Get students in class |
+| GET    | `/:id/stats`    | Get class statistics  |
 
 ### 5. Teacher Management Routes (`routes/teachers.js`)
+
 **Base Path**: `/api/teachers`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/` | Create teacher |
-| GET | `/` | Get all teachers |
-| PUT | `/:id` | Update teacher |
-| DELETE | `/:id` | Delete teacher |
-| PUT | `/:id/status` | Update teacher status |
-| GET | `/:id` | Get teacher by ID |
-| GET | `/active/list` | Get active teachers |
-| GET | `/stats/overview` | Get teacher statistics |
+| Method | Endpoint          | Description            |
+| ------ | ----------------- | ---------------------- |
+| POST   | `/`               | Create teacher         |
+| GET    | `/`               | Get all teachers       |
+| PUT    | `/:id`            | Update teacher         |
+| DELETE | `/:id`            | Delete teacher         |
+| PUT    | `/:id/status`     | Update teacher status  |
+| GET    | `/:id`            | Get teacher by ID      |
+| GET    | `/active/list`    | Get active teachers    |
+| GET    | `/stats/overview` | Get teacher statistics |
 
 ### 6. User Management Routes (`routes/users.js`)
+
 **Base Path**: `/api/users`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Get all users (admin) |
-| GET | `/all-chat` | Get users for chat |
-| GET | `/chat-list` | Get chat list with last messages |
-| POST | `/check-user-details` | Check user details |
-| GET | `/all` | Get all users (admin) |
-| PUT | `/:id` | Update user |
-| DELETE | `/:id` | Delete user |
-| POST | `/:id/suspend` | Suspend/unsuspend user |
-| GET | `/monitor/users` | Get user monitoring data |
-| GET | `/monitor/user-activities` | Get user activities |
-| GET | `/monitor/user-sessions` | Get user sessions |
+| Method | Endpoint                   | Description                      |
+| ------ | -------------------------- | -------------------------------- |
+| GET    | `/`                        | Get all users (admin)            |
+| GET    | `/all-chat`                | Get users for chat               |
+| GET    | `/chat-list`               | Get chat list with last messages |
+| POST   | `/check-user-details`      | Check user details               |
+| GET    | `/all`                     | Get all users (admin)            |
+| PUT    | `/:id`                     | Update user                      |
+| DELETE | `/:id`                     | Delete user                      |
+| POST   | `/:id/suspend`             | Suspend/unsuspend user           |
+| GET    | `/monitor/users`           | Get user monitoring data         |
+| GET    | `/monitor/user-activities` | Get user activities              |
+| GET    | `/monitor/user-sessions`   | Get user sessions                |
 
 ### 7. Messaging Routes (`routes/messages.js`)
+
 **Base Path**: `/api/messages`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/` | Send message |
-| POST | `/with-file` | Send message with file |
-| GET | `/:userId` | Get messages between users |
-| POST | `/:userId/read` | Mark messages as read |
-| GET | `/unread/count` | Get unread message count |
-| DELETE | `/:messageId` | Delete message |
-| GET | `/group/:groupId` | Get group messages |
+| Method | Endpoint          | Description                |
+| ------ | ----------------- | -------------------------- |
+| POST   | `/`               | Send message               |
+| POST   | `/with-file`      | Send message with file     |
+| GET    | `/:userId`        | Get messages between users |
+| POST   | `/:userId/read`   | Mark messages as read      |
+| GET    | `/unread/count`   | Get unread message count   |
+| DELETE | `/:messageId`     | Delete message             |
+| GET    | `/group/:groupId` | Get group messages         |
 
 ### 8. Inventory Management Routes (`routes/inventory.js`)
+
 **Base Path**: `/api/inventory`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Get all inventory items |
-| POST | `/` | Create inventory item |
-| PUT | `/:id` | Update inventory item |
-| DELETE | `/:id` | Delete inventory item |
-| GET | `/:id` | Get inventory item by ID |
-| GET | `/stats/overview` | Get inventory statistics |
-| GET | `/search/items` | Search inventory items |
-| GET | `/departments/list` | Get departments list |
+| Method | Endpoint            | Description              |
+| ------ | ------------------- | ------------------------ |
+| GET    | `/`                 | Get all inventory items  |
+| POST   | `/`                 | Create inventory item    |
+| PUT    | `/:id`              | Update inventory item    |
+| DELETE | `/:id`              | Delete inventory item    |
+| GET    | `/:id`              | Get inventory item by ID |
+| GET    | `/stats/overview`   | Get inventory statistics |
+| GET    | `/search/items`     | Search inventory items   |
+| GET    | `/departments/list` | Get departments list     |
 
 ## 🔐 Authentication & Authorization
 
 ### Authentication Middleware
+
 All protected routes use the `authenticateToken` middleware from `utils.js`:
+
 ```javascript
-const { authenticateToken } = require('./routes/utils');
-router.get('/protected-route', authenticateToken, (req, res) => {
+const { authenticateToken } = require("./routes/utils");
+router.get("/protected-route", authenticateToken, (req, res) => {
   // Route logic here
 });
 ```
 
 ### Admin Authorization
+
 Admin-only routes use the `requireAdmin` middleware:
+
 ```javascript
-const { requireAdmin } = require('./routes/utils');
-router.post('/admin-only', authenticateToken, requireAdmin, (req, res) => {
+const { requireAdmin } = require("./routes/utils");
+router.post("/admin-only", authenticateToken, requireAdmin, (req, res) => {
   // Admin route logic here
 });
 ```
@@ -183,17 +195,22 @@ router.post('/admin-only', authenticateToken, requireAdmin, (req, res) => {
 ## 📊 Activity Logging
 
 All routes automatically log user activities using the `logUserActivity` function:
+
 ```javascript
-const { logUserActivity, getIpAddress, getUserAgent } = require('./routes/utils');
+const {
+  logUserActivity,
+  getIpAddress,
+  getUserAgent,
+} = require("./routes/utils");
 
 // Log activity
 const ipAddress = getIpAddress(req);
 const userAgent = getUserAgent(req);
 await logUserActivity(
   req.user.id,
-  'create',
-  'Created new item',
-  'item_type',
+  "create",
+  "Created new item",
+  "item_type",
   itemId,
   itemName,
   ipAddress,
@@ -204,13 +221,16 @@ await logUserActivity(
 ## 🚀 Getting Started
 
 ### 1. Install Dependencies
+
 ```bash
 npm install
 ```
 
 ### 2. Set Environment Variables
+
 Create a `.env` file with:
-```
+
+```plain
 DB_NAME=your_database_name
 DB_USER_NAME=your_username
 DB_PASSWORD=your_password
@@ -219,11 +239,13 @@ DATABASE_URL=your_database_url
 ```
 
 ### 3. Run the Refactored Server
+
 ```bash
 node server-refactored.js
 ```
 
 ### 4. Test the API
+
 ```bash
 curl http://localhost:5000/api/test
 ```
@@ -233,11 +255,13 @@ curl http://localhost:5000/api/test
 To migrate from the original `server.js` to the refactored version:
 
 1. **Backup the original server**:
+
    ```bash
    cp server.js server.js.backup
    ```
 
 2. **Replace with refactored version**:
+
    ```bash
    cp server-refactored.js server.js
    ```
@@ -266,8 +290,9 @@ To migrate from the original `server.js` to the refactored version:
 ### Debug Mode
 
 Enable debug logging by setting:
+
 ```javascript
-process.env.DEBUG = 'true';
+process.env.DEBUG = "true";
 ```
 
 ## 📝 Contributing
@@ -283,4 +308,3 @@ When adding new features:
 ## 🔗 API Documentation
 
 For detailed API documentation, refer to the individual route files or use tools like Swagger/OpenAPI to generate documentation from the route definitions.
-

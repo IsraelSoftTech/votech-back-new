@@ -6,6 +6,7 @@ const AppError = require("../utils/AppError");
 const catchAsync = require("../utils/catchAsync");
 const CRUD = require("../utils/Crud");
 const appResponder = require("../utils/appResponder");
+const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
 
 const MarksModel = models.marks;
 const TermsModel = models.Term;
@@ -124,7 +125,7 @@ async function validateMarkData(
 
 const createMark = catchAsync(async (req, res) => {
   await validateMarkData(req.body);
-  await CRUDMarks.create(req.body, res);
+  await CRUDMarks.create(req.body, res, req);
 });
 
 const readOneMark = catchAsync(async (req, res) => {
@@ -141,7 +142,7 @@ const updateMark = catchAsync(async (req, res) => {
 });
 
 const deleteMark = catchAsync(async (req, res) => {
-  await CRUDMarks.delete(req.params.id, res);
+  await CRUDMarks.delete(req.params.id, res, req);
 });
 
 const saveMarksBatch = catchAsync(async (req, res, next) => {
@@ -202,13 +203,34 @@ const saveMarksBatch = catchAsync(async (req, res, next) => {
       uploaded_at: new Date(),
     };
 
-    // Skip existence check for batch upserts
     await validateMarkData(markData, false, true);
-
     marksToUpsert.push(markData);
   }
 
-  // Upsert all marks in parallel targeting the unique constraint
+  // -------------------------------------------------------
+  // 🔥 FETCH EXISTING RECORDS FIRST
+  // -------------------------------------------------------
+  const studentIds = marks.map((m) => m.student_id);
+
+  const existingMarks = await MarksModel.findAll({
+    where: {
+      student_id: studentIds,
+      subject_id,
+      class_id,
+      academic_year_id,
+      term_id,
+      sequence_id,
+    },
+  });
+
+  const existingMap = new Map();
+  for (const e of existingMarks) {
+    existingMap.set(e.student_id, e.toJSON());
+  }
+
+  // -------------------------------------------------------
+  // 🔥 UPSERT ALL MARKS
+  // -------------------------------------------------------
   await Promise.all(
     marksToUpsert.map((mark) =>
       MarksModel.upsert(mark, {
@@ -223,6 +245,56 @@ const saveMarksBatch = catchAsync(async (req, res, next) => {
       })
     )
   );
+
+  // -------------------------------------------------------
+  // 🔥 REFETCH UPDATED RECORDS (so we know the final form)
+  // -------------------------------------------------------
+  const updatedMarks = await MarksModel.findAll({
+    where: {
+      student_id: studentIds,
+      subject_id,
+      class_id,
+      academic_year_id,
+      term_id,
+      sequence_id,
+    },
+  });
+
+  // -------------------------------------------------------
+  // 🔥 LOG INSERTS / UPDATES INDIVIDUALLY
+  // -------------------------------------------------------
+  for (const row of updatedMarks) {
+    const old = existingMap.get(row.student_id);
+
+    if (!old) {
+      // INSERT happened
+      await logChanges("marks", row.id, ChangeTypes.create, req.user, {
+        student_id: row.student_id,
+        value: row.value,
+      });
+    } else {
+      // UPDATE happened — detect field changes
+      const changedFields = {};
+      for (const key of Object.keys(row.toJSON())) {
+        if (old[key] !== row[key]) {
+          changedFields[key] = { before: old[key], after: row[key] };
+        }
+      }
+
+      // Only log if something actually changed
+      if (Object.keys(changedFields).length > 0) {
+        await logChanges(
+          "marks",
+          row.id,
+          ChangeTypes.update,
+          req.user,
+          changedFields
+        );
+      }
+    }
+  }
+
+  // -------------------------------------------------------
 
   const data = await MarksModel.findAll();
 

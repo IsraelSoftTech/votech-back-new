@@ -10,6 +10,7 @@ const { Op } = require("sequelize");
 const Joi = require("joi");
 const { specialties, users } = require("../models/index.model");
 const models = require("../models/index.model");
+const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
 
 const ClassSubjectModel = require("../models/ClassSubject.model")(
   sequelize,
@@ -114,7 +115,7 @@ const updateClassSubject = catchAsync(async (req, res, next) => {
 });
 
 const deleteClassSubject = catchAsync(async (req, res, next) => {
-  await CRUDClassSubject.delete(req.params.id, res);
+  await CRUDClassSubject.delete(req.params.id, res, req);
 });
 
 // controllers/classSubject.controller.js
@@ -131,7 +132,7 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Validate each assignment has required numeric fields
+  // Validate numeric fields
   for (const [index, a] of assignments.entries()) {
     if (
       !a.class_id ||
@@ -152,7 +153,7 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Ensure all assignments have the same subject_id
+  // All assignments must refer to the same subject
   const uniqueSubjectIds = [...new Set(assignments.map((a) => a.subject_id))];
   if (uniqueSubjectIds.length !== 1) {
     return next(
@@ -164,10 +165,8 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
   }
   const subject_id = uniqueSubjectIds[0];
 
-  // Get all involved class_ids (multiple classes allowed)
+  // Validate class existence
   const class_ids = [...new Set(assignments.map((a) => a.class_id))];
-
-  // Validate all referenced classes exist
   const existingClasses = await Class.findAll({ where: { id: class_ids } });
   if (existingClasses.length !== class_ids.length) {
     const missing = class_ids.filter(
@@ -181,7 +180,7 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Validate subject exists
+  // Validate subject existence
   const subjectExists = await Subject.findByPk(subject_id);
   if (!subjectExists) {
     return next(
@@ -192,7 +191,7 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Validate all referenced teachers exist
+  // Validate teacher existence
   const teacher_ids = [...new Set(assignments.map((a) => a.teacher_id))];
   const existingTeachers = await users.findAll({ where: { id: teacher_ids } });
   if (existingTeachers.length !== teacher_ids.length) {
@@ -207,7 +206,7 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Validate all referenced departments exist
+  // Validate department existence
   const department_ids = [...new Set(assignments.map((a) => a.department_id))];
   const existingDepartments = await specialties.findAll({
     where: { id: department_ids },
@@ -224,24 +223,58 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Now, delete all existing assignments for this subject in these classes before saving new ones
+  // Now apply changes with full logging
   const transaction = await sequelize.transaction();
   try {
+    // Fetch existing assignments BEFORE deleting (needed for logging)
+    const oldAssignments = await ClassSubjectModel.findAll({
+      where: { subject_id },
+      transaction,
+    });
+
+    // Delete existing assignments
     await ClassSubjectModel.destroy({
       where: { subject_id },
       transaction,
     });
 
-    await ClassSubjectModel.bulkCreate(assignments, { transaction });
+    // Log each deletion
+    for (const old of oldAssignments) {
+      await logChanges(
+        ClassSubjectModel.tableName,
+        old.id,
+        ChangeTypes.delete,
+        req.user,
+        old.get({ plain: true })
+      );
+    }
+
+    // Insert new assignments
+    const createdAssignments = await ClassSubjectModel.bulkCreate(assignments, {
+      transaction,
+      returning: true,
+    });
+
+    // Log each creation
+    for (const created of createdAssignments) {
+      await logChanges(
+        ClassSubjectModel.tableName,
+        created.id,
+        ChangeTypes.create,
+        req.user,
+        created.get({ plain: true })
+      );
+    }
 
     await transaction.commit();
+
     return res.json({
       success: true,
       message: "Assignments saved successfully.",
     });
   } catch (err) {
     await transaction.rollback();
-    throw err;
+    next(err);
   }
 });
 
@@ -265,12 +298,40 @@ const unassignSubject = catchAsync(async (req, res, next) => {
 
   const transaction = await sequelize.transaction();
   try {
+    // -------------------------------------------------------
+    // 🔥 Fetch records first (so we know exactly what was deleted)
+    // -------------------------------------------------------
+    const recordsToDelete = await ClassSubjectModel.findAll({
+      where: whereClause,
+      transaction,
+    });
+
+    // now delete them
     const deletedCount = await ClassSubjectModel.destroy({
       where: whereClause,
       transaction,
     });
 
     await transaction.commit();
+
+    // -------------------------------------------------------
+    // 🔥 LOG EACH DELETE PROPERLY
+    // -------------------------------------------------------
+    if (deletedCount > 0) {
+      for (const row of recordsToDelete) {
+        await logChanges(
+          "class_subjects",
+          row.id, // log the REAL record id
+          ChangeTypes.delete,
+          req.user,
+          {
+            subject_id: row.subject_id,
+            class_id: row.class_id,
+          }
+        );
+      }
+    }
+    // -------------------------------------------------------
 
     return res.status(StatusCodes.OK).json({
       success: true,

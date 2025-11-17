@@ -3,7 +3,6 @@ var _academic_years = require("./academic_years");
 var _attendance_records = require("./attendance_records");
 var _attendance_sessions = require("./attendance_sessions");
 
-
 var _classes = require("./classes");
 var _fees = require("./fees");
 var _group_participants = require("./group_participants");
@@ -35,7 +34,6 @@ function initModels(sequelize) {
   var attendance_records = _attendance_records(sequelize, DataTypes);
   var attendance_sessions = _attendance_sessions(sequelize, DataTypes);
 
-
   var classes = _classes(sequelize, DataTypes);
   var fees = _fees(sequelize, DataTypes);
   var group_participants = _group_participants(sequelize, DataTypes);
@@ -62,69 +60,165 @@ function initModels(sequelize) {
   var users = _users(sequelize, DataTypes);
   var vocational = _vocational(sequelize, DataTypes);
 
+  attendance_records.belongsTo(attendance_sessions, {
+    as: "session",
+    foreignKey: "session_id",
+  });
+  attendance_sessions.hasMany(attendance_records, {
+    as: "attendance_records",
+    foreignKey: "session_id",
+  });
+  attendance_sessions.belongsTo(classes, {
+    as: "class",
+    foreignKey: "class_id",
+  });
+  classes.hasMany(attendance_sessions, {
+    as: "attendance_sessions",
+    foreignKey: "class_id",
+  });
+  specialty_classes.belongsTo(classes, { as: "class", foreignKey: "class_id" });
+  classes.hasMany(specialty_classes, {
+    as: "specialty_classes",
+    foreignKey: "class_id",
+  });
+  students.belongsTo(classes, { as: "class", foreignKey: "class_id" });
+  classes.hasMany(students, { as: "students", foreignKey: "class_id" });
+  subject_classifications.belongsTo(classes, {
+    as: "class",
+    foreignKey: "class_id",
+  });
+  classes.hasMany(subject_classifications, {
+    as: "subject_classifications",
+    foreignKey: "class_id",
+  });
+  subject_coefficients.belongsTo(classes, {
+    as: "class",
+    foreignKey: "class_id",
+  });
+  classes.hasMany(subject_coefficients, {
+    as: "subject_coefficients",
+    foreignKey: "class_id",
+  });
+  teacher_assignments.belongsTo(classes, {
+    as: "class",
+    foreignKey: "class_id",
+  });
+  classes.hasMany(teacher_assignments, {
+    as: "teacher_assignments",
+    foreignKey: "class_id",
+  });
+  timetables.belongsTo(classes, { as: "class", foreignKey: "class_id" });
+  classes.hasOne(timetables, { as: "timetable", foreignKey: "class_id" });
+  group_participants.belongsTo(groups, { as: "group", foreignKey: "group_id" });
+  groups.hasMany(group_participants, {
+    as: "group_participants",
+    foreignKey: "group_id",
+  });
+  specialty_classes.belongsTo(specialties, {
+    as: "specialty",
+    foreignKey: "specialty_id",
+  });
+  specialties.hasMany(specialty_classes, {
+    as: "specialty_classes",
+    foreignKey: "specialty_id",
+  });
+  attendance_records.belongsTo(students, {
+    as: "student",
+    foreignKey: "student_id",
+  });
+  students.hasMany(attendance_records, {
+    as: "attendance_records",
+    foreignKey: "student_id",
+  });
+  students.belongsTo(specialties, {
+    as: "specialty",
+    foreignKey: "specialty_id",
+  });
+  specialties.hasMany(students, { as: "students", foreignKey: "specialty_id" });
 
+  subject_classifications.belongsTo(subjects, {
+    as: "subject",
+    foreignKey: "subject_id",
+  });
+  subjects.hasMany(subject_classifications, {
+    as: "subject_classifications",
+    foreignKey: "subject_id",
+  });
+  subject_coefficients.belongsTo(subjects, {
+    as: "subject",
+    foreignKey: "subject_id",
+  });
+  subjects.hasMany(subject_coefficients, {
+    as: "subject_coefficients",
+    foreignKey: "subject_id",
+  });
+  teacher_assignments.belongsTo(subjects, {
+    as: "subject",
+    foreignKey: "subject_id",
+  });
+  subjects.hasMany(teacher_assignments, {
+    as: "teacher_assignments",
+    foreignKey: "subject_id",
+  });
 
-  attendance_records.belongsTo(attendance_sessions, { as: "session", foreignKey: "session_id"});
-  attendance_sessions.hasMany(attendance_records, { as: "attendance_records", foreignKey: "session_id"});
-  attendance_sessions.belongsTo(classes, { as: "class", foreignKey: "class_id"});
-  classes.hasMany(attendance_sessions, { as: "attendance_sessions", foreignKey: "class_id"});
-  specialty_classes.belongsTo(classes, { as: "class", foreignKey: "class_id"});
-  classes.hasMany(specialty_classes, { as: "specialty_classes", foreignKey: "class_id"});
-  students.belongsTo(classes, { as: "class", foreignKey: "class_id"});
-  classes.hasMany(students, { as: "students", foreignKey: "class_id"});
-  subject_classifications.belongsTo(classes, { as: "class", foreignKey: "class_id"});
-  classes.hasMany(subject_classifications, { as: "subject_classifications", foreignKey: "class_id"});
-  subject_coefficients.belongsTo(classes, { as: "class", foreignKey: "class_id"});
-  classes.hasMany(subject_coefficients, { as: "subject_coefficients", foreignKey: "class_id"});
-  teacher_assignments.belongsTo(classes, { as: "class", foreignKey: "class_id"});
-  classes.hasMany(teacher_assignments, { as: "teacher_assignments", foreignKey: "class_id"});
-  timetables.belongsTo(classes, { as: "class", foreignKey: "class_id"});
-  classes.hasOne(timetables, { as: "timetable", foreignKey: "class_id"});
-  group_participants.belongsTo(groups, { as: "group", foreignKey: "group_id"});
-  groups.hasMany(group_participants, { as: "group_participants", foreignKey: "group_id"});
-  specialty_classes.belongsTo(specialties, { as: "specialty", foreignKey: "specialty_id"});
-  specialties.hasMany(specialty_classes, { as: "specialty_classes", foreignKey: "specialty_id"});
-  attendance_records.belongsTo(students, { as: "student", foreignKey: "student_id"});
-  students.hasMany(attendance_records, { as: "attendance_records", foreignKey: "student_id"});
-  students.belongsTo(specialties, { as: "specialty", foreignKey: "specialty_id"});
-  specialties.hasMany(students, { as: "students", foreignKey: "specialty_id"});
-
-  subject_classifications.belongsTo(subjects, { as: "subject", foreignKey: "subject_id"});
-  subjects.hasMany(subject_classifications, { as: "subject_classifications", foreignKey: "subject_id"});
-  subject_coefficients.belongsTo(subjects, { as: "subject", foreignKey: "subject_id"});
-  subjects.hasMany(subject_coefficients, { as: "subject_coefficients", foreignKey: "subject_id"});
-  teacher_assignments.belongsTo(subjects, { as: "subject", foreignKey: "subject_id"});
-  subjects.hasMany(teacher_assignments, { as: "teacher_assignments", foreignKey: "subject_id"});
-
-
-  group_participants.belongsTo(users, { as: "user", foreignKey: "user_id"});
-  users.hasMany(group_participants, { as: "group_participants", foreignKey: "user_id"});
-  groups.belongsTo(users, { as: "creator", foreignKey: "creator_id"});
-  users.hasMany(groups, { as: "groups", foreignKey: "creator_id"});
-  lesson_plans.belongsTo(users, { as: "reviewed_by_user", foreignKey: "reviewed_by"});
-  users.hasMany(lesson_plans, { as: "lesson_plans", foreignKey: "reviewed_by"});
-  lesson_plans.belongsTo(users, { as: "user", foreignKey: "user_id"});
-  users.hasMany(lesson_plans, { as: "user_lesson_plans", foreignKey: "user_id"});
-  lessons.belongsTo(users, { as: "reviewed_by_user", foreignKey: "reviewed_by"});
-  users.hasMany(lessons, { as: "lessons", foreignKey: "reviewed_by"});
-  lessons.belongsTo(users, { as: "user", foreignKey: "user_id"});
-  users.hasMany(lessons, { as: "user_lessons", foreignKey: "user_id"});
-  messages.belongsTo(users, { as: "receiver", foreignKey: "receiver_id"});
-  users.hasMany(messages, { as: "messages", foreignKey: "receiver_id"});
-  messages.belongsTo(users, { as: "sender", foreignKey: "sender_id"});
-  users.hasMany(messages, { as: "sender_messages", foreignKey: "sender_id"});
-  salaries.belongsTo(users, { as: "user", foreignKey: "user_id"});
-  users.hasMany(salaries, { as: "salaries", foreignKey: "user_id"});
-  teacher_assignments.belongsTo(users, { as: "teacher", foreignKey: "teacher_id"});
-  users.hasMany(teacher_assignments, { as: "teacher_assignments", foreignKey: "teacher_id"});
-  teachers.belongsTo(users, { as: "user", foreignKey: "user_id"});
-  users.hasMany(teachers, { as: "teachers", foreignKey: "user_id"});
-  user_activities.belongsTo(users, { as: "user", foreignKey: "user_id"});
-  users.hasMany(user_activities, { as: "user_activities", foreignKey: "user_id"});
-  user_sessions.belongsTo(users, { as: "user", foreignKey: "user_id"});
-  attendance_sessions.belongsTo(users, { as: "taken_by_user", foreignKey: "taken_by"});
-  users.hasMany(attendance_sessions, { as: "attendance_sessions", foreignKey: "taken_by"});
-  users.hasMany(user_sessions, { as: "user_sessions", foreignKey: "user_id"});
+  group_participants.belongsTo(users, { as: "user", foreignKey: "user_id" });
+  users.hasMany(group_participants, {
+    as: "group_participants",
+    foreignKey: "user_id",
+  });
+  groups.belongsTo(users, { as: "creator", foreignKey: "creator_id" });
+  users.hasMany(groups, { as: "groups", foreignKey: "creator_id" });
+  lesson_plans.belongsTo(users, {
+    as: "reviewed_by_user",
+    foreignKey: "reviewed_by",
+  });
+  users.hasMany(lesson_plans, {
+    as: "lesson_plans",
+    foreignKey: "reviewed_by",
+  });
+  lesson_plans.belongsTo(users, { as: "user", foreignKey: "user_id" });
+  users.hasMany(lesson_plans, {
+    as: "user_lesson_plans",
+    foreignKey: "user_id",
+  });
+  lessons.belongsTo(users, {
+    as: "reviewed_by_user",
+    foreignKey: "reviewed_by",
+  });
+  users.hasMany(lessons, { as: "lessons", foreignKey: "reviewed_by" });
+  lessons.belongsTo(users, { as: "user", foreignKey: "user_id" });
+  users.hasMany(lessons, { as: "user_lessons", foreignKey: "user_id" });
+  messages.belongsTo(users, { as: "receiver", foreignKey: "receiver_id" });
+  users.hasMany(messages, { as: "messages", foreignKey: "receiver_id" });
+  messages.belongsTo(users, { as: "sender", foreignKey: "sender_id" });
+  users.hasMany(messages, { as: "sender_messages", foreignKey: "sender_id" });
+  salaries.belongsTo(users, { as: "user", foreignKey: "user_id" });
+  users.hasMany(salaries, { as: "salaries", foreignKey: "user_id" });
+  teacher_assignments.belongsTo(users, {
+    as: "teacher",
+    foreignKey: "teacher_id",
+  });
+  users.hasMany(teacher_assignments, {
+    as: "teacher_assignments",
+    foreignKey: "teacher_id",
+  });
+  teachers.belongsTo(users, { as: "user", foreignKey: "user_id" });
+  users.hasMany(teachers, { as: "teachers", foreignKey: "user_id" });
+  user_activities.belongsTo(users, { as: "user", foreignKey: "user_id" });
+  users.hasMany(user_activities, {
+    as: "user_activities",
+    foreignKey: "user_id",
+  });
+  user_sessions.belongsTo(users, { as: "user", foreignKey: "user_id" });
+  attendance_sessions.belongsTo(users, {
+    as: "taken_by_user",
+    foreignKey: "taken_by",
+  });
+  users.hasMany(attendance_sessions, {
+    as: "attendance_sessions",
+    foreignKey: "taken_by",
+  });
+  users.hasMany(user_sessions, { as: "user_sessions", foreignKey: "user_id" });
 
   return {
     academic_years,

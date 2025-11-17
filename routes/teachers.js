@@ -1,10 +1,19 @@
-const express = require('express');
-const { pool, authenticateToken, logUserActivity, getIpAddress, getUserAgent, requireAdmin } = require('./utils');
+const express = require("express");
+const {
+  pool,
+  authenticateToken,
+  logUserActivity,
+  getIpAddress,
+  getUserAgent,
+  requireAdmin,
+} = require("./utils");
+
+const { logChanges, ChangeTypes } = require("../src/utils/logChanges.util");
 
 const router = express.Router();
 
 // Create teacher
-router.post('/', authenticateToken, requireAdmin, async (req, res) => {
+router.post("/", authenticateToken, requireAdmin, async (req, res) => {
   try {
     const {
       name,
@@ -15,11 +24,11 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
       experience,
       salary,
       hire_date,
-      status = 'active'
+      status = "active",
     } = req.body;
 
     if (!name || !contact) {
-      return res.status(400).json({ error: 'Name and contact are required' });
+      return res.status(400).json({ error: "Name and contact are required" });
     }
 
     const result = await pool.query(
@@ -27,53 +36,58 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
         name, contact, email, role, username
       ) VALUES ($1, $2, $3, $4, $5) 
       RETURNING *`,
-      [
-        name, contact, email || null, 'Teacher', contact // Use contact as username
-      ]
+      [name, contact, email || null, "Teacher", contact]
     );
 
     const newTeacher = result.rows[0];
 
-    // Log activity
     const ipAddress = getIpAddress(req);
     const userAgent = getUserAgent(req);
     await logUserActivity(
       req.user.id,
-      'create',
+      "create",
       `Created teacher: ${name}`,
-      'teacher',
+      "teacher",
       newTeacher.id,
       name,
       ipAddress,
       userAgent
     );
 
+    await logChanges(
+      "users",
+      newTeacher.id,
+      ChangeTypes.create,
+      req.user,
+      null
+    );
+
     res.status(201).json({
-      message: 'Teacher created successfully',
-      teacher: newTeacher
+      message: "Teacher created successfully",
+      teacher: newTeacher,
     });
   } catch (error) {
-    console.error('Error creating teacher:', error);
-    res.status(500).json({ error: 'Failed to create teacher' });
+    console.error("Error creating teacher:", error);
+    res.status(500).json({ error: "Failed to create teacher" });
   }
 });
 
 // Get all teachers
-router.get('/', authenticateToken, async (req, res) => {
+router.get("/", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, username, contact, name, email, gender, role, created_at FROM users WHERE role = $1 ORDER BY name',
-      ['Teacher']
+      "SELECT id, username, contact, name, email, gender, role, created_at FROM users WHERE role = $1 ORDER BY name",
+      ["Teacher"]
     );
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching teachers:', error);
-    res.status(500).json({ error: 'Failed to fetch teachers' });
+    console.error("Error fetching teachers:", error);
+    res.status(500).json({ error: "Failed to fetch teachers" });
   }
 });
 
 // Update teacher
-router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
+router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -85,116 +99,141 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
       experience,
       salary,
       hire_date,
-      status
+      status,
     } = req.body;
 
     if (!name || !contact) {
-      return res.status(400).json({ error: 'Name and contact are required' });
+      return res.status(400).json({ error: "Name and contact are required" });
     }
 
-    // Check if teacher exists
     const existingTeacher = await pool.query(
-      'SELECT * FROM users WHERE id = $1 AND role = $2',
-      [id, 'Teacher']
+      "SELECT * FROM users WHERE id = $1 AND role = $2",
+      [id, "Teacher"]
     );
 
     if (existingTeacher.rows.length === 0) {
-      return res.status(404).json({ error: 'Teacher not found' });
+      return res.status(404).json({ error: "Teacher not found" });
     }
+
+    const beforeState = existingTeacher.rows[0];
 
     const result = await pool.query(
       `UPDATE users SET 
         name = $1, contact = $2, email = $3, username = $4
       WHERE id = $5 AND role = $6 RETURNING *`,
-      [
-        name, contact, email || null, contact, id, 'Teacher'
-      ]
+      [name, contact, email || null, contact, id, "Teacher"]
     );
 
     const updatedTeacher = result.rows[0];
 
-    // Log activity
     const ipAddress = getIpAddress(req);
     const userAgent = getUserAgent(req);
     await logUserActivity(
       req.user.id,
-      'update',
+      "update",
       `Updated teacher: ${name}`,
-      'teacher',
+      "teacher",
       id,
       name,
       ipAddress,
       userAgent
     );
 
+    const afterState = updatedTeacher;
+    const fieldsChanged = {
+      before: {
+        name: beforeState.name,
+        contact: beforeState.contact,
+        email: beforeState.email,
+        username: beforeState.username,
+      },
+      after: {
+        name: afterState.name,
+        contact: afterState.contact,
+        email: afterState.email,
+        username: afterState.username,
+      },
+    };
+
+    await logChanges("users", id, ChangeTypes.update, req.user, fieldsChanged);
+
     res.json({
-      message: 'Teacher updated successfully',
-      teacher: updatedTeacher
+      message: "Teacher updated successfully",
+      teacher: updatedTeacher,
     });
   } catch (error) {
-    console.error('Error updating teacher:', error);
-    res.status(500).json({ error: 'Failed to update teacher' });
+    console.error("Error updating teacher:", error);
+    res.status(500).json({ error: "Failed to update teacher" });
   }
 });
 
 // Delete teacher
-router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
+router.delete("/:id", authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Check if teacher exists
     const existingTeacher = await pool.query(
-      'SELECT * FROM users WHERE id = $1 AND role = $2',
-      [id, 'Teacher']
+      "SELECT * FROM users WHERE id = $1 AND role = $2",
+      [id, "Teacher"]
     );
 
     if (existingTeacher.rows.length === 0) {
-      return res.status(404).json({ error: 'Teacher not found' });
+      return res.status(404).json({ error: "Teacher not found" });
     }
 
     const teacherName = existingTeacher.rows[0].name;
+    const deletedData = existingTeacher.rows[0];
 
-    await pool.query('DELETE FROM users WHERE id = $1 AND role = $2', [id, 'Teacher']);
+    await pool.query("DELETE FROM users WHERE id = $1 AND role = $2", [
+      id,
+      "Teacher",
+    ]);
 
-    // Log activity
     const ipAddress = getIpAddress(req);
     const userAgent = getUserAgent(req);
     await logUserActivity(
       req.user.id,
-      'delete',
+      "delete",
       `Deleted teacher: ${teacherName}`,
-      'teacher',
+      "teacher",
       id,
       teacherName,
       ipAddress,
       userAgent
     );
 
-    res.json({ message: 'Teacher deleted successfully' });
+    await logChanges("users", id, ChangeTypes.delete, req.user, {
+      deletedData,
+    });
+
+    res.json({ message: "Teacher deleted successfully" });
   } catch (error) {
-    console.error('Error deleting teacher:', error);
-    res.status(500).json({ error: 'Failed to delete teacher' });
+    console.error("Error deleting teacher:", error);
+    res.status(500).json({ error: "Failed to delete teacher" });
   }
 });
 
 // Update teacher status
-router.put('/:id/status', authenticateToken, requireAdmin, async (req, res) => {
+router.put("/:id/status", authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
-    if (!status || !['active', 'inactive', 'suspended'].includes(status)) {
-      return res.status(400).json({ error: 'Valid status is required (active, inactive, suspended)' });
+    if (!status || !["active", "inactive", "suspended"].includes(status)) {
+      return res
+        .status(400)
+        .json({
+          error: "Valid status is required (active, inactive, suspended)",
+        });
     }
 
-    // Check if teacher exists
     const existingTeacher = await pool.query(
-      'SELECT * FROM users WHERE id = $1 AND role = $2',
-      [id, 'Teacher']
+      "SELECT * FROM users WHERE id = $1 AND role = $2",
+      [id, "Teacher"]
     );
 
     if (existingTeacher.rows.length === 0) {
-      return res.status(404).json({ error: 'Teacher not found' });
+      return res.status(404).json({ error: "Teacher not found" });
     }
 
     const teacherName = existingTeacher.rows[0].name;
@@ -204,20 +243,18 @@ router.put('/:id/status', authenticateToken, requireAdmin, async (req, res) => {
     //   'UPDATE users SET status = $1 WHERE id = $2 AND role = $3 RETURNING *',
     //   [status, id, 'Teacher']
     // );
-    
-    // Return the existing teacher for now
+
     const result = { rows: [existingTeacher.rows[0]] };
 
     const updatedTeacher = result.rows[0];
 
-    // Log activity
     const ipAddress = getIpAddress(req);
     const userAgent = getUserAgent(req);
     await logUserActivity(
       req.user.id,
-      'update',
+      "update",
       `${status} teacher: ${teacherName}`,
-      'teacher',
+      "teacher",
       id,
       teacherName,
       ipAddress,
@@ -226,76 +263,75 @@ router.put('/:id/status', authenticateToken, requireAdmin, async (req, res) => {
 
     res.json({
       message: `Teacher status updated to ${status}`,
-      teacher: updatedTeacher
+      teacher: updatedTeacher,
     });
   } catch (error) {
-    console.error('Error updating teacher status:', error);
-    res.status(500).json({ error: 'Failed to update teacher status' });
+    console.error("Error updating teacher status:", error);
+    res.status(500).json({ error: "Failed to update teacher status" });
   }
 });
 
 // Get teacher by ID
-router.get('/:id', authenticateToken, async (req, res) => {
+router.get("/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const result = await pool.query(
-      'SELECT id, username, contact, name, email, gender, role, created_at FROM users WHERE id = $1 AND role = $2',
-      [id, 'Teacher']
+      "SELECT id, username, contact, name, email, gender, role, created_at FROM users WHERE id = $1 AND role = $2",
+      [id, "Teacher"]
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Teacher not found' });
+      return res.status(404).json({ error: "Teacher not found" });
     }
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error fetching teacher:', error);
-    res.status(500).json({ error: 'Failed to fetch teacher' });
+    console.error("Error fetching teacher:", error);
+    res.status(500).json({ error: "Failed to fetch teacher" });
   }
 });
 
 // Get active teachers
-router.get('/active/list', authenticateToken, async (req, res) => {
+router.get("/active/list", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, name, contact, email FROM users WHERE role = $1 ORDER BY name',
-      ['Teacher']
+      "SELECT id, name, contact, email FROM users WHERE role = $1 ORDER BY name",
+      ["Teacher"]
     );
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching active teachers:', error);
-    res.status(500).json({ error: 'Failed to fetch active teachers' });
+    console.error("Error fetching active teachers:", error);
+    res.status(500).json({ error: "Failed to fetch active teachers" });
   }
 });
 
 // Get teacher statistics
-router.get('/stats/overview', authenticateToken, async (req, res) => {
+router.get("/stats/overview", authenticateToken, async (req, res) => {
   try {
-    // Get total teachers
-    const totalTeachers = await pool.query('SELECT COUNT(*) as count FROM users WHERE role = $1', ['Teacher']);
-    
-    // Get teachers by gender
-    const teachersByGender = await pool.query(
-      'SELECT gender, COUNT(*) as count FROM users WHERE role = $1 GROUP BY gender',
-      ['Teacher']
+    const totalTeachers = await pool.query(
+      "SELECT COUNT(*) as count FROM users WHERE role = $1",
+      ["Teacher"]
     );
-    
-    // Get teachers by creation date (last 12 months)
+
+    const teachersByGender = await pool.query(
+      "SELECT gender, COUNT(*) as count FROM users WHERE role = $1 GROUP BY gender",
+      ["Teacher"]
+    );
+
     const teachersByMonth = await pool.query(
-      'SELECT DATE_TRUNC(\'month\', created_at) as month, COUNT(*) as count FROM users WHERE role = $1 AND created_at >= NOW() - INTERVAL \'12 months\' GROUP BY DATE_TRUNC(\'month\', created_at) ORDER BY month',
-      ['Teacher']
+      "SELECT DATE_TRUNC('month', created_at) as month, COUNT(*) as count FROM users WHERE role = $1 AND created_at >= NOW() - INTERVAL '12 months' GROUP BY DATE_TRUNC('month', created_at) ORDER BY month",
+      ["Teacher"]
     );
 
     res.json({
       total: parseInt(totalTeachers.rows[0].count),
       byGender: teachersByGender.rows,
-      byMonth: teachersByMonth.rows
+      byMonth: teachersByMonth.rows,
     });
   } catch (error) {
-    console.error('Error fetching teacher statistics:', error);
-    res.status(500).json({ error: 'Failed to fetch teacher statistics' });
+    console.error("Error fetching teacher statistics:", error);
+    res.status(500).json({ error: "Failed to fetch teacher statistics" });
   }
 });
 
 module.exports = router;
-

@@ -1,7 +1,9 @@
 const Sequelize = require("sequelize");
+const { sequelize } = require("../db");
+const { DataTypes } = require("sequelize");
 
-module.exports = function (sequelize, DataTypes) {
-  return sequelize.define(
+module.exports = (sequelizeInstance = sequelize) => {
+  return sequelizeInstance.define(
     "users",
     {
       id: {

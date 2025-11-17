@@ -1,19 +1,30 @@
-const express = require('express');
-const { pool, authenticateToken, logUserActivity, getIpAddress, getUserAgent, isAdminLike } = require('./utils');
+const express = require("express");
+const {
+  pool,
+  authenticateToken,
+  logUserActivity,
+  getIpAddress,
+  getUserAgent,
+  isAdminLike,
+} = require("./utils");
+const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
 
 const router = express.Router();
 
 // Get yearly total fees
-router.get('/total/yearly', authenticateToken, async (req, res) => {
+router.get("/total/yearly", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const userRole = req.user.role;
-  const year = req.query.year ? parseInt(req.query.year) : new Date().getFullYear();
+  const year = req.query.year
+    ? parseInt(req.query.year)
+    : new Date().getFullYear();
 
   try {
     let result;
     if (isAdminLike(userRole)) {
       // Admin can view total fees for all students
-      result = await pool.query(`
+      result = await pool.query(
+        `
         SELECT 
           EXTRACT(YEAR FROM paid_at) as year,
           fee_type,
@@ -23,10 +34,13 @@ router.get('/total/yearly', authenticateToken, async (req, res) => {
         WHERE EXTRACT(YEAR FROM paid_at) = $1
         GROUP BY EXTRACT(YEAR FROM paid_at), fee_type
         ORDER BY fee_type
-      `, [year]);
+      `,
+        [year]
+      );
     } else {
       // Regular users can only view their own students' fees
-      result = await pool.query(`
+      result = await pool.query(
+        `
         SELECT 
           EXTRACT(YEAR FROM paid_at) as year,
           fee_type,
@@ -37,7 +51,9 @@ router.get('/total/yearly', authenticateToken, async (req, res) => {
         WHERE EXTRACT(YEAR FROM paid_at) = $1 AND s.user_id = $2
         GROUP BY EXTRACT(YEAR FROM paid_at), fee_type
         ORDER BY fee_type
-      `, [year, userId]);
+      `,
+        [year, userId]
+      );
     }
 
     res.json(result.rows);
@@ -45,19 +61,21 @@ router.get('/total/yearly', authenticateToken, async (req, res) => {
     console.error("Error fetching yearly total fees:", error);
     res.status(500).json({
       error: "Error fetching yearly total fees",
-      details: error.message
+      details: error.message,
     });
   }
 });
 
 // Get student fee stats
-router.get('/student/:id', authenticateToken, async (req, res) => {
+router.get("/student/:id", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const userRole = req.user.role;
   const studentId = req.params.id;
   const year = req.query.year ? parseInt(req.query.year) : null;
 
-  console.log(`[FEE STATS DEBUG] Fetching stats for studentId: ${studentId}, userId: ${userId}, role: ${userRole}`);
+  console.log(
+    `[FEE STATS DEBUG] Fetching stats for studentId: ${studentId}, userId: ${userId}, role: ${userRole}`
+  );
 
   try {
     // Get student and class with role-based access
@@ -102,31 +120,54 @@ router.get('/student/:id', authenticateToken, async (req, res) => {
     );
 
     const balance = {
-      Registration: Math.max(0, parseFloat(student.registration_fee) - (feeMap["Registration"] || 0)),
+      Registration: Math.max(
+        0,
+        parseFloat(student.registration_fee) - (feeMap["Registration"] || 0)
+      ),
       Bus: Math.max(0, parseFloat(student.bus_fee) - (feeMap["Bus"] || 0)),
-      Internship: Math.max(0, parseFloat(student.internship_fee) - (feeMap["Internship"] || 0)),
-      Remedial: Math.max(0, parseFloat(student.remedial_fee) - (feeMap["Remedial"] || 0)),
-      Tuition: Math.max(0, parseFloat(student.tuition_fee) - (feeMap["Tuition"] || 0)),
+      Internship: Math.max(
+        0,
+        parseFloat(student.internship_fee) - (feeMap["Internship"] || 0)
+      ),
+      Remedial: Math.max(
+        0,
+        parseFloat(student.remedial_fee) - (feeMap["Remedial"] || 0)
+      ),
+      Tuition: Math.max(
+        0,
+        parseFloat(student.tuition_fee) - (feeMap["Tuition"] || 0)
+      ),
       PTA: Math.max(0, parseFloat(student.pta_fee) - (feeMap["PTA"] || 0)),
     };
 
-    console.log(`[FEE STATS DEBUG] Returning stats for studentId: ${studentId}`, { student, balance });
+    console.log(
+      `[FEE STATS DEBUG] Returning stats for studentId: ${studentId}`,
+      { student, balance }
+    );
 
     res.json({ student, balance });
   } catch (error) {
-    console.error("[FEE STATS DEBUG] Error fetching student fee stats:", error.stack);
-    res.status(500).json({ error: "Error fetching student fees", details: error.message });
+    console.error(
+      "[FEE STATS DEBUG] Error fetching student fee stats:",
+      error.stack
+    );
+    res
+      .status(500)
+      .json({ error: "Error fetching student fees", details: error.message });
   }
 });
 
 // Create fee payment
-router.post('/', authenticateToken, async (req, res) => {
+router.post("/", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const { student_id, class_id, fee_type, amount, paid_at } = req.body;
 
   // Enhanced debug logging
   console.log("=== FEE PAYMENT DEBUG ===");
-  console.log("[FEE DEBUG] Received request body:", JSON.stringify(req.body, null, 2));
+  console.log(
+    "[FEE DEBUG] Received request body:",
+    JSON.stringify(req.body, null, 2)
+  );
   console.log("[FEE DEBUG] fee_type:", fee_type, "type:", typeof fee_type);
   console.log("[FEE DEBUG] student_id:", student_id);
   console.log("[FEE DEBUG] amount:", amount, "type:", typeof amount);
@@ -167,7 +208,9 @@ router.post('/', authenticateToken, async (req, res) => {
       tuition: "tuition_fee",
       pta: "pta_fee",
     };
-    const ft = String(fee_type || "").trim().toLowerCase();
+    const ft = String(fee_type || "")
+      .trim()
+      .toLowerCase();
     const feeKey = keyMap[ft];
 
     // Debug logging
@@ -181,22 +224,33 @@ router.post('/', authenticateToken, async (req, res) => {
     const expected = parseFloat(String(srow[feeKey] || "0").replace(/,/g, ""));
     const remaining = Math.max(0, expected - alreadyPaid);
 
-    console.log("[FEE DEBUG] Expected:", expected, "Already paid:", alreadyPaid, "Remaining:", remaining, "Amount to pay:", numericAmount);
+    console.log(
+      "[FEE DEBUG] Expected:",
+      expected,
+      "Already paid:",
+      alreadyPaid,
+      "Remaining:",
+      remaining,
+      "Amount to pay:",
+      numericAmount
+    );
 
     if (numericAmount > remaining) {
-      return res.status(400).json({ error: "Amount exceeds remaining balance for this fee type" });
+      return res
+        .status(400)
+        .json({ error: "Amount exceeds remaining balance for this fee type" });
     }
 
     // Insert fee record
     let result;
     if (paid_at) {
       result = await pool.query(
-        "INSERT INTO fees (student_id, class_id, fee_type, amount, paid_at) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO fees (student_id, class_id, fee_type, amount, paid_at) VALUES ($1, $2, $3, $4, $5) RETURNING *",
         [student_id, class_id, fee_type, numericAmount, paid_at]
       );
     } else {
       result = await pool.query(
-        "INSERT INTO fees (student_id, class_id, fee_type, amount) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO fees (student_id, class_id, fee_type, amount) VALUES ($1, $2, $3, $4) RETURNING *",
         [student_id, class_id, fee_type, numericAmount]
       );
     }
@@ -215,23 +269,36 @@ router.post('/', authenticateToken, async (req, res) => {
       userAgent
     );
 
+    await logChanges("fees", result.rows[0].id, ChangeTypes.create, req.user);
     res.status(201).json({ message: "Fee payment recorded successfully" });
   } catch (error) {
     console.error("Error recording fee payment:", error);
-    res.status(500).json({ error: "Error recording fee payment", details: error.message });
+    res
+      .status(500)
+      .json({ error: "Error recording fee payment", details: error.message });
   }
 });
 
 // Reconcile a student's fee type total (set to an exact amount)
-router.put('/reconcile', authenticateToken, async (req, res) => {
+router.put("/reconcile", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const { student_id, fee_type, total_amount } = req.body || {};
 
   try {
     const studentId = parseInt(student_id);
     const desiredTotal = parseFloat(total_amount);
-    if (!studentId || !fee_type || Number.isNaN(desiredTotal) || desiredTotal < 0) {
-      return res.status(400).json({ error: 'Invalid payload. Require student_id, fee_type, total_amount >= 0' });
+    if (
+      !studentId ||
+      !fee_type ||
+      Number.isNaN(desiredTotal) ||
+      desiredTotal < 0
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            "Invalid payload. Require student_id, fee_type, total_amount >= 0",
+        });
     }
 
     // Fetch student's class and expected fees
@@ -240,73 +307,105 @@ router.put('/reconcile', authenticateToken, async (req, res) => {
       [studentId]
     );
     if (sRes.rows.length === 0) {
-      return res.status(404).json({ error: 'Student not found' });
+      return res.status(404).json({ error: "Student not found" });
     }
 
     const srow = sRes.rows[0];
     const keyMap = {
-      registration: 'registration_fee',
-      bus: 'bus_fee',
-      internship: 'internship_fee',
-      remedial: 'remedial_fee',
-      tuition: 'tuition_fee',
-      pta: 'pta_fee',
+      registration: "registration_fee",
+      bus: "bus_fee",
+      internship: "internship_fee",
+      remedial: "remedial_fee",
+      tuition: "tuition_fee",
+      pta: "pta_fee",
     };
-    const ft = String(fee_type || '').trim().toLowerCase();
+    const ft = String(fee_type || "")
+      .trim()
+      .toLowerCase();
     const feeKey = keyMap[ft];
-    if (!feeKey) return res.status(400).json({ error: 'Invalid fee type' });
+    if (!feeKey) return res.status(400).json({ error: "Invalid fee type" });
 
-    const expected = parseFloat(String(srow[feeKey] || '0').replace(/,/g, '')) || 0;
+    const expected =
+      parseFloat(String(srow[feeKey] || "0").replace(/,/g, "")) || 0;
     if (desiredTotal > expected) {
-      return res.status(400).json({ error: `Desired total exceeds expected for ${fee_type}`, expected });
+      return res
+        .status(400)
+        .json({
+          error: `Desired total exceeds expected for ${fee_type}`,
+          expected,
+        });
     }
 
+    const sumRes = await pool.query(
+      "SELECT COALESCE(SUM(amount),0) as paid FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2)",
+      [studentId, fee_type]
+    );
+    const oldTotal = parseFloat(sumRes.rows[0].paid) || 0;
+
     // Start transaction
-    await pool.query('BEGIN');
+    await pool.query("BEGIN");
 
     // Delete existing payments for this student + fee_type
     await pool.query(
-      'DELETE FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2)',
+      "DELETE FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2)",
       [studentId, fee_type]
     );
 
     // Insert a single consolidated record if desiredTotal > 0
     if (desiredTotal > 0) {
       await pool.query(
-        'INSERT INTO fees (student_id, class_id, fee_type, amount) VALUES ($1, $2, $3, $4)',
+        "INSERT INTO fees (student_id, class_id, fee_type, amount) VALUES ($1, $2, $3, $4)",
         [studentId, srow.class_id, fee_type, desiredTotal]
       );
     }
 
-    await pool.query('COMMIT');
+    await pool.query("COMMIT");
 
     try {
       const ipAddress = getIpAddress(req);
       const userAgent = getUserAgent(req);
       await logUserActivity(
         userId,
-        'update',
+        "update",
         `Reconciled ${fee_type} to ${desiredTotal}`,
-        'fees',
+        "fees",
         studentId,
         fee_type,
         ipAddress,
         userAgent
       );
     } catch (logErr) {
-      console.warn('Non-critical: failed to log reconcile activity', logErr);
+      console.warn("Non-critical: failed to log reconcile activity", logErr);
     }
 
-    return res.json({ message: 'Fee reconciled successfully', student_id: studentId, fee_type, total_amount: desiredTotal });
+    const fieldsChanged = {
+      fee_type: { before: fee_type, after: fee_type },
+      total_amount: { before: oldTotal, after: desiredTotal },
+    };
+    await logChanges(
+      "fees",
+      studentId,
+      ChangeTypes.update,
+      req.user,
+      fieldsChanged
+    );
+    return res.json({
+      message: "Fee reconciled successfully",
+      student_id: studentId,
+      fee_type,
+      total_amount: desiredTotal,
+    });
   } catch (error) {
-    await pool.query('ROLLBACK').catch(() => {});
-    console.error('Error reconciling fee total:', error);
-    return res.status(500).json({ error: 'Error reconciling fee total', details: error.message });
+    await pool.query("ROLLBACK").catch(() => {});
+    console.error("Error reconciling fee total:", error);
+    return res
+      .status(500)
+      .json({ error: "Error reconciling fee total", details: error.message });
   }
 });
 
 // Get class fee stats
-router.get('/class/:classId', authenticateToken, async (req, res) => {
+router.get("/class/:classId", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const userRole = req.user.role;
   const classId = req.params.classId;
@@ -321,7 +420,9 @@ router.get('/class/:classId', authenticateToken, async (req, res) => {
 
     if (classCheck.rows.length === 0) {
       // Class with ID not found
-      return res.status(404).json({ error: `Class with ID ${classId} not found` });
+      return res
+        .status(404)
+        .json({ error: `Class with ID ${classId} not found` });
     }
 
     const className = classCheck.rows[0].name;
@@ -352,7 +453,9 @@ router.get('/class/:classId', authenticateToken, async (req, res) => {
     if (studentIds.length > 0) {
       if (year) {
         const placeholders = studentIds.map((_, i) => `$${i + 1}`).join(",");
-        const query = `SELECT student_id, fee_type, SUM(amount) as paid FROM fees WHERE student_id IN (${placeholders}) AND EXTRACT(YEAR FROM paid_at) = $${studentIds.length + 1} GROUP BY student_id, fee_type`;
+        const query = `SELECT student_id, fee_type, SUM(amount) as paid FROM fees WHERE student_id IN (${placeholders}) AND EXTRACT(YEAR FROM paid_at) = $${
+          studentIds.length + 1
+        } GROUP BY student_id, fee_type`;
         const params = [...studentIds, year];
         const resultFees = await pool.query(query, params);
         fees = resultFees.rows;
@@ -377,16 +480,44 @@ router.get('/class/:classId', authenticateToken, async (req, res) => {
     const stats = students.map((student) => {
       const studentFees = feeMap[student.id] || {};
       const balance = {
-        Registration: Math.max(0, parseFloat(student.registration_fee) - (studentFees["Registration"] || 0)),
-        Bus: Math.max(0, parseFloat(student.bus_fee) - (studentFees["Bus"] || 0)),
-        Internship: Math.max(0, parseFloat(student.internship_fee) - (studentFees["Internship"] || 0)),
-        Remedial: Math.max(0, parseFloat(student.remedial_fee) - (studentFees["Remedial"] || 0)),
-        Tuition: Math.max(0, parseFloat(student.tuition_fee) - (studentFees["Tuition"] || 0)),
-        PTA: Math.max(0, parseFloat(student.pta_fee) - (studentFees["PTA"] || 0)),
+        Registration: Math.max(
+          0,
+          parseFloat(student.registration_fee) -
+            (studentFees["Registration"] || 0)
+        ),
+        Bus: Math.max(
+          0,
+          parseFloat(student.bus_fee) - (studentFees["Bus"] || 0)
+        ),
+        Internship: Math.max(
+          0,
+          parseFloat(student.internship_fee) - (studentFees["Internship"] || 0)
+        ),
+        Remedial: Math.max(
+          0,
+          parseFloat(student.remedial_fee) - (studentFees["Remedial"] || 0)
+        ),
+        Tuition: Math.max(
+          0,
+          parseFloat(student.tuition_fee) - (studentFees["Tuition"] || 0)
+        ),
+        PTA: Math.max(
+          0,
+          parseFloat(student.pta_fee) - (studentFees["PTA"] || 0)
+        ),
       };
 
-      const totalExpected = parseFloat(student.registration_fee) + parseFloat(student.bus_fee) + parseFloat(student.internship_fee) + parseFloat(student.remedial_fee) + parseFloat(student.tuition_fee) + parseFloat(student.pta_fee);
-      const totalPaid = Object.values(studentFees).reduce((sum, amount) => sum + amount, 0);
+      const totalExpected =
+        parseFloat(student.registration_fee) +
+        parseFloat(student.bus_fee) +
+        parseFloat(student.internship_fee) +
+        parseFloat(student.remedial_fee) +
+        parseFloat(student.tuition_fee) +
+        parseFloat(student.pta_fee);
+      const totalPaid = Object.values(studentFees).reduce(
+        (sum, amount) => sum + amount,
+        0
+      );
       const totalBalance = totalExpected - totalPaid;
 
       return {
@@ -397,7 +528,7 @@ router.get('/class/:classId', authenticateToken, async (req, res) => {
         total_expected: totalExpected,
         total_paid: totalPaid,
         total_balance: Math.max(0, totalBalance),
-        paid_fees: studentFees
+        paid_fees: studentFees,
       };
     });
 
@@ -410,7 +541,7 @@ router.get('/class/:classId', authenticateToken, async (req, res) => {
 });
 
 // Delete payment record
-router.delete('/payments/:id', authenticateToken, async (req, res) => {
+router.delete("/payments/:id", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const userRole = req.user.role;
   const paymentId = req.params.id;
@@ -437,15 +568,18 @@ router.delete('/payments/:id', authenticateToken, async (req, res) => {
     // Delete the payment record
     await pool.query("DELETE FROM fees WHERE id = $1", [paymentId]);
 
+    await logChanges("fees", paymentId, ChangeTypes.delete, req.user);
     res.json({ message: "Payment record deleted successfully" });
   } catch (error) {
     console.error("Error deleting payment record:", error);
-    res.status(500).json({ error: "Error deleting payment record", details: error.message });
+    res
+      .status(500)
+      .json({ error: "Error deleting payment record", details: error.message });
   }
 });
 
 // Clear all fees for a specific student
-router.delete('/student/:studentId', authenticateToken, async (req, res) => {
+router.delete("/student/:studentId", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const userRole = req.user.role;
   const studentId = parseInt(req.params.studentId);
@@ -515,28 +649,35 @@ router.delete('/student/:studentId', authenticateToken, async (req, res) => {
       // Continue execution even if logging fails
     }
 
+    await logChanges("fees", studentId, ChangeTypes.delete, req.user);
     res.json({
       message: `Successfully cleared ${deletedCount} fee records for student: ${studentName}`,
       deletedCount,
-      studentName
+      studentName,
     });
   } catch (error) {
     console.error("Error clearing student fees:", error);
-    res.status(500).json({ error: "Error clearing student fees", details: error.message });
+    res
+      .status(500)
+      .json({ error: "Error clearing student fees", details: error.message });
   }
 });
 
 // Get individual payment details for a specific student
-router.get('/payments/student/:studentId', authenticateToken, async (req, res) => {
-  const userId = req.user.id;
-  const userRole = req.user.role;
-  const studentId = req.params.studentId;
+router.get(
+  "/payments/student/:studentId",
+  authenticateToken,
+  async (req, res) => {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const studentId = req.params.studentId;
 
-  try {
-    let result;
-    if (isAdminLike(userRole)) {
-      // Admins can view all payment details
-      result = await pool.query(`
+    try {
+      let result;
+      if (isAdminLike(userRole)) {
+        // Admins can view all payment details
+        result = await pool.query(
+          `
         SELECT 
           f.id,
           f.student_id,
@@ -552,10 +693,13 @@ router.get('/payments/student/:studentId', authenticateToken, async (req, res) =
         JOIN classes c ON f.class_id = c.id
         WHERE f.student_id = $1
         ORDER BY f.paid_at DESC
-      `, [studentId]);
-    } else {
-      // Regular users can only view their own students' payment details
-      result = await pool.query(`
+      `,
+          [studentId]
+        );
+      } else {
+        // Regular users can only view their own students' payment details
+        result = await pool.query(
+          `
         SELECT 
           f.id,
           f.student_id,
@@ -571,14 +715,21 @@ router.get('/payments/student/:studentId', authenticateToken, async (req, res) =
         JOIN classes c ON f.class_id = c.id
         WHERE f.student_id = $1 AND s.user_id = $2
         ORDER BY f.paid_at DESC
-      `, [studentId, userId]);
+      `,
+          [studentId, userId]
+        );
+      }
+      res.json(result.rows);
+    } catch (error) {
+      console.error("Error fetching student payment details:", error);
+      res
+        .status(500)
+        .json({
+          error: "Error fetching student payment details",
+          details: error.message,
+        });
     }
-    res.json(result.rows);
-  } catch (error) {
-    console.error("Error fetching student payment details:", error);
-    res.status(500).json({ error: "Error fetching student payment details", details: error.message });
   }
-});
+);
 
 module.exports = router;
-

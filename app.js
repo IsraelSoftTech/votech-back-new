@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 require("dotenv").config();
+const fs = require("fs");
 
 // Routers
 const authRouter = require("./routes/auth");
@@ -99,6 +100,13 @@ app.use("/public", express.static(path.join(__dirname, "public")));
 app.get("/api/test", (req, res) => {
   res.json({ message: "Server is running" });
 });
+
+const DEV_UPLOAD_DIR = path.join(__dirname, "local_uploads");
+console.log(DEV_UPLOAD_DIR);
+fs.mkdirSync(DEV_UPLOAD_DIR, { recursive: true });
+
+app.use("/uploads", express.static(DEV_UPLOAD_DIR));
+console.log("Uploads served at /uploads from", DEV_UPLOAD_DIR);
 
 // Core routes
 // Auth mounted at /api to preserve existing clients like /api/login

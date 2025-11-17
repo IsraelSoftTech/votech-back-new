@@ -1,10 +1,12 @@
-const express = require('express');
-const { pool, authenticateToken } = require('./utils');
+const express = require("express");
+const { pool, authenticateToken } = require("./utils");
 
 const router = express.Router();
 
+const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+
 // Get all users for monitoring
-router.get('/users', authenticateToken, async (req, res) => {
+router.get("/users", authenticateToken, async (req, res) => {
   try {
     // First try the full query with joins
     try {
@@ -22,7 +24,7 @@ router.get('/users', authenticateToken, async (req, res) => {
       `);
       res.json(result.rows);
     } catch (joinError) {
-      console.log('Full query failed, trying basic query:', joinError.message);
+      console.log("Full query failed, trying basic query:", joinError.message);
       // Fallback to basic query without joins
       const result = await pool.query(`
         SELECT 
@@ -36,17 +38,18 @@ router.get('/users', authenticateToken, async (req, res) => {
       res.json(result.rows);
     }
   } catch (error) {
-    console.error('Error fetching users for monitoring:', error);
-    res.status(500).json({ error: 'Failed to fetch users for monitoring' });
+    console.error("Error fetching users for monitoring:", error);
+    res.status(500).json({ error: "Failed to fetch users for monitoring" });
   }
 });
 
 // Get user activities
-router.get('/user-activities', authenticateToken, async (req, res) => {
+router.get("/user-activities", authenticateToken, async (req, res) => {
   try {
     const { limit = 100, offset = 0 } = req.query;
     try {
-      const result = await pool.query(`
+      const result = await pool.query(
+        `
         SELECT 
           ua.*,
           u.name as user_name,
@@ -55,24 +58,27 @@ router.get('/user-activities', authenticateToken, async (req, res) => {
         JOIN users u ON ua.user_id = u.id
         ORDER BY ua.created_at DESC
         LIMIT $1 OFFSET $2
-      `, [limit, offset]);
+      `,
+        [limit, offset]
+      );
       res.json(result.rows);
     } catch (tableError) {
-      console.log('user_activities table not found, returning empty array');
+      console.log("user_activities table not found, returning empty array");
       res.json([]);
     }
   } catch (error) {
-    console.error('Error fetching user activities:', error);
-    res.status(500).json({ error: 'Failed to fetch user activities' });
+    console.error("Error fetching user activities:", error);
+    res.status(500).json({ error: "Failed to fetch user activities" });
   }
 });
 
 // Get user sessions
-router.get('/user-sessions', authenticateToken, async (req, res) => {
+router.get("/user-sessions", authenticateToken, async (req, res) => {
   try {
     const { limit = 100, offset = 0 } = req.query;
     try {
-      const result = await pool.query(`
+      const result = await pool.query(
+        `
         SELECT 
           us.*,
           u.name as user_name,
@@ -81,35 +87,51 @@ router.get('/user-sessions', authenticateToken, async (req, res) => {
         JOIN users u ON us.user_id = u.id
         ORDER BY us.created_at DESC
         LIMIT $1 OFFSET $2
-      `, [limit, offset]);
+      `,
+        [limit, offset]
+      );
       res.json(result.rows);
     } catch (tableError) {
-      console.log('user_sessions table not found, returning empty array');
+      console.log("user_sessions table not found, returning empty array");
       res.json([]);
     }
   } catch (error) {
-    console.error('Error fetching user sessions:', error);
-    res.status(500).json({ error: 'Failed to fetch user sessions' });
+    console.error("Error fetching user sessions:", error);
+    res.status(500).json({ error: "Failed to fetch user sessions" });
   }
 });
 
 // Clear all monitoring data
-router.delete('/clear-all', authenticateToken, async (req, res) => {
+router.delete("/clear-all", authenticateToken, async (req, res) => {
   try {
+    let activitiesDeleted = 0;
+    let sessionsDeleted = 0;
+
     try {
-      await pool.query('DELETE FROM user_activities');
+      const activitiesResult = await pool.query(
+        "DELETE FROM user_activities RETURNING id"
+      );
+      activitiesDeleted = activitiesResult.rowCount;
     } catch (error) {
-      console.log('user_activities table not found, skipping');
+      console.log("user_activities table not found, skipping");
     }
     try {
-      await pool.query('DELETE FROM user_sessions');
+      const sessionsResult = await pool.query(
+        "DELETE FROM user_sessions RETURNING id"
+      );
+      sessionsDeleted = sessionsResult.rowCount;
     } catch (error) {
-      console.log('user_sessions table not found, skipping');
+      console.log("user_sessions table not found, skipping");
     }
-    res.json({ message: 'All monitoring data cleared successfully' });
+
+    await logChanges("user_activities", 0, ChangeTypes.delete, req.user, {
+      activities_deleted: { before: activitiesDeleted, after: 0 },
+      sessions_deleted: { before: sessionsDeleted, after: 0 },
+    });
+    res.json({ message: "All monitoring data cleared successfully" });
   } catch (error) {
-    console.error('Error clearing monitoring data:', error);
-    res.status(500).json({ error: 'Failed to clear monitoring data' });
+    console.error("Error clearing monitoring data:", error);
+    res.status(500).json({ error: "Failed to clear monitoring data" });
   }
 });
 

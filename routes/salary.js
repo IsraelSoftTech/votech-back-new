@@ -3,9 +3,16 @@ const router = express.Router();
 const { Pool } = require("pg");
 require("dotenv").config();
 
+const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+
+const db =
+  process.env.NODE_ENV === "desktop"
+    ? process.env.DATABASE_URL_LOCAL
+    : process.env.DATABASE_URL;
+
 // Create pool directly in this file
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: db,
 });
 
 // Authentication middleware function (copied from server.js)
@@ -21,13 +28,13 @@ function authenticateToken(req, res, next) {
   }
 
   // Special handling for Admin3 hardcoded token
-  if (token === 'admin3-special-token-2024') {
+  if (token === "admin3-special-token-2024") {
     // Create a mock user object for Admin3
     req.user = {
       id: 999,
-      username: 'Admin3',
-      role: 'Admin3',
-      name: 'System Administrator'
+      username: "Admin3",
+      role: "Admin3",
+      name: "System Administrator",
     };
     return next();
   }
@@ -231,7 +238,7 @@ router.get("/statistics", async (req, res) => {
 });
 
 // Create or update salary for a user
-router.post("/update", async (req, res) => {
+router.post("/update", authenticateToken, async (req, res) => {
   try {
     const { userId, amount, month, year } = req.body;
 
@@ -247,10 +254,9 @@ router.post("/update", async (req, res) => {
     }
 
     // Check user existence (use users table so any staff can be set for salary)
-    const userCheck = await pool.query(
-      `SELECT id FROM users WHERE id = $1`,
-      [userId]
-    );
+    const userCheck = await pool.query(`SELECT id FROM users WHERE id = $1`, [
+      userId,
+    ]);
 
     if (userCheck.rows.length === 0) {
       return res.status(404).json({ error: "User not found" });
@@ -280,7 +286,7 @@ router.post("/update", async (req, res) => {
       // Check if salary record already exists for this month/year
       const existingSalary = await pool.query(
         `
-        SELECT id FROM salaries 
+        SELECT * FROM salaries 
         WHERE user_id = $1 AND month = $2 AND year = $3
       `,
         [userId, monthName, academicYearStart]
@@ -298,6 +304,18 @@ router.post("/update", async (req, res) => {
         `,
           [amount, userId, monthName, academicYearStart]
         );
+        const fieldsChanged = {};
+        const old = existingSalary.rows[0];
+        const updated = result.rows[0];
+        if (old.amount !== updated.amount)
+          fieldsChanged.amount = { before: old.amount, after: updated.amount };
+        await logChanges(
+          "salaries",
+          result.rows[0].id,
+          ChangeTypes.update,
+          req.user,
+          fieldsChanged
+        );
       } else {
         // Create new salary record
         result = await pool.query(
@@ -307,6 +325,12 @@ router.post("/update", async (req, res) => {
           RETURNING *
         `,
           [userId, amount, monthName, academicYearStart]
+        );
+        await logChanges(
+          "salaries",
+          result.rows[0].id,
+          ChangeTypes.create,
+          req.user
         );
       }
 
@@ -324,7 +348,7 @@ router.post("/update", async (req, res) => {
 });
 
 // Mark salary as paid
-router.put("/mark-paid/:salaryId", async (req, res) => {
+router.put("/mark-paid/:salaryId", authenticateToken, async (req, res) => {
   try {
     const { salaryId } = req.params;
 
@@ -370,6 +394,20 @@ router.put("/mark-paid/:salaryId", async (req, res) => {
       [salaryId]
     );
 
+    const fieldsChanged = {};
+    const old = salaryRecord;
+    const updated = result.rows[0];
+    if (old.paid !== updated.paid)
+      fieldsChanged.paid = { before: old.paid, after: updated.paid };
+    if (old.paid_at !== updated.paid_at)
+      fieldsChanged.paid_at = { before: old.paid_at, after: updated.paid_at };
+    await logChanges(
+      "salaries",
+      salaryId,
+      ChangeTypes.update,
+      req.user,
+      fieldsChanged
+    );
     res.json({
       message: "Salary marked as paid successfully",
       salary: result.rows[0],
@@ -452,7 +490,7 @@ router.get("/descriptions", async (req, res) => {
 });
 
 // Save salary descriptions
-router.post("/descriptions", async (req, res) => {
+router.post("/descriptions", authenticateToken, async (req, res) => {
   try {
     const { descriptions } = req.body;
 
@@ -474,13 +512,23 @@ router.post("/descriptions", async (req, res) => {
         desc.percentage,
       ]);
 
-      await pool.query(
+      const result = await pool.query(
         `
         INSERT INTO salary_descriptions (description, percentage)
         VALUES ${values}
+        RETURNING *
       `,
         params
       );
+
+      for (const row of result.rows) {
+        await logChanges(
+          "salary_descriptions",
+          row.id,
+          ChangeTypes.create,
+          req.user
+        );
+      }
     }
 
     res.json({ message: "Salary descriptions saved successfully" });
@@ -491,11 +539,14 @@ router.post("/descriptions", async (req, res) => {
 });
 
 // Delete all salary records
-router.delete("/delete-all", async (req, res) => {
+router.delete("/delete-all", authenticateToken, async (req, res) => {
   try {
     // Delete all records from salaries table
     const result = await pool.query("DELETE FROM salaries");
 
+    await logChanges("salaries", 0, ChangeTypes.delete, req.user, {
+      deleted_count: { before: result.rowCount, after: 0 },
+    });
     res.json({
       message: "All salary records deleted successfully",
       deletedCount: result.rowCount,
@@ -563,27 +614,101 @@ router.get("/payslip-settings", authenticateToken, async (req, res) => {
     // In a real implementation, you would store this in the database
     const defaultSettings = {
       structure: [
-        { title: '1) AUXILARY ALLOWANCE', items: [
-          { code: 'a)', label: 'Transport & Calls', percent: 10, debitPercent: null, remark: '' },
-          { code: 'b)', label: 'Job Responsibility', percent: 30, debitPercent: null, remark: '' },
-          { code: 'i)', label: 'Executing and Reporting of personal administrative and teaching responsibility', note: true },
-          { code: 'ii)', label: 'Delegating, Coordinating and Reporting of administrative responsibilities of which you are the Leade.', note: true },
-        ]},
-        { title: '2) BASIC ESSENTIAL ALLOWANCE', items: [
-          { code: 'a)', label: 'Housing, Feeding, Health Care, Family Support, Social Security', percent: 30, debitPercent: null, remark: '' },
-          { code: 'b)', label: 'C.N.P.S Personal Contribution', percent: null, debitPercent: 4, remark: '4% of Gross Salary' },
-        ]},
-        { title: '3) PROFESSIONAL & RESEARCH ALLOWANCE', items: [
-          { code: 'a)', label: 'Professional Development and Dressing support', percent: 20, debitPercent: null, remark: '' },
-        ]},
-        { title: '4) BONUS ALLOWANCE', items: [
-          { code: 'a)', label: 'Longivity, Productivity, Creativity, Intrapreneurship', percent: 10, debitPercent: null, remark: '' },
-        ]},
-        { title: '5) OTHERS', items: [
-          { code: 'a)', label: 'Socials', percent: null, debitPercent: null, remark: '' },
-          { code: 'b)', label: 'Niangi', percent: null, debitPercent: null, remark: '' },
-        ]},
-      ]
+        {
+          title: "1) AUXILARY ALLOWANCE",
+          items: [
+            {
+              code: "a)",
+              label: "Transport & Calls",
+              percent: 10,
+              debitPercent: null,
+              remark: "",
+            },
+            {
+              code: "b)",
+              label: "Job Responsibility",
+              percent: 30,
+              debitPercent: null,
+              remark: "",
+            },
+            {
+              code: "i)",
+              label:
+                "Executing and Reporting of personal administrative and teaching responsibility",
+              note: true,
+            },
+            {
+              code: "ii)",
+              label:
+                "Delegating, Coordinating and Reporting of administrative responsibilities of which you are the Leade.",
+              note: true,
+            },
+          ],
+        },
+        {
+          title: "2) BASIC ESSENTIAL ALLOWANCE",
+          items: [
+            {
+              code: "a)",
+              label:
+                "Housing, Feeding, Health Care, Family Support, Social Security",
+              percent: 30,
+              debitPercent: null,
+              remark: "",
+            },
+            {
+              code: "b)",
+              label: "C.N.P.S Personal Contribution",
+              percent: null,
+              debitPercent: 4,
+              remark: "4% of Gross Salary",
+            },
+          ],
+        },
+        {
+          title: "3) PROFESSIONAL & RESEARCH ALLOWANCE",
+          items: [
+            {
+              code: "a)",
+              label: "Professional Development and Dressing support",
+              percent: 20,
+              debitPercent: null,
+              remark: "",
+            },
+          ],
+        },
+        {
+          title: "4) BONUS ALLOWANCE",
+          items: [
+            {
+              code: "a)",
+              label: "Longivity, Productivity, Creativity, Intrapreneurship",
+              percent: 10,
+              debitPercent: null,
+              remark: "",
+            },
+          ],
+        },
+        {
+          title: "5) OTHERS",
+          items: [
+            {
+              code: "a)",
+              label: "Socials",
+              percent: null,
+              debitPercent: null,
+              remark: "",
+            },
+            {
+              code: "b)",
+              label: "Niangi",
+              percent: null,
+              debitPercent: null,
+              remark: "",
+            },
+          ],
+        },
+      ],
     };
 
     res.json({ settings: defaultSettings });
@@ -606,9 +731,9 @@ router.post("/payslip-settings", authenticateToken, async (req, res) => {
     // In a real implementation, you would save this to the database
     // Example: await pool.query("INSERT INTO payslip_settings (user_id, settings) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET settings = $2", [req.user.id, JSON.stringify(settings)]);
 
-    res.json({ 
+    res.json({
       message: "Payslip settings saved successfully",
-      settings: settings 
+      settings: settings,
     });
   } catch (error) {
     console.error("Error saving payslip settings:", error);

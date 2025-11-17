@@ -160,7 +160,7 @@ const createClass = catchAsync(async (req, res) => {
   const data = validateClassData(req.body);
   await ensureForeignKeysExist(data);
   await checkClassNameUnique(data.name, data.department_id);
-  await CRUDClass.create(data, res);
+  await CRUDClass.create(data, res, req);
 });
 
 const readOneClass = catchAsync(async (req, res) => {
@@ -185,7 +185,7 @@ const updateClass = catchAsync(async (req, res) => {
 });
 
 const deleteClass = catchAsync(async (req, res) => {
-  await CRUDClass.delete(req.params.id, res);
+  await CRUDClass.delete(req.params.id, res, req);
 });
 
 module.exports = {

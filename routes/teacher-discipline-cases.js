@@ -1,6 +1,8 @@
-const express = require('express');
-require('dotenv').config();
-const { pool, authenticateToken } = require('./utils');
+const express = require("express");
+require("dotenv").config();
+const { pool, authenticateToken } = require("./utils");
+
+const { logChanges, ChangeTypes } = require("../src/utils/logChanges.util");
 
 const router = express.Router();
 
@@ -49,20 +51,23 @@ const router = express.Router();
       FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE CASCADE;
     `);
   } catch (err) {
-    console.error('ensureTeacherCasesSchema failed:', err);
+    console.error("ensureTeacherCasesSchema failed:", err);
   }
 })();
 
 // use shared authenticateToken from utils for consistent auth/JWT
 
 // RBAC helpers
-const canWrite = (role) => ['Discipline', 'Psychosocialist', 'Psycho'].includes(role);
-const canRead = (role) => ['Admin1', 'Discipline', 'Psychosocialist', 'Psycho'].includes(role);
+const canWrite = (role) =>
+  ["Discipline", "Psychosocialist", "Psycho"].includes(role);
+const canRead = (role) =>
+  ["Admin1", "Discipline", "Psychosocialist", "Psycho"].includes(role);
 
 // List all cases (shared visibility)
-router.get('/', authenticateToken, async (req, res) => {
+router.get("/", authenticateToken, async (req, res) => {
   try {
-    if (!canRead(req.user.role)) return res.status(403).json({ error: 'Unauthorized' });
+    if (!canRead(req.user.role))
+      return res.status(403).json({ error: "Unauthorized" });
     const result = await pool.query(`
       SELECT 
         tdc.id,
@@ -85,15 +90,16 @@ router.get('/', authenticateToken, async (req, res) => {
     `);
     res.json(result.rows);
   } catch (e) {
-    console.error('List teacher cases failed:', e);
-    res.status(500).json({ error: 'Failed to fetch teacher cases' });
+    console.error("List teacher cases failed:", e);
+    res.status(500).json({ error: "Failed to fetch teacher cases" });
   }
 });
 
 // Create case (Discipline/Psycho only)
-router.post('/', authenticateToken, async (req, res) => {
+router.post("/", authenticateToken, async (req, res) => {
   try {
-    if (!canWrite(req.user.role)) return res.status(403).json({ error: 'Unauthorized' });
+    if (!canWrite(req.user.role))
+      return res.status(403).json({ error: "Unauthorized" });
     const {
       teacher_id,
       user_id,
@@ -103,7 +109,7 @@ router.post('/', authenticateToken, async (req, res) => {
       case_name,
       teacherId,
       userId,
-      classId
+      classId,
     } = req.body || {};
 
     // accept either teacher_id or user_id mapped to users.id
@@ -113,20 +119,34 @@ router.post('/', authenticateToken, async (req, res) => {
       ? parseInt(rawUserId, 10)
       : parseInt(rawTeacherId, 10);
     const rawDesc = case_description ?? description ?? case_name;
-    const trimmedDescription = (rawDesc || '').toString().trim();
+    const trimmedDescription = (rawDesc || "").toString().trim();
 
-    if (!Number.isInteger(teacherIdNum) || teacherIdNum <= 0 || !trimmedDescription) {
-      return res.status(400).json({ error: 'teacher_id or user_id (int) and case_description are required' });
+    if (
+      !Number.isInteger(teacherIdNum) ||
+      teacherIdNum <= 0 ||
+      !trimmedDescription
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            "teacher_id or user_id (int) and case_description are required",
+        });
     }
 
     // Validate teacher exists in users table
-    const teacherRes = await pool.query('SELECT id FROM users WHERE id = $1', [teacherIdNum]);
-    if (teacherRes.rows.length === 0) return res.status(400).json({ error: 'Invalid teacher_id' });
+    const teacherRes = await pool.query("SELECT id FROM users WHERE id = $1", [
+      teacherIdNum,
+    ]);
+    if (teacherRes.rows.length === 0)
+      return res.status(400).json({ error: "Invalid teacher_id" });
 
     const recordedBy = Number(req.user?.id) || null;
-    if (!recordedBy) return res.status(401).json({ error: 'Unauthenticated' });
+    if (!recordedBy) return res.status(401).json({ error: "Unauthenticated" });
 
-    const classIdNum = Number.isInteger(parseInt(classId ?? class_id, 10)) ? parseInt(classId ?? class_id, 10) : null;
+    const classIdNum = Number.isInteger(parseInt(classId ?? class_id, 10))
+      ? parseInt(classId ?? class_id, 10)
+      : null;
     const result = await pool.query(
       `INSERT INTO teacher_discipline_cases (teacher_id, class_id, case_description, status, recorded_by)
        VALUES ($1,$2,$3,'not resolved',$4)
@@ -137,31 +157,73 @@ router.post('/', authenticateToken, async (req, res) => {
     // Attach teacher label for immediate UI display
     let teacherLabel = null;
     try {
-      const t = await pool.query('SELECT username, name FROM users WHERE id = $1', [teacherIdNum]);
+      const t = await pool.query(
+        "SELECT username, name FROM users WHERE id = $1",
+        [teacherIdNum]
+      );
       teacherLabel = t.rows[0]?.name || t.rows[0]?.username || null;
     } catch (_) {}
+
+    // Log changes for sync
+    await logChanges(
+      "teacher_discipline_cases",
+      row.id,
+      ChangeTypes.create,
+      req.user,
+      null
+    );
+
     res.status(201).json({ ...row, teacher_name: teacherLabel });
   } catch (e) {
-    console.error('Create teacher case failed:', e?.stack || e);
+    console.error("Create teacher case failed:", e?.stack || e);
     // Surface common constraint errors to client to aid debugging
-    if (e && e.code === '23503') {
-      return res.status(400).json({ error: 'Invalid foreign key: teacher_id/user_id or created_by' });
+    if (e && e.code === "23503") {
+      return res
+        .status(400)
+        .json({
+          error: "Invalid foreign key: teacher_id/user_id or created_by",
+        });
     }
     // include db error code to aid debugging in QA
-    return res.status(500).json({ error: 'Failed to create teacher case', code: e?.code || null });
+    return res
+      .status(500)
+      .json({ error: "Failed to create teacher case", code: e?.code || null });
   }
 });
 
 // Update case (Discipline/Psycho only, simple fields)
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put("/:id", authenticateToken, async (req, res) => {
   try {
-    if (!canWrite(req.user.role)) return res.status(403).json({ error: 'Unauthorized' });
+    if (!canWrite(req.user.role))
+      return res.status(403).json({ error: "Unauthorized" });
     const { id } = req.params;
-    const { teacher_id, user_id, class_id, case_description, description, case_name, status, resolution_notes } = req.body || {};
+    const {
+      teacher_id,
+      user_id,
+      class_id,
+      case_description,
+      description,
+      case_name,
+      status,
+      resolution_notes,
+    } = req.body || {};
     const rawUserId = user_id ?? teacher_id;
-    const teacherIdNum = Number.isInteger(parseInt(rawUserId, 10)) ? parseInt(rawUserId, 10) : null;
+    const teacherIdNum = Number.isInteger(parseInt(rawUserId, 10))
+      ? parseInt(rawUserId, 10)
+      : null;
     const desc = (case_description ?? description ?? case_name) || null;
-    const classIdNum = Number.isInteger(parseInt(class_id,10)) ? parseInt(class_id,10) : null;
+    const classIdNum = Number.isInteger(parseInt(class_id, 10))
+      ? parseInt(class_id, 10)
+      : null;
+
+    // Capture before state for change tracking
+    const beforeResult = await pool.query(
+      "SELECT * FROM teacher_discipline_cases WHERE id = $1",
+      [Number(id)]
+    );
+    if (beforeResult.rows.length === 0)
+      return res.status(404).json({ error: "Not found" });
+    const beforeState = beforeResult.rows[0];
 
     const result = await pool.query(
       `UPDATE teacher_discipline_cases 
@@ -172,29 +234,86 @@ router.put('/:id', authenticateToken, async (req, res) => {
            resolution_notes = COALESCE($5, resolution_notes),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $6 RETURNING *`,
-      [teacherIdNum, classIdNum, desc, status || null, resolution_notes || null, Number(id)]
+      [
+        teacherIdNum,
+        classIdNum,
+        desc,
+        status || null,
+        resolution_notes || null,
+        Number(id),
+      ]
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    if (result.rows.length === 0)
+      return res.status(404).json({ error: "Not found" });
+
+    // Log changes for sync with before/after states
+    const afterState = result.rows[0];
+    const fieldsChanged = {
+      before: {
+        teacher_id: beforeState.teacher_id,
+        class_id: beforeState.class_id,
+        case_description: beforeState.case_description,
+        status: beforeState.status,
+        resolution_notes: beforeState.resolution_notes,
+      },
+      after: {
+        teacher_id: afterState.teacher_id,
+        class_id: afterState.class_id,
+        case_description: afterState.case_description,
+        status: afterState.status,
+        resolution_notes: afterState.resolution_notes,
+      },
+    };
+
+    await logChanges(
+      "teacher_discipline_cases",
+      Number(id),
+      ChangeTypes.update,
+      req.user,
+      fieldsChanged
+    );
+
     res.json(result.rows[0]);
   } catch (e) {
-    console.error('Update teacher case failed:', e);
-    res.status(500).json({ error: 'Failed to update teacher case' });
+    console.error("Update teacher case failed:", e);
+    res.status(500).json({ error: "Failed to update teacher case" });
   }
 });
 
 // Delete case (Discipline/Psycho only)
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete("/:id", authenticateToken, async (req, res) => {
   try {
-    if (!canWrite(req.user.role)) return res.status(403).json({ error: 'Unauthorized' });
+    if (!canWrite(req.user.role))
+      return res.status(403).json({ error: "Unauthorized" });
     const { id } = req.params;
-    await pool.query('DELETE FROM teacher_discipline_cases WHERE id = $1', [Number(id)]);
-    res.json({ message: 'Teacher discipline case deleted successfully' });
+
+    // Capture record before deletion for change tracking
+    const beforeResult = await pool.query(
+      "SELECT * FROM teacher_discipline_cases WHERE id = $1",
+      [Number(id)]
+    );
+    const deletedData = beforeResult.rows[0] || null;
+
+    await pool.query("DELETE FROM teacher_discipline_cases WHERE id = $1", [
+      Number(id),
+    ]);
+
+    // Log changes for sync with deleted data snapshot
+    if (deletedData) {
+      await logChanges(
+        "teacher_discipline_cases",
+        Number(id),
+        ChangeTypes.delete,
+        req.user,
+        { deletedData }
+      );
+    }
+
+    res.json({ message: "Teacher discipline case deleted successfully" });
   } catch (e) {
-    console.error('Delete teacher case failed:', e);
-    res.status(500).json({ error: 'Failed to delete teacher case' });
+    console.error("Delete teacher case failed:", e);
+    res.status(500).json({ error: "Failed to delete teacher case" });
   }
 });
 
 module.exports = router;
-
-

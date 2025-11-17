@@ -34,5 +34,3 @@ console.log("🚀 Starting Votech Backend Server...");
 console.log("📊 Database: PostgreSQL");
 console.log("🔐 Authentication: JWT");
 console.log("📁 File Storage: FTP + Local");
-
- 

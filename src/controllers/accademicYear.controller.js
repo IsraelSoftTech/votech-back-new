@@ -5,6 +5,7 @@ const catchAsync = require("../utils/catchAsync");
 const CRUD = require("../utils/Crud");
 const { Op } = require("sequelize");
 const models = require("../models/index.model");
+const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
 
 const AcademicYearModel = require("../models/AcademicYear.model")(
   sequelize,
@@ -191,13 +192,16 @@ const createAcademicYear = catchAsync(async (req, res, next) => {
   payload.name = `${startYear}/${endYear} Academic Year`;
 
   const result = await sequelize.transaction(async (t) => {
+    // Validate input
     await validateAcademicYearInput(payload, null, t);
 
+    // Archive other active years if needed
     if (payload.status === "active") {
       const affected = await setOthersArchived(null, t);
       console.log(`[AY:create] Archived ${affected} active academic year(s).`);
     }
 
+    // Create academic year
     const ay = await AcademicYearModel.create(payload, { transaction: t });
     if (!ay || !ay.id) {
       throw new AppError(
@@ -206,8 +210,10 @@ const createAcademicYear = catchAsync(async (req, res, next) => {
       );
     }
 
+    // Create default terms and sequences
     await createDefaultTermsAndSequences(ay.id, t);
 
+    // Integrity check
     const termCount = await TermModel.count({
       where: { academic_year_id: ay.id },
       transaction: t,
@@ -223,6 +229,19 @@ const createAcademicYear = catchAsync(async (req, res, next) => {
         StatusCodes.INTERNAL_SERVER_ERROR
       );
     }
+
+    // --- Change logging ---
+    const fieldsChanged = {};
+    for (const key in ay.toJSON()) {
+      fieldsChanged[key] = { after: ay[key] };
+    }
+    await logChanges(
+      AcademicYearModel.tableName,
+      ay.id,
+      ChangeTypes.create,
+      req.user,
+      fieldsChanged
+    );
 
     return ay;
   });
@@ -243,8 +262,17 @@ const updateAcademicYear = catchAsync(async (req, res, next) => {
   const payload = req.body;
 
   const updated = await sequelize.transaction(async (t) => {
+    // Fetch existing record
+    const existing = await AcademicYearModel.findByPk(id, { transaction: t });
+    if (!existing) {
+      throw new AppError("Academic year not found", StatusCodes.NOT_FOUND);
+    }
+    const existingPlain = existing.get({ plain: true });
+
+    // Validate input
     await validateAcademicYearInput(payload, id, t);
 
+    // Archive other active years if needed
     if (payload.status === "active") {
       const affected = await setOthersArchived(id, t);
       console.log(
@@ -252,15 +280,39 @@ const updateAcademicYear = catchAsync(async (req, res, next) => {
       );
     }
 
+    // Perform update
     const [affected] = await AcademicYearModel.update(payload, {
       where: { id },
       transaction: t,
     });
 
-    if (!affected)
+    if (!affected) {
       throw new AppError("Academic year not found", StatusCodes.NOT_FOUND);
+    }
 
+    // Fetch fresh data after update
     const fresh = await AcademicYearModel.findByPk(id, { transaction: t });
+
+    // --- Log field-level changes ---
+    const fieldsChanged = {};
+    for (const key in payload) {
+      const oldVal = existingPlain[key];
+      const newVal = fresh[key];
+      if (String(oldVal) !== String(newVal)) {
+        fieldsChanged[key] = { before: oldVal, after: newVal };
+      }
+    }
+
+    if (Object.keys(fieldsChanged).length > 0) {
+      await logChanges(
+        AcademicYearModel.tableName,
+        id,
+        ChangeTypes.update,
+        req.user,
+        fieldsChanged
+      );
+    }
+
     return fresh;
   });
 
@@ -268,7 +320,9 @@ const updateAcademicYear = catchAsync(async (req, res, next) => {
 });
 
 const deleteAcademicYear = catchAsync(async (req, res, next) => {
-  const academicYear = await AcademicYearModel.findByPk(req.params.id);
+  const id = req.params.id;
+
+  const academicYear = await AcademicYearModel.findByPk(id);
 
   if (!academicYear) {
     return next(new AppError("Academic year not found", StatusCodes.NOT_FOUND));
@@ -283,24 +337,76 @@ const deleteAcademicYear = catchAsync(async (req, res, next) => {
     );
   }
 
+  // Take snapshot BEFORE deleting
+  const academicYearSnapshot = academicYear.get({ plain: true });
+
   await sequelize.transaction(async (t) => {
+    // Fetch dependent data BEFORE deleting so we can log them too
+    const terms = await TermModel.findAll({
+      where: { academic_year_id: id },
+      transaction: t,
+    });
+    const sequences = await SequenceModel.findAll({
+      where: { academic_year_id: id },
+      transaction: t,
+    });
+
+    // Delete main record
     await AcademicYearModel.destroy({
-      where: { id: req.params.id },
+      where: { id },
       transaction: t,
     });
-    await TermModel.destroy({
-      where: { academic_year_id: req.params.id },
-      transaction: t,
-    });
-    await SequenceModel.destroy({
-      where: { academic_year_id: req.params.id },
-      transaction: t,
-    });
+
+    // Log academic year deletion
+    await logChanges(
+      AcademicYearModel.tableName,
+      id,
+      ChangeTypes.delete,
+      req.user,
+      academicYearSnapshot
+    );
+
+    // Delete & log terms
+    for (const term of terms) {
+      const termSnapshot = term.get({ plain: true });
+
+      await TermModel.destroy({
+        where: { id: term.id },
+        transaction: t,
+      });
+
+      await logChanges(
+        TermModel.tableName,
+        term.id,
+        ChangeTypes.delete,
+        req.user,
+        termSnapshot
+      );
+    }
+
+    // Delete & log sequences
+    for (const seq of sequences) {
+      const seqSnapshot = seq.get({ plain: true });
+
+      await SequenceModel.destroy({
+        where: { id: seq.id },
+        transaction: t,
+      });
+
+      await logChanges(
+        SequenceModel.tableName,
+        seq.id,
+        ChangeTypes.delete,
+        req.user,
+        seqSnapshot
+      );
+    }
   });
 
-  res
-    .status(StatusCodes.OK)
-    .json({ success: true, message: "Academic year deleted successfully" });
+  res.status(StatusCodes.OK).json({
+    success: true,
+    message: "Academic year deleted successfully",
+  });
 });
 
 module.exports = {
