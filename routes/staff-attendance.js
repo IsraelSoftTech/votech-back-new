@@ -405,6 +405,36 @@ module.exports = function createStaffAttendanceRouter(pool, authenticateToken) {
 
       const targetMonth = `${year}-${month.padStart(2, "0")}`;
 
+      // Get attendance settings
+      const settingsResult = await pool.query(`
+        SELECT setting_key, setting_value
+        FROM staff_attendance_settings
+        WHERE setting_key IN ('full_time_expected_days', 'part_time_expected_days', 'start_time', 'end_time')
+      `);
+
+      const settings = {};
+      settingsResult.rows.forEach((row) => {
+        settings[row.setting_key] = row.setting_value;
+      });
+
+      const fullTimeExpectedDays =
+        parseInt(settings.full_time_expected_days) || 22;
+      const partTimeExpectedDays =
+        parseInt(settings.part_time_expected_days) || 11;
+      const startTime = settings.start_time || "08:00";
+      const endTime = settings.end_time || "17:00";
+
+      // Get all staff employment status
+      const employmentStatusResult = await pool.query(`
+        SELECT staff_name, employment_type
+        FROM staff_employment_status
+      `);
+
+      const employmentStatusMap = {};
+      employmentStatusResult.rows.forEach((row) => {
+        employmentStatusMap[row.staff_name] = row.employment_type;
+      });
+
       // Get all records for the month
       const recordsQuery = `
         SELECT date, staff_name, time_in, time_out, classes_taught, status
@@ -416,23 +446,76 @@ module.exports = function createStaffAttendanceRouter(pool, authenticateToken) {
       const recordsResult = await pool.query(recordsQuery, [targetMonth]);
       const records = recordsResult.rows;
 
-      // Get unique staff members
-      const staffMembers = [...new Set(records.map((r) => r.staff_name))];
+      // Get all staff members (from records and from users table to include all staff)
+      const staffFromRecords = [...new Set(records.map((r) => r.staff_name))];
+      const usersResult = await pool.query(`
+        SELECT DISTINCT name
+        FROM users 
+        WHERE role IN ('Admin', 'Admin2', 'Admin3', 'Teacher', 'HOD')
+        ORDER BY name
+      `);
+      const allStaff = [
+        ...new Set([
+          ...staffFromRecords,
+          ...usersResult.rows.map((u) => u.name),
+        ]),
+      ];
 
       // Get days in the month
       const daysInMonth = moment(targetMonth, "YYYY-MM").daysInMonth();
       const monthDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
+      // Helper function to calculate time difference in minutes
+      const calculateTimeDifference = (timeIn, timeOut) => {
+        if (!timeIn || !timeOut) return 0;
+
+        const [inHours, inMinutes] = timeIn.split(":").map(Number);
+        const [outHours, outMinutes] = timeOut.split(":").map(Number);
+
+        const inTotalMinutes = inHours * 60 + inMinutes;
+        const outTotalMinutes = outHours * 60 + outMinutes;
+
+        return outTotalMinutes - inTotalMinutes;
+      };
+
+      // Helper function to convert time string to minutes
+      const timeToMinutes = (timeStr) => {
+        if (!timeStr) return 0;
+        const [hours, minutes] = timeStr.split(":").map(Number);
+        return hours * 60 + minutes;
+      };
+
+      // Calculate expected work minutes per day based on start and end time
+      const startTimeMinutes = timeToMinutes(startTime);
+      const endTimeMinutes = timeToMinutes(endTime);
+      const expectedWorkMinutesPerDay = endTimeMinutes - startTimeMinutes;
+
       // Generate report data
-      const reportData = staffMembers.map((staff) => {
+      const reportData = allStaff.map((staff) => {
         const staffRecords = records.filter((r) => r.staff_name === staff);
+        const employmentType = employmentStatusMap[staff] || "Full Time";
+        const expectedDays =
+          employmentType === "Full Time"
+            ? fullTimeExpectedDays
+            : partTimeExpectedDays;
+
         const staffReport = {
           staff_name: staff,
+          employment_type: employmentType,
+          expected_days: expectedDays,
           total_days: daysInMonth,
           present_days: 0,
           absent_days: 0,
           late_days: 0,
           half_days: 0,
+          total_minutes_worked: 0,
+          total_minutes_missed: 0,
+          total_hours_worked: 0,
+          total_hours_missed: 0,
+          total_late_arrival_minutes: 0,
+          total_early_departure_minutes: 0,
+          total_late_arrival_hours: 0,
+          total_early_departure_hours: 0,
           daily_records: {},
         };
 
@@ -447,33 +530,94 @@ module.exports = function createStaffAttendanceRouter(pool, authenticateToken) {
             time_in: null,
             time_out: null,
             classes_taught: "",
+            minutes_worked: 0,
+            minutes_missed: expectedWorkMinutesPerDay,
           };
         });
 
         // Fill in actual records
         staffRecords.forEach((record) => {
           const day = moment(record.date).date();
+          const minutesWorked = calculateTimeDifference(
+            record.time_in,
+            record.time_out
+          );
+
+          // Calculate late arrival and early departure
+          const timeInMinutes = record.time_in
+            ? timeToMinutes(record.time_in)
+            : null;
+          const timeOutMinutes = record.time_out
+            ? timeToMinutes(record.time_out)
+            : null;
+          const lateArrivalMinutes =
+            timeInMinutes && timeInMinutes > startTimeMinutes
+              ? timeInMinutes - startTimeMinutes
+              : 0;
+          const earlyDepartureMinutes =
+            timeOutMinutes && timeOutMinutes < endTimeMinutes
+              ? endTimeMinutes - timeOutMinutes
+              : 0;
+
+          const minutesMissed = Math.max(
+            0,
+            expectedWorkMinutesPerDay - minutesWorked
+          );
+          const totalMinutesMissed =
+            record.status === "Absent"
+              ? expectedWorkMinutesPerDay
+              : minutesMissed + lateArrivalMinutes + earlyDepartureMinutes;
+
           staffReport.daily_records[day] = {
             date: moment(record.date).format("DD/MM/YYYY"),
             status: record.status,
             time_in: record.time_in,
             time_out: record.time_out,
             classes_taught: record.classes_taught || "",
+            minutes_worked: minutesWorked,
+            minutes_missed: totalMinutesMissed,
+            late_arrival_minutes: lateArrivalMinutes,
+            early_departure_minutes: earlyDepartureMinutes,
           };
 
-          // Count status types
+          // Count status types and accumulate time
           switch (record.status) {
             case "Present":
               staffReport.present_days++;
+              staffReport.total_minutes_worked += minutesWorked;
+              staffReport.total_minutes_missed += totalMinutesMissed;
+              staffReport.total_late_arrival_minutes =
+                (staffReport.total_late_arrival_minutes || 0) +
+                lateArrivalMinutes;
+              staffReport.total_early_departure_minutes =
+                (staffReport.total_early_departure_minutes || 0) +
+                earlyDepartureMinutes;
               break;
             case "Absent":
               staffReport.absent_days++;
+              staffReport.total_minutes_missed += expectedWorkMinutesPerDay;
               break;
             case "Late":
               staffReport.late_days++;
+              staffReport.total_minutes_worked += minutesWorked;
+              staffReport.total_minutes_missed += totalMinutesMissed;
+              staffReport.total_late_arrival_minutes =
+                (staffReport.total_late_arrival_minutes || 0) +
+                lateArrivalMinutes;
+              staffReport.total_early_departure_minutes =
+                (staffReport.total_early_departure_minutes || 0) +
+                earlyDepartureMinutes;
               break;
             case "Half Day":
               staffReport.half_days++;
+              staffReport.total_minutes_worked += minutesWorked;
+              staffReport.total_minutes_missed += totalMinutesMissed;
+              staffReport.total_late_arrival_minutes =
+                (staffReport.total_late_arrival_minutes || 0) +
+                lateArrivalMinutes;
+              staffReport.total_early_departure_minutes =
+                (staffReport.total_early_departure_minutes || 0) +
+                earlyDepartureMinutes;
               break;
           }
         });
@@ -506,6 +650,13 @@ module.exports = function createStaffAttendanceRouter(pool, authenticateToken) {
         month_name: moment(targetMonth, "YYYY-MM").format("MMMM YYYY"),
         total_staff: staffMembers.length,
         total_records: totalRecords,
+        total_expected_days: totalExpectedDays,
+        settings: {
+          full_time_expected_days: fullTimeExpectedDays,
+          part_time_expected_days: partTimeExpectedDays,
+          start_time: startTime,
+          end_time: endTime,
+        },
         overall_stats: {
           present: totalPresent,
           absent: totalAbsent,
@@ -521,6 +672,213 @@ module.exports = function createStaffAttendanceRouter(pool, authenticateToken) {
     } catch (error) {
       console.error("Error generating monthly report:", error);
       res.status(500).json({ error: "Failed to generate monthly report" });
+    }
+  });
+
+  // Get all staff employment status
+  router.get("/employment-status", authenticateToken, async (req, res) => {
+    try {
+      const result = await pool.query(`
+        SELECT id, staff_name, employment_type, created_at, updated_at
+        FROM staff_employment_status
+        ORDER BY staff_name ASC
+      `);
+      res.json(result.rows);
+    } catch (error) {
+      console.error("Error fetching staff employment status:", error);
+      res
+        .status(500)
+        .json({ error: "Failed to fetch staff employment status" });
+    }
+  });
+
+  // Update staff employment status (Full Time or Part Time)
+  router.put("/employment-status", authenticateToken, async (req, res) => {
+    try {
+      const { staff_name, employment_type } = req.body;
+
+      if (!staff_name || !employment_type) {
+        return res.status(400).json({
+          error: "Staff name and employment type are required",
+        });
+      }
+
+      if (!["Full Time", "Part Time"].includes(employment_type)) {
+        return res.status(400).json({
+          error: 'Employment type must be either "Full Time" or "Part Time"',
+        });
+      }
+
+      const result = await pool.query(
+        `
+        INSERT INTO staff_employment_status (staff_name, employment_type)
+        VALUES ($1, $2)
+        ON CONFLICT (staff_name) 
+        DO UPDATE SET 
+          employment_type = EXCLUDED.employment_type,
+          updated_at = CURRENT_TIMESTAMP
+        RETURNING *
+      `,
+        [staff_name, employment_type]
+      );
+
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error("Error updating staff employment status:", error);
+      res
+        .status(500)
+        .json({ error: "Failed to update staff employment status" });
+    }
+  });
+
+  // Get attendance settings
+  router.get("/settings", authenticateToken, async (req, res) => {
+    try {
+      const result = await pool.query(`
+        SELECT setting_key, setting_value, description
+        FROM staff_attendance_settings
+        ORDER BY setting_key
+      `);
+
+      // Convert to object format for easier access
+      const settings = {};
+      result.rows.forEach((row) => {
+        settings[row.setting_key] = {
+          value: row.setting_value,
+          description: row.description,
+        };
+      });
+
+      res.json(settings);
+    } catch (error) {
+      console.error("Error fetching attendance settings:", error);
+      res.status(500).json({ error: "Failed to fetch attendance settings" });
+    }
+  });
+
+  // Update attendance settings
+  router.put("/settings", authenticateToken, async (req, res) => {
+    try {
+      const {
+        full_time_expected_days,
+        part_time_expected_days,
+        start_time,
+        end_time,
+      } = req.body;
+
+      if (full_time_expected_days !== undefined) {
+        if (
+          !Number.isInteger(full_time_expected_days) ||
+          full_time_expected_days < 1 ||
+          full_time_expected_days > 31
+        ) {
+          return res.status(400).json({
+            error:
+              "Full time expected days must be an integer between 1 and 31",
+          });
+        }
+
+        await pool.query(
+          `
+          INSERT INTO staff_attendance_settings (setting_key, setting_value, description)
+          VALUES ('full_time_expected_days', $1, 'Expected number of days present per month for full-time staff')
+          ON CONFLICT (setting_key) 
+          DO UPDATE SET 
+            setting_value = EXCLUDED.setting_value,
+            updated_at = CURRENT_TIMESTAMP
+        `,
+          [full_time_expected_days.toString()]
+        );
+      }
+
+      if (part_time_expected_days !== undefined) {
+        if (
+          !Number.isInteger(part_time_expected_days) ||
+          part_time_expected_days < 1 ||
+          part_time_expected_days > 31
+        ) {
+          return res.status(400).json({
+            error:
+              "Part time expected days must be an integer between 1 and 31",
+          });
+        }
+
+        await pool.query(
+          `
+          INSERT INTO staff_attendance_settings (setting_key, setting_value, description)
+          VALUES ('part_time_expected_days', $1, 'Expected number of days present per month for part-time staff')
+          ON CONFLICT (setting_key) 
+          DO UPDATE SET 
+            setting_value = EXCLUDED.setting_value,
+            updated_at = CURRENT_TIMESTAMP
+        `,
+          [part_time_expected_days.toString()]
+        );
+      }
+
+      if (start_time !== undefined) {
+        // Validate time format (HH:MM)
+        const timeRegex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
+        if (!timeRegex.test(start_time)) {
+          return res.status(400).json({
+            error: "Start time must be in HH:MM format (e.g., 08:00)",
+          });
+        }
+
+        await pool.query(
+          `
+          INSERT INTO staff_attendance_settings (setting_key, setting_value, description)
+          VALUES ('start_time', $1, 'Expected start time for staff (HH:MM format)')
+          ON CONFLICT (setting_key) 
+          DO UPDATE SET 
+            setting_value = EXCLUDED.setting_value,
+            updated_at = CURRENT_TIMESTAMP
+        `,
+          [start_time]
+        );
+      }
+
+      if (end_time !== undefined) {
+        // Validate time format (HH:MM)
+        const timeRegex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
+        if (!timeRegex.test(end_time)) {
+          return res.status(400).json({
+            error: "End time must be in HH:MM format (e.g., 17:00)",
+          });
+        }
+
+        await pool.query(
+          `
+          INSERT INTO staff_attendance_settings (setting_key, setting_value, description)
+          VALUES ('end_time', $1, 'Expected end time for staff (HH:MM format)')
+          ON CONFLICT (setting_key) 
+          DO UPDATE SET 
+            setting_value = EXCLUDED.setting_value,
+            updated_at = CURRENT_TIMESTAMP
+        `,
+          [end_time]
+        );
+      }
+
+      // Return updated settings
+      const result = await pool.query(`
+        SELECT setting_key, setting_value, description
+        FROM staff_attendance_settings
+        ORDER BY setting_key
+      `);
+
+      const settings = {};
+      result.rows.forEach((row) => {
+        settings[row.setting_key] = {
+          value: row.setting_value,
+          description: row.description,
+        };
+      });
+
+      res.json(settings);
+    } catch (error) {
+      console.error("Error updating attendance settings:", error);
+      res.status(500).json({ error: "Failed to update attendance settings" });
     }
   });
 

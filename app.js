@@ -28,6 +28,7 @@ const monitorRouter = require("./routes/monitor");
 const vocationalRouter = require("./routes/vocational");
 const hodsRouter = require("./routes/hods");
 const teacherDisciplineRouter = require("./routes/teacher-discipline-cases");
+const profileRouter = require("./routes/profile");
 
 // Factory routers needing pool/authenticate
 const createAttendanceRouter = require("./routes/attendance");
@@ -112,6 +113,7 @@ console.log("Uploads served at /uploads from", DEV_UPLOAD_DIR);
 // Auth mounted at /api to preserve existing clients like /api/login
 app.use("/api", authRouter);
 app.use("/api/users", usersRouter);
+app.use("/api/profile", profileRouter);
 app.use("/api/classes", classesRouter);
 app.use("/api/teachers", teachersCoreRouter);
 app.use("/api/fees", feesRouter);

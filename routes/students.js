@@ -27,6 +27,7 @@ router.get("/", async (req, res) => {
       FROM students s 
       LEFT JOIN classes c ON s.class_id = c.id 
       LEFT JOIN specialties sp ON s.specialty_id = sp.id 
+      WHERE s."deletedAt" IS NULL
       ORDER BY s.full_name
     `);
     res.json(result.rows);
@@ -310,8 +311,18 @@ router.put(
 router.delete("/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
-    await pool.query("DELETE FROM students WHERE id=$1", [id]);
-    await logChanges("students", id, ChangeTypes.delete, req.user);
+    // Only update if the student exists and is not already deleted
+    const result = await pool.query(
+      'UPDATE students SET "deletedAt"=CURRENT_TIMESTAMP WHERE id=$1 AND "deletedAt" IS NULL RETURNING id',
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res
+        .status(404)
+        .json({ error: "Student not found or already deleted" });
+    }
+
     res.json({ message: "Student deleted successfully" });
   } catch (e) {
     res.status(500).json({ error: "Failed to delete student" });
