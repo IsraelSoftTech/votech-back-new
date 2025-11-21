@@ -69,6 +69,7 @@ const corsOptions = {
       "http://localhost:3004",
       "http://192.168.1.201:3000",
       "http://localhost:5173",
+      "https://votechs7academygroup.com/",
     ];
 
     if (!origin || origin === "null") return callback(null, true);
@@ -110,6 +111,7 @@ app.options("*", cors(corsOptions));
 app.use("/uploads", express.static("uploads"));
 app.use("/public", express.static(path.join(__dirname, "public")));
 app.use("/api/v1/sync", syncRouter);
+app.use("/api", authRouter);
 app.use(readOnlyGate);
 
 // Health
@@ -126,7 +128,7 @@ console.log("Uploads served at /uploads from", DEV_UPLOAD_DIR);
 
 // Core routes
 // Auth mounted at /api to preserve existing clients like /api/login
-app.use("/api", authRouter);
+
 app.use("/api/users", usersRouter);
 app.use("/api/profile", profileRouter);
 app.use("/api/classes", classesRouter);

@@ -1,4 +1,4 @@
-// models/Marks.model.js
+
 "use strict";
 
 const { DataTypes } = require("sequelize");

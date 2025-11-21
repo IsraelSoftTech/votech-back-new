@@ -46,7 +46,7 @@ module.exports = (sequelizeInstance = sequelize) => {
       },
     },
     {
-      tableName: "db_swap_log",
+      tableName: "db_swap_logs",
       timestamps: false,
     }
   );
