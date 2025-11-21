@@ -21,7 +21,7 @@ fs.mkdirSync(DEV_UPLOAD_DIR, { recursive: true });
 const TEMP_DIR = process.env.TEMP_DIR || path.join(os.tmpdir(), "ftp-uploads");
 fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-const isProduction = process.env.NODE_ENV === "production";
+const isProduction = true;
 
 if (isProduction) {
   if (
@@ -426,6 +426,127 @@ async function handleFileUploads(req, maxSizePerFileInMB, allowedExtensions) {
     : handleFileUploadsProduction(req);
 }
 
+async function uploadSingleFileToFTP(localFilePath, remoteFileName, ftpConfig) {
+  return new Promise((resolve, reject) => {
+    console.log(`\n=== FTP Upload Details ===`);
+    console.log(`Local file: ${localFilePath}`);
+    console.log(`Remote name: ${remoteFileName}`);
+    console.log(`FTP host: ${ftpConfig.host}:${ftpConfig.port}`);
+    console.log(`FTP user: ${ftpConfig.user}`);
+    console.log(`Remote dir: ${ftpConfig.remoteDir || "/"}`);
+    console.log(`========================\n`);
+
+    // Verify local file exists
+    if (!fs.existsSync(localFilePath)) {
+      return reject(new Error(`Local file does not exist: ${localFilePath}`));
+    }
+
+    const client = new Client();
+
+    const remoteDir = ftpConfig.remoteDir || config.remoteDir || "/";
+    const remotePath = path.posix
+      .join(remoteDir, remoteFileName)
+      .split(" ")
+      .join("");
+    const fileUrl = (remoteDir.replace("/", "") + remoteFileName)
+      .split(" ")
+      .join("");
+    const baseUrl = ftpConfig.remoteUrlBase || config.remoteUrlBase || "";
+
+    let uploadStarted = false;
+
+    client.on("ready", async () => {
+      console.log("✓ FTP connection established");
+
+      try {
+        // Ensure remote directory exists
+        await ensureRemoteDir(client, remoteDir);
+
+        console.log(`Uploading to: ${remotePath}`);
+
+        const readStream = fs.createReadStream(localFilePath);
+
+        readStream.on("error", (err) => {
+          console.error("Read stream error:", err);
+          client.end();
+          if (!uploadStarted) {
+            reject(new Error(`Failed to read file: ${err.message}`));
+          }
+        });
+
+        client.put(readStream, remotePath, (err) => {
+          uploadStarted = true;
+
+          if (err) {
+            console.error("❌ FTP PUT error:", err);
+            client.end();
+            return reject(new Error(`FTP PUT failed: ${err.message}`));
+          }
+
+          console.log("✓ File uploaded successfully");
+
+          // Try to set permissions (non-critical)
+          client.site(`CHMOD 644 ${remotePath}`, (chmodErr) => {
+            if (chmodErr) {
+              console.warn("CHMOD failed (non-critical):", chmodErr.message);
+            } else {
+              console.log("✓ File permissions set");
+            }
+
+            // Verify file exists
+            client.list(remoteDir, (listErr, list) => {
+              client.end();
+
+              if (listErr) {
+                console.warn(
+                  "Could not verify file (ignoring):",
+                  listErr.message
+                );
+                return resolve(fileUrl);
+              }
+
+              const fileFound = list.some(
+                (file) => file.name === remoteFileName
+              );
+              if (fileFound) {
+                console.log("✓ File verified on server");
+                console.log(`✓ File URL: ${baseUrl}${fileUrl}`);
+                resolve(fileUrl);
+              } else {
+                console.warn("Warning: File not found in directory listing");
+                resolve(fileUrl); // Return anyway, might be permission issue
+              }
+            });
+          });
+        });
+      } catch (err) {
+        console.error("❌ FTP operation error:", err);
+        client.end();
+        reject(new Error(`FTP operation failed: ${err.message}`));
+      }
+    });
+
+    client.on("error", (err) => {
+      console.error("❌ FTP client error:", err);
+      reject(new Error(`FTP connection failed: ${err.message}`));
+    });
+
+    console.log("Connecting to FTP server...");
+
+    try {
+      client.connect({
+        host: ftpConfig.host || config.host,
+        port: ftpConfig.port || config.port || 21,
+        user: ftpConfig.user || config.user,
+        password: ftpConfig.password || config.password,
+      });
+    } catch (connectErr) {
+      console.error("❌ FTP connect error:", connectErr);
+      reject(new Error(`FTP connect failed: ${connectErr.message}`));
+    }
+  });
+}
+
 // Export all functions
 module.exports = {
   handleFileUploads,
@@ -434,4 +555,5 @@ module.exports = {
   deleteFilesDevelopment,
   replaceFileProduction,
   deleteFilesFromFTP,
+  uploadSingleFileToFTP,
 };

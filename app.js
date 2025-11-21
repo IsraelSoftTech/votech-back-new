@@ -29,6 +29,7 @@ const vocationalRouter = require("./routes/vocational");
 const hodsRouter = require("./routes/hods");
 const teacherDisciplineRouter = require("./routes/teacher-discipline-cases");
 const profileRouter = require("./routes/profile");
+const syncRouter = require("./src/routes/sync.rotoutes");
 
 // Factory routers needing pool/authenticate
 const createAttendanceRouter = require("./routes/attendance");
@@ -50,30 +51,42 @@ const reportCardRouter = require("./src/routes/reportCard.route");
 const contentRouter = require("./src/routes/content.route");
 const globalErrorController = require("./src/controllers/error.controller");
 const departmentRouter = require("./src/routes/department.route");
+const { readOnlyGate } = require("./src/controllers/contextSwitch.controller");
 
 const app = express();
 
 // CORS
 const corsOptions = {
   origin: function (origin, callback) {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("CORS ORIGIN:", origin);
+    }
+
     const allowedOrigins = [
       "https://votechs7academygroup.com",
       "https://votech-latest-front.onrender.com",
       "http://localhost:3000",
       "http://localhost:3004",
+      "http://192.168.1.201:3000",
+      "http://localhost:5173",
     ];
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1) callback(null, true);
-    else callback(new Error("Not allowed by CORS"));
+
+    if (!origin || origin === "null") return callback(null, true);
+
+    if (
+      origin.startsWith("file://") ||
+      origin.startsWith("app://") ||
+      origin.startsWith("capacitor-electron://")
+    ) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    callback(new Error("Not allowed by CORS"));
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-  allowedHeaders: [
-    "Content-Type",
-    "Authorization",
-    "Accept",
-    "Origin",
-    "X-Requested-With",
-  ],
   credentials: true,
 };
 
@@ -96,6 +109,8 @@ app.options("*", cors(corsOptions));
 // Static
 app.use("/uploads", express.static("uploads"));
 app.use("/public", express.static(path.join(__dirname, "public")));
+app.use("/api/v1/sync", syncRouter);
+app.use(readOnlyGate);
 
 // Health
 app.get("/api/test", (req, res) => {

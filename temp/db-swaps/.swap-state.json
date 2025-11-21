@@ -1,0 +1,33 @@
+{
+  "phase": "failed",
+  "timestamp": "2025-11-21T03:55:36.624Z",
+  "direction": "remoteToLocal",
+  "backupFiles": [
+    "C:\\Users\\SPVCEMVN\\OneDrive\\Desktop\\projects\\votech\\votech-back-new\\temp\\db-swaps\\swap-source-2025-11-21T03-53-29-608Z-0ccf7184.sql.gz",
+    "C:\\Users\\SPVCEMVN\\OneDrive\\Desktop\\projects\\votech\\votech-back-new\\temp\\db-swaps\\swap-target-2025-11-21T03-53-29-608Z-0ccf7184.sql.gz"
+  ],
+  "databases": {
+    "stagingDb": "votech__staging__2025_11_21T03_53_29_608Z_0ccf7184",
+    "targetBackupDb": "votech__backup__2025_11_21T03_53_29_608Z_0ccf7184",
+    "stagingCreated": true,
+    "targetRenamed": true,
+    "stagingRenamed": true
+  },
+  "ftpUploads": {
+    "source": {
+      "fileName": "db-backup-2025-11-21T03-54-14-705Z-b8242daf.sql.gz",
+      "remotePath": "backupsdb-backup-2025-11-21T03-54-14-705Z-b8242daf.sql.gz",
+      "sizeBytes": 139215,
+      "localPath": null,
+      "timestamp": "2025-11-21T03-54-14-705Z"
+    },
+    "target": {
+      "fileName": "db-backup-2025-11-21T03-54-56-754Z-3ac31c60.sql.gz",
+      "remotePath": "backupsdb-backup-2025-11-21T03-54-56-754Z-3ac31c60.sql.gz",
+      "sizeBytes": 137776,
+      "localPath": null,
+      "timestamp": "2025-11-21T03-54-56-754Z"
+    }
+  },
+  "error": "CRITICAL FAILURE: ROLLBACK VERIFICATION FAILED!"
+}

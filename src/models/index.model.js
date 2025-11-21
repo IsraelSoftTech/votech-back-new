@@ -19,6 +19,8 @@ const specialties = require("./specialties")(sequelize, DataTypes);
 const specialty_classes = require("./specialty_classes")(sequelize, DataTypes);
 const academic_bands = require("./AcademicBand.model")(sequelize, DataTypes);
 const change_logs = require("./changeLog.model")(sequelize, DataTypes);
+const system_mode = require("./SystemMode.model")(sequelize, DataTypes);
+const db_swap_logs = require("./dbSwapLog.model")(sequelize, DataTypes);
 
 console.log({
   Subject,
@@ -37,6 +39,8 @@ console.log({
   specialty_classes,
   academic_bands,
   change_logs,
+  system_mode,
+  db_swap_logs,
 });
 
 const models = {
@@ -56,6 +60,8 @@ const models = {
   specialty_classes,
   academic_bands,
   change_logs,
+  system_mode,
+  db_swap_logs,
 };
 
 // Call associate after all models are initialized

@@ -61,6 +61,7 @@ router.post("/setup-admin", async (req, res) => {
 // Login endpoint
 router.post("/login", async (req, res) => {
   try {
+    console.log("hit..............................🔥");
     const { username, password } = req.body;
 
     if (!username || !password) {
