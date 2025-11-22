@@ -55,25 +55,28 @@ const { readOnlyGate } = require("./src/controllers/contextSwitch.controller");
 
 const app = express();
 
-// CORS
+const allowedOrigins = [
+  "https://votechs7academygroup.com",
+  "https://votech-latest-front.onrender.com",
+  "http://localhost:3000",
+  "http://localhost:3004",
+  "http://192.168.1.201:3000",
+  "http://192.168.1.200:3000",
+  "http://192.168.1.202:3000",
+  "http://192.168.1.10:3000",
+  "http://localhost:5173",
+];
+
 const corsOptions = {
   origin: function (origin, callback) {
     if (process.env.NODE_ENV !== "production") {
       console.log("CORS ORIGIN:", origin);
     }
 
-    const allowedOrigins = [
-      "https://votechs7academygroup.com",
-      "https://votech-latest-front.onrender.com",
-      "http://localhost:3000",
-      "http://localhost:3004",
-      "http://192.168.1.201:3000",
-      "http://localhost:5173",
-      "https://votechs7academygroup.com/",
-    ];
-
+    // allow requests with no origin (like mobile apps or curl)
     if (!origin || origin === "null") return callback(null, true);
 
+    // allow file or capacitor/electron requests
     if (
       origin.startsWith("file://") ||
       origin.startsWith("app://") ||
@@ -86,6 +89,7 @@ const corsOptions = {
       return callback(null, true);
     }
 
+    // reject everything else
     callback(new Error("Not allowed by CORS"));
   },
   credentials: true,
@@ -102,7 +106,13 @@ if (process.env.NODE_ENV !== "production") {
     next();
   });
 }
+
+// use middleware
 app.use(cors(corsOptions));
+
+// allow preflight requests
+app.options("*", cors(corsOptions));
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.options("*", cors(corsOptions));
