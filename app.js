@@ -4,7 +4,98 @@ const path = require("path");
 require("dotenv").config();
 const fs = require("fs");
 
-// Routers
+const app = express();
+
+const allowedOrigins = [
+  "https://votechs7academygroup.com",
+  "https://www.votechs7academygroup.com",
+  "https://votech-latest-front.onrender.com",
+  "http://localhost:3000",
+  "http://localhost:3004",
+  "http://192.168.1.201:3000",
+  "http://192.168.1.200:3000",
+  "http://192.168.1.202:3000",
+  "http://192.168.1.10:3000",
+  "http://localhost:5173",
+];
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("🔍 CORS Check - Origin:", origin);
+    }
+
+    if (!origin || origin === "null") {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("✅ CORS: Allowing request with no origin");
+      }
+      return callback(null, true);
+    }
+
+    if (
+      origin.startsWith("file://") ||
+      origin.startsWith("app://") ||
+      origin.startsWith("capacitor-electron://")
+    ) {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("✅ CORS: Allowing file/app protocol");
+      }
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("✅ CORS: Origin allowed:", origin);
+      }
+      return callback(null, true);
+    }
+
+    // Reject
+    console.warn("❌ CORS: Origin rejected:", origin);
+    callback(new Error(`CORS blocked: ${origin} not in allowed origins`));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+  ],
+  exposedHeaders: ["Content-Range", "X-Content-Range"],
+  maxAge: 86400,
+};
+
+app.use(cors(corsOptions));
+
+app.options("*", cors(corsOptions));
+
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+if (process.env.NODE_ENV !== "production") {
+  app.use((req, res, next) => {
+    if (req.method !== "OPTIONS") {
+      console.log(
+        `[${new Date().toISOString()}] ${req.method} ${
+          req.originalUrl
+        } - Origin: ${req.headers.origin || "no-origin"}`
+      );
+    }
+    next();
+  });
+}
+
+const DEV_UPLOAD_DIR = path.join(__dirname, "local_uploads");
+fs.mkdirSync(DEV_UPLOAD_DIR, { recursive: true });
+
+app.use("/uploads", express.static(DEV_UPLOAD_DIR));
+app.use("/uploads", express.static("uploads"));
+app.use("/public", express.static(path.join(__dirname, "public")));
+
+console.log("📁 Uploads served at /uploads from", DEV_UPLOAD_DIR);
+
 const authRouter = require("./routes/auth");
 const usersRouter = require("./routes/users");
 const classesRouter = require("./routes/classes");
@@ -31,13 +122,11 @@ const teacherDisciplineRouter = require("./routes/teacher-discipline-cases");
 const profileRouter = require("./routes/profile");
 const syncRouter = require("./src/routes/sync.rotoutes");
 
-// Factory routers needing pool/authenticate
 const createAttendanceRouter = require("./routes/attendance");
 const createStaffAttendanceRouter = require("./routes/staff-attendance");
 const createDisciplineCasesRouter = require("./routes/discipline_cases");
 const { pool, authenticateToken } = require("./routes/utils");
 
-// v1 academic/marks domain (existing src routes)
 const accademicYearRouter = require("./src/routes/accademicYear.route");
 const subjectRouter = require("./src/routes/subject.route");
 const classSubjectRouter = require("./src/routes/classSubject.route");
@@ -53,91 +142,26 @@ const globalErrorController = require("./src/controllers/error.controller");
 const departmentRouter = require("./src/routes/department.route");
 const { readOnlyGate } = require("./src/controllers/contextSwitch.controller");
 
-const app = express();
-
-const allowedOrigins = [
-  "https://votechs7academygroup.com",
-  "https://votech-latest-front.onrender.com",
-  "http://localhost:3000",
-  "http://localhost:3004",
-  "http://192.168.1.201:3000",
-  "http://192.168.1.200:3000",
-  "http://192.168.1.202:3000",
-  "http://192.168.1.10:3000",
-  "http://localhost:5173",
-];
-
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (process.env.NODE_ENV !== "production") {
-      console.log("CORS ORIGIN:", origin);
-    }
-
-    // allow requests with no origin (like mobile apps or curl)
-    if (!origin || origin === "null") return callback(null, true);
-
-    // allow file or capacitor/electron requests
-    if (
-      origin.startsWith("file://") ||
-      origin.startsWith("app://") ||
-      origin.startsWith("capacitor-electron://")
-    ) {
-      return callback(null, true);
-    }
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    // reject everything else
-    callback(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
-};
-
-// Middleware
-if (process.env.NODE_ENV !== "production") {
-  app.use((req, res, next) => {
-    if (req.method !== "OPTIONS") {
-      console.log(
-        `[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`
-      );
-    }
-    next();
-  });
-}
-
-// use middleware
-app.use(cors(corsOptions));
-
-// allow preflight requests
-app.options("*", cors(corsOptions));
-
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
-app.options("*", cors(corsOptions));
-
-// Static
-app.use("/uploads", express.static("uploads"));
-app.use("/public", express.static(path.join(__dirname, "public")));
-app.use("/api/v1/sync", syncRouter);
-app.use("/api", authRouter);
-app.use(readOnlyGate);
-
-// Health
 app.get("/api/test", (req, res) => {
-  res.json({ message: "Server is running" });
+  res.json({
+    message: "Server is running",
+    timestamp: new Date().toISOString(),
+    cors: "enabled",
+  });
 });
 
-const DEV_UPLOAD_DIR = path.join(__dirname, "local_uploads");
-console.log(DEV_UPLOAD_DIR);
-fs.mkdirSync(DEV_UPLOAD_DIR, { recursive: true });
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "ok",
+    origin: req.headers.origin || "no-origin",
+    allowedOrigins: allowedOrigins,
+  });
+});
 
-app.use("/uploads", express.static(DEV_UPLOAD_DIR));
-console.log("Uploads served at /uploads from", DEV_UPLOAD_DIR);
+app.use("/api/v1/sync", syncRouter);
+app.use("/api", authRouter);
 
-// Core routes
-// Auth mounted at /api to preserve existing clients like /api/login
+app.use(readOnlyGate);
 
 app.use("/api/users", usersRouter);
 app.use("/api/profile", profileRouter);
@@ -163,7 +187,6 @@ app.use("/api/hods", hodsRouter);
 app.use("/api/students", studentsRouter);
 app.use("/api/teacher-discipline-cases", teacherDisciplineRouter);
 
-// Factory routes (pool + auth)
 app.use("/api/attendance", createAttendanceRouter(pool, authenticateToken));
 app.use(
   "/api/staff-attendance",
@@ -173,9 +196,7 @@ app.use(
   "/api/discipline-cases",
   createDisciplineCasesRouter(pool, authenticateToken)
 );
-// Removed teacher-discipline-cases router
 
-// v1 academic/marks domain
 app.use("/api/v1/academic-years", accademicYearRouter);
 app.use("/api/v1/subjects", subjectRouter);
 app.use("/api/v1/class-subjects", classSubjectRouter);
@@ -189,13 +210,11 @@ app.use("/api/v1/report-cards", reportCardRouter);
 app.use("/api/v1/content", contentRouter);
 app.use("/api/v1/departments", departmentRouter);
 
-// Startup message
 console.log("✅ Server routes mounted successfully");
 console.log("📡 API endpoints available at /api/*");
 console.log("🎓 Academic endpoints available at /api/v1/*");
+console.log("🌐 CORS enabled for:", allowedOrigins);
 
-// Error handler
-// 404 handler (any unmatched route)
 app.use("*", (req, res, next) => {
   const err = new Error(`Can't find ${req.originalUrl} on this server!`);
   err.statusCode = 404;
@@ -204,7 +223,6 @@ app.use("*", (req, res, next) => {
   next(err);
 });
 
-// Global error handler (last middleware)
 app.use(globalErrorController);
 
 module.exports = app;
