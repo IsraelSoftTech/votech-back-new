@@ -5,10 +5,10 @@ require("dotenv").config();
 
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
 
-const db =
-  process.env.NODE_ENV === "desktop"
-    ? process.env.DATABASE_URL_LOCAL
-    : process.env.DATABASE_URL;
+const isDesktop = process.env.NODE_ENV === "desktop";
+const db = isDesktop
+  ? process.env.DATABASE_URL_LOCAL
+  : process.env.DATABASE_URL;
 
 // Create pool directly in this file
 const pool = new Pool({
@@ -25,12 +25,11 @@ async function ensureCnpsPreferencesTable() {
       );
     `);
   } catch (e) {
-    console.error('Failed to ensure cnps_preferences table:', e.message);
+    console.error("Failed to ensure cnps_preferences table:", e.message);
   }
 }
 
 ensureCnpsPreferencesTable();
-
 
 // Authentication middleware function (copied from server.js)
 function authenticateToken(req, res, next) {
@@ -493,7 +492,9 @@ router.put("/edit-paid/:salaryId", async (req, res) => {
     const { monthNumber, year } = req.body || {};
 
     if (!monthNumber || monthNumber < 1 || monthNumber > 12) {
-      return res.status(400).json({ error: "Valid monthNumber (1-12) is required" });
+      return res
+        .status(400)
+        .json({ error: "Valid monthNumber (1-12) is required" });
     }
 
     // Fetch the salary
@@ -528,13 +529,15 @@ router.put("/edit-paid/:salaryId", async (req, res) => {
 
       // If target is already paid, we cannot move
       if (target.paid === true) {
-        return res.status(409).json({ error: "Target month is already paid for this user" });
+        return res
+          .status(409)
+          .json({ error: "Target month is already paid for this user" });
       }
 
       // Move "paid" status from current to target within a transaction
       const client = await pool.connect();
       try {
-        await client.query('BEGIN');
+        await client.query("BEGIN");
         // Unset current paid
         await client.query(
           `UPDATE salaries SET paid = false, paid_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
@@ -545,13 +548,19 @@ router.put("/edit-paid/:salaryId", async (req, res) => {
           `UPDATE salaries SET paid = true, paid_at = COALESCE($1, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
           [current.paid_at, target.id]
         );
-        await client.query('COMMIT');
+        await client.query("COMMIT");
 
-        const finalTarget = await pool.query(`SELECT * FROM salaries WHERE id = $1`, [target.id]);
-        return res.json({ message: "Paid salary moved to target month", salary: finalTarget.rows[0] });
+        const finalTarget = await pool.query(
+          `SELECT * FROM salaries WHERE id = $1`,
+          [target.id]
+        );
+        return res.json({
+          message: "Paid salary moved to target month",
+          salary: finalTarget.rows[0],
+        });
       } catch (txErr) {
-        await client.query('ROLLBACK');
-        console.error('Transaction failed editing paid salary:', txErr);
+        await client.query("ROLLBACK");
+        console.error("Transaction failed editing paid salary:", txErr);
         return res.status(500).json({ error: "Failed to edit paid salary" });
       } finally {
         client.release();
@@ -580,7 +589,9 @@ router.put("/edit-paid/:salaryId", async (req, res) => {
 router.delete("/:salaryId", async (req, res) => {
   try {
     const { salaryId } = req.params;
-    const del = await pool.query(`DELETE FROM salaries WHERE id = $1`, [salaryId]);
+    const del = await pool.query(`DELETE FROM salaries WHERE id = $1`, [
+      salaryId,
+    ]);
     if (del.rowCount === 0) {
       return res.status(404).json({ error: "Salary record not found" });
     }
@@ -651,37 +662,47 @@ router.get("/paid-salaries", async (req, res) => {
 });
 
 // Get CNPS preference for a user
-router.get('/cnps/:userId', authenticateToken, async (req, res) => {
+router.get("/cnps/:userId", authenticateToken, async (req, res) => {
   try {
     const { userId } = req.params;
-    const result = await pool.query(`SELECT excluded FROM cnps_preferences WHERE user_id = $1`, [userId]);
+    const result = await pool.query(
+      `SELECT excluded FROM cnps_preferences WHERE user_id = $1`,
+      [userId]
+    );
     const excluded = result.rows.length ? !!result.rows[0].excluded : false;
     res.json({ userId: parseInt(userId, 10), excluded });
   } catch (error) {
-    console.error('Error fetching CNPS preference:', error);
-    res.status(500).json({ error: 'Failed to fetch CNPS preference' });
+    console.error("Error fetching CNPS preference:", error);
+    res.status(500).json({ error: "Failed to fetch CNPS preference" });
   }
 });
 
 // Set CNPS preference for a user
-router.put('/cnps/:userId', authenticateToken, async (req, res) => {
+router.put("/cnps/:userId", authenticateToken, async (req, res) => {
   try {
     const { userId } = req.params;
     const { excluded } = req.body || {};
-    if (typeof excluded !== 'boolean') {
-      return res.status(400).json({ error: 'excluded boolean is required' });
+    if (typeof excluded !== "boolean") {
+      return res.status(400).json({ error: "excluded boolean is required" });
     }
     await ensureCnpsPreferencesTable();
-    await pool.query(`
+    await pool.query(
+      `
       INSERT INTO cnps_preferences (user_id, excluded, updated_at)
       VALUES ($1, $2, CURRENT_TIMESTAMP)
       ON CONFLICT (user_id)
       DO UPDATE SET excluded = EXCLUDED.excluded, updated_at = CURRENT_TIMESTAMP
-    `, [userId, excluded]);
-    res.json({ message: 'CNPS preference updated', userId: parseInt(userId, 10), excluded });
+    `,
+      [userId, excluded]
+    );
+    res.json({
+      message: "CNPS preference updated",
+      userId: parseInt(userId, 10),
+      excluded,
+    });
   } catch (error) {
-    console.error('Error updating CNPS preference:', error);
-    res.status(500).json({ error: 'Failed to update CNPS preference' });
+    console.error("Error updating CNPS preference:", error);
+    res.status(500).json({ error: "Failed to update CNPS preference" });
   }
 });
 

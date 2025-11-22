@@ -120,7 +120,6 @@ const vocationalRouter = require("./routes/vocational");
 const hodsRouter = require("./routes/hods");
 const teacherDisciplineRouter = require("./routes/teacher-discipline-cases");
 const profileRouter = require("./routes/profile");
-const syncRouter = require("./src/routes/sync.rotoutes");
 
 const createAttendanceRouter = require("./routes/attendance");
 const createStaffAttendanceRouter = require("./routes/staff-attendance");
@@ -158,7 +157,13 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-app.use("/api/v1/sync", syncRouter);
+if (process.env.NODE_ENV === "desktop") {
+  console.log("📱 Desktop mode: Loading database swap routes...");
+  const syncRouter = require("./src/routes/sync.rotoutes");
+  app.use("/api/v1/sync", syncRouter);
+} else {
+  console.log("🌐 Production mode: Database swap routes disabled");
+}
 app.use("/api", authRouter);
 
 app.use(readOnlyGate);

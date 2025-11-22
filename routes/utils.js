@@ -2,10 +2,10 @@ const { Pool } = require("pg");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
-const db =
-  process.env.NODE_ENV === "desktop"
-    ? process.env.DATABASE_URL_LOCAL
-    : process.env.DATABASE_URL;
+const isDesktop = process.env.NODE_ENV === "desktop";
+const db = isDesktop
+  ? process.env.DATABASE_URL_LOCAL
+  : process.env.DATABASE_URL;
 
 const pool = new Pool({
   connectionString: db,
