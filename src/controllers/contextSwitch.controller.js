@@ -604,6 +604,71 @@ async function verifyDatabaseIsHealthy(dbConfig, dbName, retries = 5) {
   return false;
 }
 
+/**
+ * Ensures system_mode table exists and has a record
+ * @param {Object} dbConfig - Database configuration
+ * @returns {Promise<boolean>}
+ */
+/**
+ * Ensures system_mode table exists and has a record
+ * @param {Object} dbConfig - Database configuration
+ * @returns {Promise<boolean>}
+ */
+async function ensureSystemModeTable(dbConfig) {
+  const client = new Client({
+    host: dbConfig.host,
+    port: dbConfig.port || 5432,
+    user: dbConfig.user,
+    database: dbConfig.database,
+    password: dbConfig.password || "",
+    connectionTimeoutMillis: 10000,
+  });
+
+  try {
+    await client.connect();
+    console.log(`   Checking system_mode in ${dbConfig.database}...`);
+
+    // Create table if it doesn't exist (no id column)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS system_mode (
+        mode VARCHAR(20) NOT NULL DEFAULT 'offline'
+      );
+    `);
+
+    // Ensure there's exactly one record
+    const checkResult = await client.query(
+      "SELECT COUNT(*) as count FROM system_mode"
+    );
+    const count = parseInt(checkResult.rows[0].count, 10);
+
+    if (count === 0) {
+      // Insert default record
+      await client.query("INSERT INTO system_mode (mode) VALUES ('offline')");
+      console.log(
+        `   ✓ Created system_mode table with default record in ${dbConfig.database}`
+      );
+    } else if (count > 1) {
+      // Cleanup: ensure only one record exists
+      await client.query(
+        "DELETE FROM system_mode WHERE ctid NOT IN (SELECT MIN(ctid) FROM system_mode)"
+      );
+      console.log(`   ✓ Cleaned up duplicate records in ${dbConfig.database}`);
+    } else {
+      console.log(`   ✓ system_mode table verified in ${dbConfig.database}`);
+    }
+
+    await client.end();
+    return true;
+  } catch (err) {
+    try {
+      await client.end();
+    } catch (_) {}
+    throw new Error(
+      `Failed to ensure system_mode table in ${dbConfig.database}: ${err.message}`
+    );
+  }
+}
+
 function buildDbConfigs() {
   const local = {
     host: process.env.DB_HOST_LOCAL || "127.0.0.1",
@@ -645,6 +710,18 @@ async function safeSwapDatabases({ direction, ftpConfig = null }) {
   console.log(`   Source: ${source.database} @ ${source.host}`);
   console.log(`   Target: ${target.database} @ ${target.host}`);
   console.log(`${"=".repeat(60)}\n`);
+
+  // ============================================================
+  // [PHASE 0] Ensure system_mode table exists in BOTH databases
+  // ============================================================
+  console.log("[PHASE 0] Ensuring system_mode table exists...");
+  try {
+    await ensureSystemModeTable(source);
+    await ensureSystemModeTable(target);
+    console.log("✓ system_mode table verified in both databases\n");
+  } catch (err) {
+    throw new Error(`Pre-swap validation failed: ${err.message}`);
+  }
 
   const timestamp = new Date()
     .toISOString()
@@ -728,6 +805,21 @@ async function safeSwapDatabases({ direction, ftpConfig = null }) {
     stagingCreated = false; // Staging was renamed, not a separate DB anymore
 
     console.log("✓ Database swap complete\n");
+    console.log("✓ Database swap complete\n");
+
+    // ============================================================
+    // [PHASE 6.5] Re-ensure system_mode table after swap
+    // ============================================================
+    console.log("[PHASE 6.5] Re-verifying system_mode table after swap...");
+    try {
+      await ensureSystemModeTable(target);
+      console.log("✓ system_mode table re-verified in target database\n");
+    } catch (err) {
+      console.warn(`⚠️ Warning: ${err.message}\n`);
+      // Don't fail - we'll create it in the next step
+    }
+
+    // [PHASE 7] Post-swap verification...
 
     // [PHASE 7] Post-swap verification
     console.log("[PHASE 7] Post-swap verification...");
@@ -913,142 +1005,122 @@ const swapModeSafeController = catchAsync(async function (req, res) {
     console.log("✓ Database swap completed successfully\n");
 
     // ============================================================
-    // STEP 4: Update mode AFTER successful swap
+    // STEP 4: Update mode in BOTH databases
     // ============================================================
-    // ============================================================
-    // STEP 4: Update mode AFTER successful swap
-    // ============================================================
-    console.log("Updating system mode in database...");
+    console.log("Updating system mode in BOTH databases...\n");
 
-    // Connect to the NEW database (after swap)
     const { local, remote } = buildDbConfigs();
     const targetDb = targetMode === "online" ? remote : local;
+    const sourceDb = targetMode === "online" ? local : remote;
 
-    const updateClient = new Client({
-      host: targetDb.host,
-      port: targetDb.port || 5432,
-      user: targetDb.user,
-      database: targetDb.database,
-      password: targetDb.password || "",
-    });
+    let targetUpdateSuccess = false;
+    let sourceUpdateSuccess = false;
 
+    // Update TARGET database (the one we just swapped to)
     try {
-      await updateClient.connect();
-
-      // ✅ Update mode without updated_at column
-      const updateResult = await updateClient.query(
-        "UPDATE system_mode SET mode = $1 RETURNING *",
-        [targetMode]
+      console.log(`[1/2] Updating TARGET database (${targetDb.database})...`);
+      await updateModeInDatabase(targetDb, targetMode);
+      targetUpdateSuccess = true;
+    } catch (targetErr) {
+      console.error(
+        `❌ Failed to update target database: ${targetErr.message}`
       );
-
-      if (updateResult.rowCount === 0) {
-        throw new Error("Failed to update system mode");
-      }
-
-      console.log(`✓ Mode updated to: ${targetMode}`);
-      console.log(`✓ Updated row:`, updateResult.rows[0]);
-
-      await updateClient.end();
-    } catch (updateErr) {
-      try {
-        await updateClient.end();
-      } catch (_) {}
-      throw new Error(`Failed to update mode: ${updateErr.message}`);
+      throw new Error(
+        `Critical: Failed to update mode in target database: ${targetErr.message}`
+      );
     }
 
+    // Update SOURCE database (to keep both in sync)
+    try {
+      console.log(`[2/2] Updating SOURCE database (${sourceDb.database})...`);
+      await updateModeInDatabase(sourceDb, targetMode);
+      sourceUpdateSuccess = true;
+    } catch (sourceErr) {
+      console.error(
+        `❌ Failed to update source database: ${sourceErr.message}`
+      );
+      // This is critical - both databases must have the same mode
+      throw new Error(
+        `Critical: Failed to update mode in source database: ${sourceErr.message}`
+      );
+    }
+
+    if (targetUpdateSuccess && sourceUpdateSuccess) {
+      console.log(
+        `\n✅ Mode successfully updated to "${targetMode}" in BOTH databases\n`
+      );
+    } else {
+      throw new Error("Mode update incomplete - databases may be out of sync");
+    }
     // ============================================================
-    // STEP 5: Reconnect Sequelize to new database
+    // STEP 4.5: Verify mode synchronization
     // ============================================================
-    // ============================================================
-    // STEP 5: Reconnect Sequelize to new database
-    // ============================================================
-    console.log("Reconnecting ORM to new database...");
+    console.log("Verifying mode synchronization...");
+
+    const verifyMode = async (dbConfig, expectedMode) => {
+      const client = new Client({
+        host: dbConfig.host,
+        port: dbConfig.port || 5432,
+        user: dbConfig.user,
+        database: dbConfig.database,
+        password: dbConfig.password || "",
+      });
+
+      try {
+        await client.connect();
+
+        // Just get the mode from the single record
+        const result = await client.query(
+          "SELECT mode FROM system_mode LIMIT 1"
+        );
+        await client.end();
+
+        if (!result.rows[0]) {
+          throw new Error("No mode record found");
+        }
+
+        const actualMode = result.rows[0].mode;
+        if (actualMode !== expectedMode) {
+          throw new Error(`Expected "${expectedMode}", got "${actualMode}"`);
+        }
+
+        console.log(`   ✓ ${dbConfig.database}: mode="${actualMode}"`);
+        return true;
+      } catch (err) {
+        try {
+          await client.end();
+        } catch (_) {}
+        throw err;
+      }
+    };
 
     try {
-      // DON'T close sequelize - it can't be reopened!
-      // Instead, drain existing pools without closing the connection manager
+      await verifyMode(targetDb, targetMode);
+      await verifyMode(sourceDb, targetMode);
+      console.log("✅ Both databases confirmed synchronized\n");
+    } catch (verifyErr) {
+      throw new Error(`Mode verification failed: ${verifyErr.message}`);
+    }
+    // ============================================================
+    // STEP 5: Prepare for application restart
+    // ============================================================
+    console.log(
+      "Preparing application restart to reconnect to new database...\n"
+    );
 
-      if (sequelize.connectionManager && sequelize.connectionManager.pool) {
-        // Drain the pool (close idle connections)
-        await sequelize.connectionManager.pool.drain();
-        // await sequelize.connectionManager.pool.clear();
-      }
+    // Update environment variables for restart
+    process.env.DB_HOST = targetDb.host;
+    process.env.DB_PORT = targetDb.port;
+    process.env.DB_NAME = targetDb.database;
+    process.env.DB_USER_NAME = targetDb.user;
+    process.env.DB_PASSWORD = targetDb.password;
 
-      // Wait for connections to clear
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      // Update Sequelize configuration
-      sequelize.config.host = targetDb.host;
-      sequelize.config.port = targetDb.port;
-      sequelize.config.database = targetDb.database;
-      sequelize.config.username = targetDb.user;
-      sequelize.config.password = targetDb.password;
-
-      // Also update options object (Sequelize uses both)
-      if (sequelize.options) {
-        sequelize.options.host = targetDb.host;
-        sequelize.options.port = targetDb.port;
-        sequelize.options.database = targetDb.database;
-      }
-
-      // Reinitialize connection pools with new config
-      if (sequelize.connectionManager) {
-        sequelize.connectionManager.initPools();
-      }
-
-      // Test connection with retries
-      let reconnected = false;
-      const maxRetries = 5;
-
-      for (let i = 0; i < maxRetries; i++) {
-        try {
-          await sequelize.authenticate();
-
-          // Verify we're connected to the correct database
-          const [result] = await sequelize.query(
-            "SELECT current_database() as db"
-          );
-          const connectedDb = result[0].db;
-
-          if (connectedDb !== targetDb.database) {
-            throw new Error(
-              `Connected to wrong database: ${connectedDb}, expected: ${targetDb.database}`
-            );
-          }
-
-          reconnected = true;
-          console.log(`✓ ORM reconnected to: ${connectedDb}\n`);
-          break;
-        } catch (err) {
-          console.log(
-            `   Reconnection attempt ${i + 1}/${maxRetries} failed: ${
-              err.message
-            }`
-          );
-
-          if (i < maxRetries - 1) {
-            const waitTime = 2000 * (i + 1);
-            console.log(`   Waiting ${waitTime}ms before retry...`);
-            await new Promise((resolve) => setTimeout(resolve, waitTime));
-          }
-        }
-      }
-
-      if (!reconnected) {
-        throw new Error(
-          `Failed to reconnect ORM after ${maxRetries} attempts. ` +
-            `Database swap succeeded but you must restart the application.`
-        );
-      }
-    } catch (reconnectErr) {
-      console.error("❌ ORM reconnection failed:", reconnectErr.message);
-
-      // Mark that restart is needed but don't fail the whole swap
-      console.error(
-        "\n⚠️  ACTION REQUIRED: Please restart the application to complete the database swap.\n"
-      );
-
-      // Don't throw - we'll handle this gracefully
+    // Update local config if using local mode
+    if (targetMode === "offline") {
+      process.env.DB_HOST_LOCAL = targetDb.host;
+      process.env.DB_NAME_LOCAL = targetDb.database;
+      process.env.DB_USER_LOCAL = targetDb.user;
+      process.env.DB_PASSWORD_LOCAL = targetDb.password;
     }
     // ============================================================
     // STEP 6: Log the change
@@ -1105,29 +1177,37 @@ const swapModeSafeController = catchAsync(async function (req, res) {
     // ============================================================
     // STEP 7: Get final state and respond
     // ============================================================
-    const finalClient = new Client({
-      host: targetDb.host,
-      port: targetDb.port || 5432,
-      user: targetDb.user,
-      database: targetDb.database,
-      password: targetDb.password || "",
-    });
-
+    // ============================================================
+    // STEP 7: Get final state and respond
+    // ============================================================
+    // ============================================================
+    // STEP 7: Get final state from target database
+    // ============================================================
+    // ============================================================
+    // STEP 7: Get final state from target database
+    // ============================================================
     let finalRow = null;
-
     try {
+      const finalClient = new Client({
+        host: targetDb.host,
+        port: targetDb.port || 5432,
+        user: targetDb.user,
+        database: targetDb.database,
+        password: targetDb.password || "",
+      });
+
       await finalClient.connect();
       const finalResult = await finalClient.query(
         "SELECT * FROM system_mode LIMIT 1"
       );
       finalRow = finalResult.rows[0];
       await finalClient.end();
+
+      console.log("Final state:", finalRow);
     } catch (finalErr) {
       console.warn("⚠️ Could not fetch final row:", finalErr.message);
-      // Create a fallback response
       finalRow = { mode: targetMode };
     }
-
     console.log("=".repeat(60));
     console.log("✅ MODE SWAP COMPLETED SUCCESSFULLY");
     console.log("=".repeat(60) + "\n");
@@ -1135,18 +1215,43 @@ const swapModeSafeController = catchAsync(async function (req, res) {
     // ✅ Release lock before responding
     await lock.release();
 
-    // ✅ Respond immediately - don't try to use Sequelize
-    return appResponder(
-      StatusCodes.OK,
-      {
-        status: "success",
-        message: `System mode switched to "${targetMode}". Server will auto-reconnect.`,
-        data: finalRow,
-        swapDetails: swapResult,
-        note: "Database connections will refresh automatically",
-      },
-      res
+    // ✅ Respond to client FIRST
+    res.status(StatusCodes.OK).json({
+      status: "success",
+      message: `System mode switched to "${targetMode}". Server restarting in 3 seconds...`,
+      data: finalRow,
+      swapDetails: swapResult,
+      serverRestarting: true,
+    });
+
+    // ============================================================
+    // STEP 8: Restart application after response sent
+    // ============================================================
+    console.log(
+      "Response sent to client. Restarting application in 3 seconds...\n"
     );
+
+    setTimeout(() => {
+      console.log("Triggering application restart...");
+
+      // For PM2
+      if (process.env.PM2_HOME || process.env.pm_id) {
+        const { exec } = require("child_process");
+        exec("pm2 restart ecosystem.config.js", (error, stdout, stderr) => {
+          if (error) {
+            console.error("PM2 restart failed:", error);
+            process.exit(0); // Exit anyway, let PM2 auto-restart
+          }
+        });
+      }
+      // For nodemon or other process managers
+      else {
+        console.log("Exiting process (process manager should restart)...");
+        process.exit(0);
+      }
+    }, 3000);
+
+    // Don't return - we already sent the response
   } catch (err) {
     console.error("\n" + "=".repeat(60));
     console.error("❌ MODE SWAP FAILED");
@@ -1291,6 +1396,78 @@ const validateMode = [
     .isIn(["online", "offline", "maintenance"])
     .withMessage("mode must be online | offline | maintenance"),
 ];
+
+/**
+ * Updates the system mode in a specific database
+ * @param {Object} dbConfig - Database configuration
+ * @param {string} mode - Target mode ('online' or 'offline')
+ * @returns {Promise<Object>} Updated row
+ */
+/**
+ * Updates the system mode in a specific database
+ * Ensures table exists first
+ */
+/**
+ * Updates the system mode in a specific database
+ * Updates ALL records since there should only be one
+ */
+async function updateModeInDatabase(dbConfig, mode) {
+  const client = new Client({
+    host: dbConfig.host,
+    port: dbConfig.port || 5432,
+    user: dbConfig.user,
+    database: dbConfig.database,
+    password: dbConfig.password || "",
+    connectionTimeoutMillis: 10000,
+  });
+
+  try {
+    await client.connect();
+    console.log(`   Updating ${dbConfig.database}...`);
+
+    // Ensure table exists first (without id column)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS system_mode (
+        mode VARCHAR(20) NOT NULL DEFAULT 'offline'
+      );
+    `);
+
+    // Check if any records exist
+    const countResult = await client.query(
+      "SELECT COUNT(*) as count FROM system_mode"
+    );
+    const count = parseInt(countResult.rows[0].count, 10);
+
+    let result;
+    if (count === 0) {
+      // Insert if table is empty
+      result = await client.query(
+        "INSERT INTO system_mode (mode) VALUES ($1) RETURNING *",
+        [mode]
+      );
+      console.log(`   ✓ Inserted mode "${mode}" in ${dbConfig.database}`);
+    } else {
+      // Update ALL records (should only be one)
+      result = await client.query(
+        "UPDATE system_mode SET mode = $1 RETURNING *",
+        [mode]
+      );
+      console.log(
+        `   ✓ Updated ${result.rowCount} record(s) to "${mode}" in ${dbConfig.database}`
+      );
+    }
+
+    await client.end();
+    return result.rows[0];
+  } catch (err) {
+    try {
+      await client.end();
+    } catch (_) {}
+    throw new Error(
+      `Failed to update mode in ${dbConfig.database}: ${err.message}`
+    );
+  }
+}
 
 // ============================================================
 // EXPORTS
