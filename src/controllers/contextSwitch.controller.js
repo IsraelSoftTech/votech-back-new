@@ -19,50 +19,43 @@ const path = require("path");
 const zlib = require("zlib");
 const { v4: uuidv4 } = require("uuid");
 const { Client } = require("pg");
-const os = require("os");
 
 const TMP_DIR = path.join(__dirname, "../../temp", "db-swaps");
 const SWAP_LOCK_FILE = path.join(TMP_DIR, ".swap.lock");
-const STATE_FILE = path.join(TMP_DIR, ".swap-state.json");
-
 const IS_WINDOWS = process.platform === "win32";
 
-// PostgreSQL binary paths - CONFIGURE THESE
+// PostgreSQL binary paths
 const PG_BIN_PATH =
   process.env.PG_BIN_PATH ||
-  (IS_WINDOWS
-    ? "C:\\portable-postgres\\pgsql\\bin" // Your portable postgres path
-    : "/usr/bin"); // Default Unix path
+  (IS_WINDOWS ? "C:\\portable-postgres\\pgsql\\bin" : "/usr/bin");
 
 // Initialize directories
 (async () => {
   try {
     await fs.mkdir(TMP_DIR, { recursive: true });
+    console.log("✓ Temp directory initialized:", TMP_DIR);
   } catch (err) {
     console.error("Failed to create temp directory:", err);
   }
 })();
 
 // ============================================================
-// CROSS-PLATFORM UTILITIES
+// UTILITIES
 // ============================================================
 
 function getPgCommand(command) {
   const extension = IS_WINDOWS ? ".exe" : "";
   const pgPath = path.join(PG_BIN_PATH, `${command}${extension}`);
 
-  // Check if exists, otherwise try system PATH
   if (fsSync.existsSync(pgPath)) {
     return `"${pgPath}"`;
   }
-
-  return command; // Hope it's in PATH
+  return command;
 }
 
 async function checkDiskSpace(requiredBytes) {
   try {
     if (IS_WINDOWS) {
-      // Use PowerShell on Windows
       const drive = path.parse(TMP_DIR).root;
       const { stdout } = await exec(
         `powershell "Get-PSDrive ${drive.charAt(
@@ -77,13 +70,12 @@ async function checkDiskSpace(requiredBytes) {
             (requiredBytes * 2) /
             1024 /
             1024
-          ).toFixed(2)}MB, ` +
-            `Available: ${(availableBytes / 1024 / 1024).toFixed(2)}MB`
+          ).toFixed(2)}MB, Available: ${(availableBytes / 1024 / 1024).toFixed(
+            2
+          )}MB`
         );
       }
-      return true;
     } else {
-      // Use df on Unix
       const { stdout } = await exec(
         `df -k "${TMP_DIR}" | tail -1 | awk '{print $4}'`
       );
@@ -96,15 +88,16 @@ async function checkDiskSpace(requiredBytes) {
             (requiredBytes * 2) /
             1024 /
             1024
-          ).toFixed(2)}MB, ` +
-            `Available: ${(availableBytes / 1024 / 1024).toFixed(2)}MB`
+          ).toFixed(2)}MB, Available: ${(availableBytes / 1024 / 1024).toFixed(
+            2
+          )}MB`
         );
       }
-      return true;
     }
+    return true;
   } catch (err) {
     console.warn("Could not verify disk space:", err.message);
-    return true; // Don't fail on check errors
+    return true;
   }
 }
 
@@ -127,6 +120,7 @@ class SwapLock {
         await fs.writeFile(SWAP_LOCK_FILE, lockId, { flag: "wx" });
         this.locked = true;
         this.lockId = lockId;
+        console.log("✓ Lock acquired:", lockId);
         return true;
       } catch (err) {
         if (err.code === "EEXIST") {
@@ -134,6 +128,7 @@ class SwapLock {
             const stats = await fs.stat(SWAP_LOCK_FILE);
             const ageMs = Date.now() - stats.mtimeMs;
             if (ageMs > 3600000) {
+              // 1 hour stale lock
               await fs.unlink(SWAP_LOCK_FILE).catch(() => {});
               continue;
             }
@@ -153,6 +148,7 @@ class SwapLock {
         const content = await fs.readFile(SWAP_LOCK_FILE, "utf8");
         if (content === this.lockId) {
           await fs.unlink(SWAP_LOCK_FILE);
+          console.log("✓ Lock released:", this.lockId);
         }
       } catch (_) {}
       this.locked = false;
@@ -162,78 +158,8 @@ class SwapLock {
 }
 
 // ============================================================
-// STATE MANAGEMENT
+// DATABASE OPERATIONS
 // ============================================================
-
-class SwapState {
-  constructor() {
-    this.state = {
-      phase: "none",
-      timestamp: null,
-      direction: null,
-      backupFiles: [],
-      databases: {},
-      ftpUploads: {},
-    };
-  }
-
-  async save() {
-    await fs.writeFile(STATE_FILE, JSON.stringify(this.state, null, 2));
-  }
-
-  async load() {
-    try {
-      const content = await fs.readFile(STATE_FILE, "utf8");
-      this.state = JSON.parse(content);
-      return this.state;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  async clear() {
-    try {
-      await fs.unlink(STATE_FILE);
-    } catch (_) {}
-    this.state = {
-      phase: "none",
-      timestamp: null,
-      direction: null,
-      backupFiles: [],
-      databases: {},
-      ftpUploads: {},
-    };
-  }
-
-  update(updates) {
-    this.state = {
-      ...this.state,
-      ...updates,
-      timestamp: new Date().toISOString(),
-    };
-  }
-}
-
-// ============================================================
-// DATABASE OPERATIONS (Cross-platform)
-// ============================================================
-
-async function runCommand(cmd, env = {}, options = {}) {
-  try {
-    const { stdout, stderr } = await exec(cmd, {
-      env: { ...process.env, ...env },
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: options.timeout || 300000,
-      shell: IS_WINDOWS ? "powershell.exe" : undefined,
-      ...options,
-    });
-    return { stdout, stderr, success: true };
-  } catch (error) {
-    console.error(`Command failed: ${cmd}`);
-    console.error(`Error: ${error.message}`);
-    throw new Error(`Command failed: ${error.message}`);
-  }
-}
 
 async function verifyConnection(dbConfig) {
   const client = new Client({
@@ -254,7 +180,9 @@ async function verifyConnection(dbConfig) {
     try {
       await client.end();
     } catch (_) {}
-    throw new Error(`Database connection failed: ${err.message}`);
+    throw new Error(
+      `Cannot connect to ${dbConfig.database} at ${dbConfig.host}: ${err.message}`
+    );
   }
 }
 
@@ -282,26 +210,18 @@ async function getDatabaseSize(dbConfig) {
   }
 }
 
-// ============================================================
-// CROSS-PLATFORM PG_DUMP with Node.js streams
-// ============================================================
-
 async function dumpDatabaseToGzip(dbConfig, dstFilename) {
   const outPath = path.join(TMP_DIR, dstFilename);
 
   return new Promise((resolve, reject) => {
-    console.log(`Creating dump: ${dstFilename}`);
+    console.log(`📦 Creating dump: ${dstFilename}`);
 
-    // Build connection string (works on both Windows and Unix)
     const connectionString = `postgresql://${dbConfig.user}:${
       dbConfig.password
     }@${dbConfig.host}:${dbConfig.port || 5432}/${dbConfig.database}`;
 
     const pgDumpPath = getPgCommand("pg_dump");
 
-    console.log(`Using pg_dump at: ${pgDumpPath}`);
-
-    // Spawn pg_dump process
     const pgDump = spawn(
       pgDumpPath,
       [
@@ -319,20 +239,20 @@ async function dumpDatabaseToGzip(dbConfig, dstFilename) {
       }
     );
 
-    // Create write stream with gzip compression
     const gzip = zlib.createGzip({ level: 9 });
     const writeStream = fsSync.createWriteStream(outPath);
 
     let hasError = false;
     let errorMessage = "";
 
-    // Pipe: pg_dump -> gzip -> file
     pgDump.stdout.pipe(gzip).pipe(writeStream);
 
     pgDump.stderr.on("data", (data) => {
       const message = data.toString();
-      console.error(`pg_dump stderr: ${message}`);
-      errorMessage += message;
+      if (message.includes("ERROR")) {
+        console.error(`pg_dump error: ${message}`);
+        errorMessage += message;
+      }
     });
 
     pgDump.on("error", (error) => {
@@ -344,7 +264,6 @@ async function dumpDatabaseToGzip(dbConfig, dstFilename) {
       if (hasError) return;
 
       try {
-        // Verify dump was created
         const stats = await fs.stat(outPath);
         if (stats.size < 100) {
           reject(new Error("Dump file is too small - may be corrupt"));
@@ -379,17 +298,9 @@ async function dumpDatabaseToGzip(dbConfig, dstFilename) {
   });
 }
 
-// ============================================================
-// RESTORE DATABASE (Cross-platform)
-// ============================================================
-
-// ============================================================
-// RESTORE DATABASE (Cross-platform with version compatibility)
-// ============================================================
-
 async function restoreDumpInto(dbConfig, dbName, gzipDumpPath) {
   return new Promise((resolve, reject) => {
-    console.log(`Restoring dump into ${dbName}...`);
+    console.log(`📥 Restoring dump into ${dbName}...`);
 
     const connectionString = `postgresql://${dbConfig.user}:${
       dbConfig.password
@@ -397,15 +308,14 @@ async function restoreDumpInto(dbConfig, dbName, gzipDumpPath) {
 
     const psqlPath = getPgCommand("psql");
 
-    // ✅ Spawn psql process with ON_ERROR_STOP but ignore specific errors
     const psql = spawn(
       psqlPath,
       [
         connectionString,
         "--set",
-        "ON_ERROR_STOP=off", // ✅ Changed from "on" to "off"
+        "ON_ERROR_STOP=off",
         "-q",
-        "--variable=ON_ERROR_ROLLBACK=on", // ✅ Rollback individual commands that fail
+        "--variable=ON_ERROR_ROLLBACK=on",
       ],
       {
         env: { ...process.env, PGPASSWORD: dbConfig.password || "" },
@@ -413,14 +323,11 @@ async function restoreDumpInto(dbConfig, dbName, gzipDumpPath) {
       }
     );
 
-    // ✅ Create a transform stream to filter out incompatible commands
     const { Transform } = require("stream");
 
     const filterStream = new Transform({
       transform(chunk, encoding, callback) {
         let data = chunk.toString();
-
-        // ✅ Filter out incompatible SET commands
         data = data.replace(
           /SET transaction_timeout = .*?;/gi,
           "-- SET transaction_timeout (removed for compatibility)"
@@ -429,33 +336,27 @@ async function restoreDumpInto(dbConfig, dbName, gzipDumpPath) {
           /SET idle_in_transaction_session_timeout = .*?;/gi,
           "-- SET idle_in_transaction_session_timeout (removed)"
         );
-
         callback(null, data);
       },
     });
 
-    // Create gunzip stream
     const gunzip = zlib.createGunzip();
     const readStream = fsSync.createReadStream(gzipDumpPath);
 
     let hasError = false;
-    let errorMessage = "";
     let stderrOutput = "";
 
-    // Pipe: file -> gunzip -> filter -> psql
     readStream.pipe(gunzip).pipe(filterStream).pipe(psql.stdin);
 
     psql.stderr.on("data", (data) => {
       const message = data.toString();
       stderrOutput += message;
 
-      // ✅ Only log actual errors, ignore warnings
       if (
         message.includes("ERROR") &&
         !message.includes("transaction_timeout")
       ) {
-        console.error(`psql stderr: ${message}`);
-        errorMessage += message;
+        console.error(`psql error: ${message}`);
       }
     });
 
@@ -465,17 +366,12 @@ async function restoreDumpInto(dbConfig, dbName, gzipDumpPath) {
     });
 
     psql.on("close", (code) => {
-      // ✅ Check stderr for critical errors instead of just exit code
       const hasCriticalError =
         stderrOutput.includes("FATAL") ||
         stderrOutput.includes("could not connect");
 
       if (code !== 0 && hasCriticalError) {
-        reject(
-          new Error(
-            `psql exited with code ${code}: ${errorMessage || stderrOutput}`
-          )
-        );
+        reject(new Error(`psql exited with code ${code}: ${stderrOutput}`));
       } else {
         if (code !== 0) {
           console.warn(
@@ -504,16 +400,12 @@ async function restoreDumpInto(dbConfig, dbName, gzipDumpPath) {
   });
 }
 
-// ============================================================
-// OTHER DATABASE OPERATIONS
-// ============================================================
-
 async function createDatabase(dbConfig, dbName) {
   const client = new Client({
     host: dbConfig.host,
     port: dbConfig.port || 5432,
     user: dbConfig.user,
-    database: "postgres", // Connect to postgres db to create new db
+    database: "postgres",
     password: dbConfig.password || "",
   });
 
@@ -544,13 +436,8 @@ async function dropDatabase(dbConfig, dbName) {
   try {
     await client.connect();
 
-    // Terminate connections first
     await client.query(
-      `
-      SELECT pg_terminate_backend(pid) 
-      FROM pg_stat_activity 
-      WHERE datname = $1 AND pid <> pg_backend_pid();
-    `,
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid();`,
       [dbName]
     );
 
@@ -564,6 +451,55 @@ async function dropDatabase(dbConfig, dbName) {
       await client.end();
     } catch (_) {}
     throw new Error(`Failed to drop database: ${err.message}`);
+  }
+}
+
+async function terminateDbConnections(dbConfig, dbName) {
+  console.log(`🔌 Terminating connections to: ${dbName}`);
+
+  const client = new Client({
+    host: dbConfig.host,
+    port: dbConfig.port || 5432,
+    user: dbConfig.user,
+    database: "postgres",
+    password: dbConfig.password || "",
+  });
+
+  try {
+    await client.connect();
+
+    await client.query(
+      `UPDATE pg_database SET datallowconn = false WHERE datname = $1;`,
+      [dbName]
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    const countResult = await client.query(
+      `SELECT count(*) as count FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid();`,
+      [dbName]
+    );
+    console.log(
+      `   Active connections to terminate: ${countResult.rows[0].count}`
+    );
+
+    await client.query(
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid();`,
+      [dbName]
+    );
+
+    await client.end();
+
+    console.log("   Waiting for connections to fully terminate...");
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+
+    console.log(`✓ Connections terminated for ${dbName}`);
+  } catch (err) {
+    try {
+      await client.end();
+    } catch (_) {}
+    console.warn(`⚠️ Warning terminating connections: ${err.message}`);
+    await new Promise((resolve) => setTimeout(resolve, 3000));
   }
 }
 
@@ -581,26 +517,20 @@ async function renameDatabase(dbConfig, fromName, toName) {
   try {
     await client.connect();
 
-    // ✅ Disable connections and terminate
     await client.query(
       `UPDATE pg_database SET datallowconn = false WHERE datname = $1;`,
       [fromName]
     );
 
     await client.query(
-      `SELECT pg_terminate_backend(pid) 
-       FROM pg_stat_activity 
-       WHERE datname = $1 AND pid <> pg_backend_pid();`,
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid();`,
       [fromName]
     );
 
-    // ✅ Wait for termination
-    await new Promise((resolve) => setTimeout(resolve, 3000)); // Increased from 2000
+    await new Promise((resolve) => setTimeout(resolve, 3000));
 
-    // ✅ Perform rename
     await client.query(`ALTER DATABASE "${fromName}" RENAME TO "${toName}";`);
 
-    // ✅ Re-enable connections on the renamed database
     await client.query(
       `UPDATE pg_database SET datallowconn = true WHERE datname = $1;`,
       [toName]
@@ -608,73 +538,14 @@ async function renameDatabase(dbConfig, fromName, toName) {
 
     await client.end();
 
-    // ✅ Additional wait for rename to fully propagate
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
-    console.log(`✅ Database renamed: ${fromName} -> ${toName}`);
+    console.log(`✓ Database renamed: ${fromName} -> ${toName}`);
   } catch (err) {
     try {
       await client.end();
     } catch (_) {}
     throw new Error(`Failed to rename database: ${err.message}`);
-  }
-}
-async function terminateDbConnections(dbConfig, dbName) {
-  console.log(`🔌 Terminating connections to: ${dbName}`);
-
-  const client = new Client({
-    host: dbConfig.host,
-    port: dbConfig.port || 5432,
-    user: dbConfig.user,
-    database: "postgres",
-    password: dbConfig.password || "",
-  });
-
-  try {
-    await client.connect();
-
-    // ✅ First, prevent new connections
-    await client.query(
-      `UPDATE pg_database SET datallowconn = false WHERE datname = $1;`,
-      [dbName]
-    );
-
-    // ✅ Wait a moment for in-flight connections to register
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // ✅ Get count of active connections
-    const countResult = await client.query(
-      `SELECT count(*) as count FROM pg_stat_activity 
-       WHERE datname = $1 AND pid <> pg_backend_pid();`,
-      [dbName]
-    );
-    console.log(
-      `📊 Active connections to terminate: ${countResult.rows[0].count}`
-    );
-
-    // ✅ Terminate all connections
-    await client.query(
-      `SELECT pg_terminate_backend(pid) 
-       FROM pg_stat_activity 
-       WHERE datname = $1 AND pid <> pg_backend_pid();`,
-      [dbName]
-    );
-
-    await client.end();
-
-    // ✅ Wait for termination to complete (increased wait time)
-    console.log("⏳ Waiting for connections to fully terminate...");
-    await new Promise((resolve) => setTimeout(resolve, 3000)); // Increased from 2000
-
-    console.log(`✅ Connections terminated for ${dbName}`);
-  } catch (err) {
-    try {
-      await client.end();
-    } catch (_) {}
-    console.warn(`⚠️ Warning terminating connections: ${err.message}`);
-
-    // ✅ Still wait even if termination had issues
-    await new Promise((resolve) => setTimeout(resolve, 3000));
   }
 }
 
@@ -688,17 +559,15 @@ async function verifyDatabaseIsHealthy(dbConfig, dbName, retries = 5) {
       user: dbConfig.user,
       database: dbName,
       password: dbConfig.password || "",
-      connectionTimeoutMillis: 10000, // ✅ Increased from 5000
+      connectionTimeoutMillis: 10000,
     });
 
     try {
       await client.connect();
 
-      // ✅ Run multiple verification queries
       await client.query("SELECT 1 as ok");
       await client.query("SELECT current_database()");
 
-      // ✅ Check if database accepts connections
       const result = await client.query(
         "SELECT datallowconn FROM pg_database WHERE datname = $1",
         [dbName]
@@ -709,7 +578,7 @@ async function verifyDatabaseIsHealthy(dbConfig, dbName, retries = 5) {
       }
 
       await client.end();
-      console.log(`✅ Database ${dbName} is healthy (attempt ${i + 1})`);
+      console.log(`✓ Database ${dbName} is healthy (attempt ${i + 1})`);
       return true;
     } catch (err) {
       console.log(
@@ -727,9 +596,8 @@ async function verifyDatabaseIsHealthy(dbConfig, dbName, retries = 5) {
         return false;
       }
 
-      // ✅ Exponential backoff
       const waitTime = Math.min(1000 * Math.pow(2, i), 8000);
-      console.log(`⏳ Waiting ${waitTime}ms before retry...`);
+      console.log(`   Waiting ${waitTime}ms before retry...`);
       await new Promise((r) => setTimeout(r, waitTime));
     }
   }
@@ -778,83 +646,91 @@ async function safeSwapDatabases({ direction, ftpConfig = null }) {
   console.log(`   Target: ${target.database} @ ${target.host}`);
   console.log(`${"=".repeat(60)}\n`);
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const uid = uuidv4().slice(0, 8);
-
-  // ✅ Simpler naming (remove complex timestamp formatting)
-  const simpleTimestamp = new Date()
+  const timestamp = new Date()
     .toISOString()
     .split(".")[0]
     .replace(/[^0-9]/g, "");
+  const uid = uuidv4().slice(0, 8);
+
   const stagingDb = `${target.database}_staging_${uid}`;
   const targetBackupDb = `${target.database}_backup_${uid}`;
 
   const sourceDumpName = `swap-source-${timestamp}-${uid}.sql.gz`;
   const targetDumpName = `swap-target-${timestamp}-${uid}.sql.gz`;
-  const sourceDumpPath = path.join(TMP_DIR, sourceDumpName);
-  const targetDumpPath = path.join(TMP_DIR, targetDumpName);
 
   console.log(`📦 Staging DB: ${stagingDb}`);
   console.log(`💾 Backup DB: ${targetBackupDb}\n`);
+
+  let stagingCreated = false;
+  let swapPerformed = false;
 
   try {
     // [PHASE 1] Verify connections
     console.log("[PHASE 1] Verifying database connections...");
     await verifyConnection(source);
     await verifyConnection(target);
-    console.log("✅ Both databases accessible\n");
+    console.log("✓ Both databases accessible\n");
 
     // [PHASE 2] Create dumps
     console.log("[PHASE 2] Creating database dumps...");
     await dumpDatabaseToGzip(source, sourceDumpName);
     await dumpDatabaseToGzip(target, targetDumpName);
-    console.log("✅ Dumps created\n");
+    console.log("✓ Dumps created\n");
 
     // [PHASE 3] FTP backup (optional)
-    if (ftpConfig && typeof ftpConfig === "object") {
+    if (ftpConfig && typeof ftpConfig === "object" && ftpConfig.host) {
       console.log("[PHASE 3] Uploading to FTP...");
-      await backupAndPushToFTP(target, ftpConfig);
-      console.log("✅ FTP backup complete\n");
+      try {
+        await backupAndPushToFTP(target, ftpConfig);
+        console.log("✓ FTP backup complete\n");
+      } catch (ftpErr) {
+        console.warn(
+          `⚠️ FTP backup failed (non-critical): ${ftpErr.message}\n`
+        );
+      }
     }
 
     // [PHASE 4] Create and restore staging
     console.log("[PHASE 4] Creating staging database...");
     await createDatabase(target, stagingDb);
+    stagingCreated = true;
 
     console.log("[PHASE 4] Restoring into staging...");
-    await restoreDumpInto(target, stagingDb, sourceDumpPath);
-    console.log("✅ Staging database ready\n");
+    await restoreDumpInto(
+      target,
+      stagingDb,
+      path.join(TMP_DIR, sourceDumpName)
+    );
+    console.log("✓ Staging database ready\n");
 
     // [PHASE 5] Verify staging
     console.log("[PHASE 5] Verifying staging database...");
-    await new Promise((r) => setTimeout(r, 3000)); // ✅ Wait before verification
+    await new Promise((r) => setTimeout(r, 3000));
 
     const stagingOk = await verifyDatabaseIsHealthy(target, stagingDb, 5);
     if (!stagingOk) {
       throw new Error("Staging database verification failed - aborting swap");
     }
-    console.log("✅ Staging verified\n");
+    console.log("✓ Staging verified\n");
 
     // [PHASE 6] Perform the swap
     console.log("[PHASE 6] Performing database swap...");
 
-    // ✅ Terminate connections to target database
     await terminateDbConnections(target, target.database);
 
-    // ✅ Rename target to backup
     console.log(`   Renaming ${target.database} -> ${targetBackupDb}...`);
     await renameDatabase(target, target.database, targetBackupDb);
 
-    // ✅ Rename staging to target
     console.log(`   Renaming ${stagingDb} -> ${target.database}...`);
     await renameDatabase(target, stagingDb, target.database);
 
-    console.log("✅ Database swap complete\n");
+    swapPerformed = true;
+    stagingCreated = false; // Staging was renamed, not a separate DB anymore
+
+    console.log("✓ Database swap complete\n");
 
     // [PHASE 7] Post-swap verification
     console.log("[PHASE 7] Post-swap verification...");
-
-    // ✅ Longer wait before verification
     await new Promise((r) => setTimeout(r, 5000));
 
     const targetOk = await verifyDatabaseIsHealthy(target, target.database, 5);
@@ -863,7 +739,6 @@ async function safeSwapDatabases({ direction, ftpConfig = null }) {
       console.error("❌ POST-SWAP VERIFICATION FAILED! Attempting rollback...");
 
       try {
-        // ✅ Terminate connections before rollback
         await terminateDbConnections(target, target.database);
 
         // Rollback: rename current target back to staging
@@ -872,9 +747,7 @@ async function safeSwapDatabases({ direction, ftpConfig = null }) {
         // Rollback: rename backup back to target
         await renameDatabase(target, targetBackupDb, target.database);
 
-        console.log("✅ Rollback renames complete, verifying...");
-
-        // ✅ Wait before rollback verification
+        console.log("✓ Rollback renames complete, verifying...");
         await new Promise((r) => setTimeout(r, 5000));
 
         const rollbackOk = await verifyDatabaseIsHealthy(
@@ -884,16 +757,21 @@ async function safeSwapDatabases({ direction, ftpConfig = null }) {
         );
 
         if (!rollbackOk) {
-          console.error("💀 CRITICAL: ROLLBACK VERIFICATION FAILED!");
-          console.error(`   Original database may be at: ${targetBackupDb}`);
-          console.error(`   Failed swap at: ${stagingDb}`);
-          throw new Error("CRITICAL FAILURE: ROLLBACK VERIFICATION FAILED!");
+          throw new Error(
+            `CRITICAL: Rollback verification failed! Original database may be at: ${targetBackupDb}`
+          );
         }
 
-        console.log("✅ Rollback successful, original database restored");
-        throw new Error(
-          "Post-swap verification failed; rollback completed successfully"
-        );
+        console.log("✓ Rollback successful, original database restored");
+
+        // Clean up the failed staging database
+        try {
+          await dropDatabase(target, stagingDb);
+        } catch (e) {
+          console.warn(`Could not drop failed staging db: ${e.message}`);
+        }
+
+        throw new Error("Post-swap verification failed; rollback completed");
       } catch (rollbackErr) {
         console.error("💀 ROLLBACK ERROR:", rollbackErr.message);
         throw new Error(
@@ -903,7 +781,19 @@ async function safeSwapDatabases({ direction, ftpConfig = null }) {
       }
     }
 
-    console.log("✅ Post-swap verification passed\n");
+    console.log("✓ Post-swap verification passed\n");
+
+    // Clean up old backup database
+    console.log(`Cleaning up old backup: ${targetBackupDb}...`);
+    try {
+      await dropDatabase(target, targetBackupDb);
+      console.log(`✓ Old backup cleaned up\n`);
+    } catch (e) {
+      console.warn(
+        `⚠️ Could not drop backup db (non-critical): ${e.message}\n`
+      );
+    }
+
     console.log(`${"=".repeat(60)}`);
     console.log("✅ SWAP COMPLETED SUCCESSFULLY");
     console.log(`${"=".repeat(60)}\n`);
@@ -911,101 +801,99 @@ async function safeSwapDatabases({ direction, ftpConfig = null }) {
     return {
       success: true,
       message: `Swap completed: ${source.database} -> ${target.database}`,
-      files: { sourceDumpPath, targetDumpPath },
-      targetBackupDb,
-      stagingDb: null, // staging was renamed to target
+      files: {
+        sourceDump: sourceDumpName,
+        targetDump: targetDumpName,
+      },
+      direction,
+      timestamp: new Date().toISOString(),
     };
   } catch (err) {
     console.error("\n❌ SWAP FAILED:", err.message);
 
-    try {
-      // ✅ Cleanup staging if it still exists
-      await dropDatabase(target, stagingDb).catch((e) => {
+    // Cleanup staging if it still exists and swap wasn't performed
+    if (stagingCreated && !swapPerformed) {
+      try {
+        console.log("Cleaning up failed staging database...");
+        await dropDatabase(target, stagingDb);
+      } catch (e) {
         console.log(`Note: Could not drop staging db: ${e.message}`);
-      });
-    } catch (_) {}
+      }
+    }
 
     throw err;
   }
 }
 
 // ============================================================
-// CONTROLLERS (keep your existing controller code)
+// CONTROLLER
 // ============================================================
 
 const swapModeSafeController = catchAsync(async function (req, res) {
   const targetMode = req.body.mode || req.params.mode;
 
+  // Validate mode
   if (!["online", "offline"].includes(targetMode)) {
-    throw new AppError("Invalid mode", StatusCodes.BAD_REQUEST);
+    throw new AppError(
+      'Invalid mode. Must be "online" or "offline"',
+      StatusCodes.BAD_REQUEST
+    );
   }
 
-  let oldMode = null;
-  let sourceClient = null;
+  const lock = new SwapLock();
 
   try {
-    console.log(`\n${"=".repeat(60)}`);
-    console.log(`INITIATING DATABASE SWAP`);
+    // ============================================================
+    // STEP 1: Acquire lock
+    // ============================================================
+    console.log("\n" + "=".repeat(60));
+    console.log("DATABASE MODE SWAP INITIATED");
     console.log(`Target Mode: ${targetMode.toUpperCase()}`);
-    console.log(`${"=".repeat(60)}\n`);
+    console.log("=".repeat(60) + "\n");
 
-    const direction =
-      targetMode === "online" ? "localToRemote" : "remoteToLocal";
+    await lock.acquire();
 
-    // ✅ Get source database config
-    const { local, remote } = buildDbConfigs();
-    const sourceDb = direction === "localToRemote" ? local : remote;
+    // ============================================================
+    // STEP 2: Check current mode
+    // ============================================================
+    console.log("Checking current mode...");
+    const currentModeRow = await SystemMode.findOne({ raw: true });
 
-    console.log(`📊 Updating mode in source database BEFORE swap...`);
-    console.log(`   Source DB: ${sourceDb.database} @ ${sourceDb.host}`);
+    if (!currentModeRow) {
+      throw new AppError(
+        "System mode configuration missing",
+        StatusCodes.INTERNAL_SERVER_ERROR
+      );
+    }
 
-    // ✅ Update mode in SOURCE database using pg.Client (not Sequelize)
-    sourceClient = new Client({
-      host: sourceDb.host,
-      port: sourceDb.port || 5432,
-      user: sourceDb.user,
-      database: sourceDb.database,
-      password: sourceDb.password || "",
-    });
+    const currentMode = currentModeRow.mode;
+    console.log(`Current mode: ${currentMode}`);
 
-    await sourceClient.connect();
+    // If already in target mode, return early
+    if (currentMode === targetMode) {
+      console.log(`✓ Already in "${targetMode}" mode - no swap needed\n`);
 
-    // ✅ Get current mode for rollback purposes
-    const currentModeResult = await sourceClient.query(
-      "SELECT mode FROM system_mode LIMIT 1"
-    );
-    oldMode = currentModeResult.rows[0]?.mode;
-    console.log(`   Current mode: ${oldMode}`);
+      const updatedRow = await SystemMode.findOne({ raw: true });
 
-    if (oldMode === targetMode) {
-      await sourceClient.end();
-      console.log(`✓ Already in "${targetMode}" mode - no swap needed`);
+      await lock.release(); // ✅ Release lock before responding
 
-      const row = await SystemMode.findOne();
       return appResponder(
         StatusCodes.OK,
         {
           status: "success",
-          message: `Already in "${targetMode}" — no change`,
-          data: row,
+          message: `System is already in "${targetMode}" mode`,
+          data: updatedRow,
+          swapDetails: null,
         },
         res
       );
     }
 
-    // ✅ Update mode in source database (all rows)
-    await sourceClient.query("UPDATE system_mode SET mode = $1", [targetMode]);
-
-    // Verify update
-    const verifyResult = await sourceClient.query(
-      "SELECT mode FROM system_mode LIMIT 1"
-    );
-    console.log(
-      `✓ Mode in source DB updated to: ${verifyResult.rows[0]?.mode}`
-    );
-
-    await sourceClient.end();
-    sourceClient = null;
+    // ============================================================
+    // STEP 3: Perform database swap
+    // ============================================================
+    const direction =
+      targetMode === "online" ? "localToRemote" : "remoteToLocal";
 
     const ftpConfig = {
       host: process.env.FTP_HOST,
@@ -1015,268 +903,334 @@ const swapModeSafeController = catchAsync(async function (req, res) {
       remoteDir: "/backups",
     };
 
-    // Perform the swap (may close Sequelize)
+    console.log(`\nPerforming database swap (${direction})...\n`);
+
     const swapResult = await safeSwapDatabases({
       direction,
       ftpConfig: ftpConfig.host ? ftpConfig : null,
-      userId: req.user?.id || 1,
     });
 
-    // Ensure Sequelize reconnected if closed
-    await ensureSequelizeConnected();
+    console.log("✓ Database swap completed successfully\n");
 
-    // ✅ Verify the mode is correct in the swapped database
-    const row = await SystemMode.findOne();
-    console.log(`📊 Mode in swapped database: ${row?.mode}`);
+    // ============================================================
+    // STEP 4: Update mode AFTER successful swap
+    // ============================================================
+    // ============================================================
+    // STEP 4: Update mode AFTER successful swap
+    // ============================================================
+    console.log("Updating system mode in database...");
 
-    // Start transaction for logging
-    const dbTransaction = await sequelize.transaction();
+    // Connect to the NEW database (after swap)
+    const { local, remote } = buildDbConfigs();
+    const targetDb = targetMode === "online" ? remote : local;
+
+    const updateClient = new Client({
+      host: targetDb.host,
+      port: targetDb.port || 5432,
+      user: targetDb.user,
+      database: targetDb.database,
+      password: targetDb.password || "",
+    });
 
     try {
-      // Log the change
-      await logChanges(
-        "system_mode",
-        1,
-        ChangeTypes.update,
-        {
-          id: 1,
-        } || 1,
-        { before: { mode: oldMode }, after: { mode: targetMode } },
-        dbTransaction
+      await updateClient.connect();
+
+      // ✅ Update mode without updated_at column
+      const updateResult = await updateClient.query(
+        "UPDATE system_mode SET mode = $1 RETURNING *",
+        [targetMode]
       );
 
-      await dbTransaction.commit();
+      if (updateResult.rowCount === 0) {
+        throw new Error("Failed to update system mode");
+      }
 
-      return appResponder(
-        StatusCodes.OK,
-        {
-          status: "success",
-          message: `System mode switched to "${targetMode}"`,
-          data: row,
-          swapDetails: swapResult,
-        },
-        res
-      );
-    } catch (transactionErr) {
-      await dbTransaction.rollback();
-      console.warn(
-        "Failed to log change (non-critical):",
-        transactionErr.message
-      );
+      console.log(`✓ Mode updated to: ${targetMode}`);
+      console.log(`✓ Updated row:`, updateResult.rows[0]);
 
-      // Still return success since the swap completed
-      return appResponder(
-        StatusCodes.OK,
-        {
-          status: "success",
-          message: `System mode switched to "${targetMode}" (logging failed)`,
-          data: row,
-          swapDetails: swapResult,
-        },
-        res
-      );
-    }
-  } catch (err) {
-    console.error("❌ Mode swap controller error:", err);
-
-    // ✅ ROLLBACK: Revert mode in source database if swap failed
-    if (oldMode && sourceClient) {
+      await updateClient.end();
+    } catch (updateErr) {
       try {
-        console.log(`🔄 Rolling back mode to: ${oldMode}`);
-        await sourceClient.query("UPDATE system_mode SET mode = $1", [oldMode]);
-        console.log(`✓ Mode rolled back to: ${oldMode}`);
-        await sourceClient.end();
-      } catch (rollbackErr) {
-        console.error("❌ Failed to rollback mode:", rollbackErr.message);
+        await updateClient.end();
+      } catch (_) {}
+      throw new Error(`Failed to update mode: ${updateErr.message}`);
+    }
+
+    // ============================================================
+    // STEP 5: Reconnect Sequelize to new database
+    // ============================================================
+    // ============================================================
+    // STEP 5: Reconnect Sequelize to new database
+    // ============================================================
+    console.log("Reconnecting ORM to new database...");
+
+    try {
+      // DON'T close sequelize - it can't be reopened!
+      // Instead, drain existing pools without closing the connection manager
+
+      if (sequelize.connectionManager && sequelize.connectionManager.pool) {
+        // Drain the pool (close idle connections)
+        await sequelize.connectionManager.pool.drain();
+        // await sequelize.connectionManager.pool.clear();
+      }
+
+      // Wait for connections to clear
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      // Update Sequelize configuration
+      sequelize.config.host = targetDb.host;
+      sequelize.config.port = targetDb.port;
+      sequelize.config.database = targetDb.database;
+      sequelize.config.username = targetDb.user;
+      sequelize.config.password = targetDb.password;
+
+      // Also update options object (Sequelize uses both)
+      if (sequelize.options) {
+        sequelize.options.host = targetDb.host;
+        sequelize.options.port = targetDb.port;
+        sequelize.options.database = targetDb.database;
+      }
+
+      // Reinitialize connection pools with new config
+      if (sequelize.connectionManager) {
+        sequelize.connectionManager.initPools();
+      }
+
+      // Test connection with retries
+      let reconnected = false;
+      const maxRetries = 5;
+
+      for (let i = 0; i < maxRetries; i++) {
         try {
-          await sourceClient.end();
-        } catch (_) {}
+          await sequelize.authenticate();
+
+          // Verify we're connected to the correct database
+          const [result] = await sequelize.query(
+            "SELECT current_database() as db"
+          );
+          const connectedDb = result[0].db;
+
+          if (connectedDb !== targetDb.database) {
+            throw new Error(
+              `Connected to wrong database: ${connectedDb}, expected: ${targetDb.database}`
+            );
+          }
+
+          reconnected = true;
+          console.log(`✓ ORM reconnected to: ${connectedDb}\n`);
+          break;
+        } catch (err) {
+          console.log(
+            `   Reconnection attempt ${i + 1}/${maxRetries} failed: ${
+              err.message
+            }`
+          );
+
+          if (i < maxRetries - 1) {
+            const waitTime = 2000 * (i + 1);
+            console.log(`   Waiting ${waitTime}ms before retry...`);
+            await new Promise((resolve) => setTimeout(resolve, waitTime));
+          }
+        }
       }
-    } else if (oldMode) {
-      // sourceClient already closed, try to reconnect and rollback
-      try {
-        const { local, remote } = buildDbConfigs();
-        const sourceDb = direction === "localToRemote" ? local : remote;
 
-        const rollbackClient = new Client({
-          host: sourceDb.host,
-          port: sourceDb.port || 5432,
-          user: sourceDb.user,
-          database: sourceDb.database,
-          password: sourceDb.password || "",
-        });
-
-        await rollbackClient.connect();
-        await rollbackClient.query("UPDATE system_mode SET mode = $1", [
-          oldMode,
-        ]);
-        console.log(`✓ Mode rolled back to: ${oldMode}`);
-        await rollbackClient.end();
-      } catch (rollbackErr) {
-        console.error("❌ Failed to rollback mode:", rollbackErr.message);
+      if (!reconnected) {
+        throw new Error(
+          `Failed to reconnect ORM after ${maxRetries} attempts. ` +
+            `Database swap succeeded but you must restart the application.`
+        );
       }
-    }
-
-    // Ensure Sequelize reconnected even on error
-    try {
-      await ensureSequelizeConnected();
     } catch (reconnectErr) {
-      console.error("❌ Failed to reconnect Sequelize:", reconnectErr.message);
+      console.error("❌ ORM reconnection failed:", reconnectErr.message);
+
+      // Mark that restart is needed but don't fail the whole swap
+      console.error(
+        "\n⚠️  ACTION REQUIRED: Please restart the application to complete the database swap.\n"
+      );
+
+      // Don't throw - we'll handle this gracefully
+    }
+    // ============================================================
+    // STEP 6: Log the change
+    // ============================================================
+    try {
+      console.log("Logging change to new database...");
+
+      const logClient = new Client({
+        host: targetDb.host,
+        port: targetDb.port || 5432,
+        user: targetDb.user,
+        database: targetDb.database,
+        password: targetDb.password || "",
+      });
+
+      await logClient.connect();
+
+      // Check if change_logs table exists, if so insert
+      const tableCheck = await logClient.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_name = 'change_logs'
+        );
+      `);
+
+      if (tableCheck.rows[0].exists) {
+        await logClient.query(
+          `
+            INSERT INTO change_logs 
+            (table_name, record_id, change_type, changed_by, fields_changed, changed_at)
+            VALUES ($1, $2, $3, $4, $5, NOW())
+          `,
+          [
+            "system_mode",
+            1,
+            "UPDATE", // must match ENUM
+            1,
+            JSON.stringify({
+              before: { mode: currentMode },
+              after: { mode: targetMode },
+            }),
+          ]
+        );
+
+        console.log("✓ Change logged\n");
+      } else {
+        console.log("⚠️ change_logs table not found, skipping log\n");
+      }
+
+      await logClient.end();
+    } catch (logErr) {
+      console.warn("⚠️ Failed to log change (non-critical):", logErr.message);
+    }
+    // ============================================================
+    // STEP 7: Get final state and respond
+    // ============================================================
+    const finalClient = new Client({
+      host: targetDb.host,
+      port: targetDb.port || 5432,
+      user: targetDb.user,
+      database: targetDb.database,
+      password: targetDb.password || "",
+    });
+
+    let finalRow = null;
+
+    try {
+      await finalClient.connect();
+      const finalResult = await finalClient.query(
+        "SELECT * FROM system_mode LIMIT 1"
+      );
+      finalRow = finalResult.rows[0];
+      await finalClient.end();
+    } catch (finalErr) {
+      console.warn("⚠️ Could not fetch final row:", finalErr.message);
+      // Create a fallback response
+      finalRow = { mode: targetMode };
     }
 
-    throw new AppError(
-      `Failed to swap mode: ${err.message}`,
-      StatusCodes.INTERNAL_SERVER_ERROR
+    console.log("=".repeat(60));
+    console.log("✅ MODE SWAP COMPLETED SUCCESSFULLY");
+    console.log("=".repeat(60) + "\n");
+
+    // ✅ Release lock before responding
+    await lock.release();
+
+    // ✅ Respond immediately - don't try to use Sequelize
+    return appResponder(
+      StatusCodes.OK,
+      {
+        status: "success",
+        message: `System mode switched to "${targetMode}". Server will auto-reconnect.`,
+        data: finalRow,
+        swapDetails: swapResult,
+        note: "Database connections will refresh automatically",
+      },
+      res
+    );
+  } catch (err) {
+    console.error("\n" + "=".repeat(60));
+    console.error("❌ MODE SWAP FAILED");
+    console.error("=".repeat(60));
+    console.error(`Error: ${err.message}\n`);
+
+    // ✅ Always release lock on error
+    await lock.release();
+
+    // Try to reconnect Sequelize even on error
+    try {
+      await sequelize.authenticate();
+    } catch (reconnectErr) {
+      console.error("⚠️ Sequelize reconnection failed:", reconnectErr.message);
+    }
+
+    // ✅ Return error response to client IMMEDIATELY
+    return appResponder(
+      err.statusCode || StatusCodes.INTERNAL_SERVER_ERROR,
+      {
+        status: "error",
+        message: `Failed to switch mode: ${err.message}`,
+        error: process.env.NODE_ENV === "development" ? err.stack : undefined,
+      },
+      res
     );
   }
 });
-async function reconnectSequelize() {
-  try {
-    await sequelize.authenticate();
-    console.log("✓ Sequelize already connected");
-    return true;
-  } catch (err) {
-    console.log("⚠️ Sequelize not connected, reconnecting...");
+const readOnlyGate = catchAsync(async (req, res, next) => {
+  const verb = req.method.toUpperCase();
 
-    try {
-      // Close old connection manager
-      if (sequelize.connectionManager) {
-        await sequelize.connectionManager.close().catch(() => {});
-      }
-
-      // ✅ Get fresh config
-      const { remote } = buildDbConfigs();
-
-      // ✅ Update config properly
-      sequelize.config.database = remote.database;
-      sequelize.config.host = remote.host;
-      sequelize.config.port = remote.port;
-      sequelize.config.username = remote.user;
-      sequelize.config.password = remote.password;
-
-      // ✅ Ensure dialect is set
-      if (!sequelize.config.dialect) {
-        sequelize.config.dialect = "postgres";
-      }
-
-      // ✅ Re-initialize connection pool
-      sequelize.connectionManager.initPools();
-
-      // Test connection
-      await sequelize.authenticate();
-
-      console.log("✓ Sequelize reconnected successfully");
-      return true;
-    } catch (reconnectErr) {
-      console.error("❌ Failed to reconnect:", reconnectErr.message);
-      throw new Error(`Database reconnection failed: ${reconnectErr.message}`);
-    }
+  // Always allow GET requests (read operations)
+  if (verb === "GET") {
+    return next();
   }
-}
 
-// Add this helper function
-async function ensureSequelizeConnected() {
-  try {
-    // Check if connection manager is open
-    await sequelize.authenticate();
-    console.log("✓ Sequelize already connected");
-    return true;
-  } catch (err) {
-    console.log("Sequelize not connected, reconnecting...");
+  // Get current system mode
+  const row = await SystemMode.findOne({ raw: true });
 
-    try {
-      // Close the old connection manager
-      if (sequelize.connectionManager) {
-        try {
-          await sequelize.connectionManager.close();
-        } catch (_) {}
-      }
-
-      // Create new connection manager by re-initializing the pool
-      const { Sequelize } = require("sequelize");
-
-      // Get current config
-      const config = sequelize.config;
-
-      // Re-create Sequelize instance with same config
-      const newSequelize = new Sequelize(
-        config.database,
-        config.username,
-        config.password,
-        {
-          host: config.host,
-          port: config.port,
-          dialect: config.dialect,
-          logging: config.logging,
-          pool: config.pool,
-          dialectOptions: config.dialectOptions,
-        }
-      );
-
-      // Test connection
-      await newSequelize.authenticate();
-      console.log("✓ New Sequelize connection established");
-
-      // Replace the global sequelize instance
-      // This is a bit hacky but necessary
-      Object.assign(sequelize, newSequelize);
-
-      // Re-sync models
-      Object.keys(sequelize.models).forEach((modelName) => {
-        const model = sequelize.models[modelName];
-        model.sequelize = sequelize;
-      });
-
-      return true;
-    } catch (reconnectErr) {
-      console.error("Failed to reconnect Sequelize:", reconnectErr);
-      throw new Error(`Database reconnection failed: ${reconnectErr.message}`);
-    }
+  if (!row) {
+    return next(
+      new AppError(
+        "System mode configuration missing",
+        StatusCodes.INTERNAL_SERVER_ERROR
+      )
+    );
   }
-}
 
-async function initSubject() {
-  try {
-    const tables = await SystemMode.sequelize
-      .getQueryInterface()
-      .showAllTables();
-    if (!tables.includes(SystemMode.tableName)) {
-      await SystemMode.sync({ force: false });
-      console.log("SystemMode table initialized");
-    }
-  } catch (err) {
-    console.error("Failed to initialize SystemMode table:", err);
+  const currentMode = row.mode;
+  const nodeEnv = process.env.NODE_ENV;
+
+  // SCENARIO 1: Desktop (local network) + Offline mode = ALLOW
+  // Local users can write when system is in offline mode
+  if (nodeEnv === "desktop" && currentMode === "offline") {
+    return next();
   }
-}
 
-async function initDbSwapLog() {
-  try {
-    const tables = await DbSwapLog.sequelize
-      .getQueryInterface()
-      .showAllTables();
-    if (!tables.includes(DbSwapLog.tableName)) {
-      await DbSwapLog.sync({ force: false });
-      console.log("DbSwapLog table initialized");
-    }
-  } catch (err) {
-    console.error("Failed to initialize DbSwapLog table:", err);
+  // SCENARIO 2: Production (remote server) + Online mode = ALLOW
+  // Remote users can write when system is in online mode
+  if (nodeEnv === "production" && currentMode === "online") {
+    return next();
   }
-}
 
-initSubject();
-initDbSwapLog();
+  // ALL OTHER SCENARIOS: BLOCK
+  // - Desktop + Online (should use remote server instead)
+  // - Production + Offline (remote is read-only)
+  // - Any maintenance mode
+  return next(
+    new AppError(
+      "System is in offline mode - only users on Votech's Local Network may create or update",
+      StatusCodes.SERVICE_UNAVAILABLE
+    )
+  );
+});
 
-const validateMode = [
-  body("mode")
-    .isIn(["online", "offline", "maintenance"])
-    .withMessage("mode must be online | offline | maintenance"),
-];
+// ============================================================
+// OTHER CONTROLLERS
+// ============================================================
 
 const getSystemMode = catchAsync(async (req, res) => {
   const row = await SystemMode.findOne({ raw: true });
   if (!row) {
     throw new AppError(
-      "System-mode row missing",
+      "System mode configuration missing",
       StatusCodes.INTERNAL_SERVER_ERROR
     );
   }
@@ -1293,30 +1247,54 @@ const goOffline = catchAsync(async (req, res) => {
   return swapModeSafeController(req, res);
 });
 
-const readOnlyGate = catchAsync(async (req, res, next) => {
-  const verb = req.method.toUpperCase();
-  const row = await SystemMode.findOne({ raw: true });
+// ============================================================
+// INITIALIZATION
+// ============================================================
 
-  if (!row) {
-    return next(
-      new AppError("System-mode row missing", StatusCodes.INTERNAL_SERVER_ERROR)
-    );
+async function initSystemMode() {
+  try {
+    const tables = await SystemMode.sequelize
+      .getQueryInterface()
+      .showAllTables();
+    if (!tables.includes(SystemMode.tableName)) {
+      await SystemMode.sync({ force: false });
+      console.log("✓ SystemMode table initialized");
+    }
+  } catch (err) {
+    console.error("Failed to initialize SystemMode table:", err);
   }
+}
 
-  if (
-    (row.mode === "offline" || row.mode === "maintenance") &&
-    verb !== "GET"
-  ) {
-    return next(
-      new AppError(
-        `Server is in ${row.mode.toUpperCase()} mode – only read operations allowed`,
-        StatusCodes.SERVICE_UNAVAILABLE
-      )
-    );
+async function initDbSwapLog() {
+  try {
+    const tables = await DbSwapLog.sequelize
+      .getQueryInterface()
+      .showAllTables();
+    if (!tables.includes(DbSwapLog.tableName)) {
+      await DbSwapLog.sync({ force: false });
+      console.log("✓ DbSwapLog table initialized");
+    }
+  } catch (err) {
+    console.error("Failed to initialize DbSwapLog table:", err);
   }
+}
 
-  next();
-});
+initSystemMode();
+initDbSwapLog();
+
+// ============================================================
+// VALIDATION
+// ============================================================
+
+const validateMode = [
+  body("mode")
+    .isIn(["online", "offline", "maintenance"])
+    .withMessage("mode must be online | offline | maintenance"),
+];
+
+// ============================================================
+// EXPORTS
+// ============================================================
 
 module.exports = {
   getSystemMode,

@@ -63,6 +63,7 @@ const corsOptions = {
     "X-Requested-With",
     "Accept",
     "Origin",
+    "sync-key",
   ],
   exposedHeaders: ["Content-Range", "X-Content-Range"],
   maxAge: 86400,
