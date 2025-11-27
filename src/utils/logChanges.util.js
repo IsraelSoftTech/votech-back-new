@@ -27,10 +27,11 @@ const ChangeTypes = {
   delete: "DELETE",
 };
 
+// Ensure NODE_ENV is defined; default to 'development' instead of crashing
+const NODE_ENV = process.env.NODE_ENV || "development";
 if (!process.env.NODE_ENV) {
-  throw new AppError(
-    "Node environment, .env config not found",
-    StatusCodes.INTERNAL_SERVER_ERROR
+  console.warn(
+    "NODE_ENV is not set. Defaulting to 'development' for change logging."
   );
 }
 
@@ -57,7 +58,7 @@ const logChanges = async (
   }
 
   const changedAt = new Date();
-  const source = process.env.NODE_ENV === "desktop" ? "local" : "online";
+  const source = NODE_ENV === "desktop" ? "local" : "online";
   const synced = false;
 
   try {

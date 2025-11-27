@@ -21,8 +21,10 @@ fs.mkdirSync(DEV_UPLOAD_DIR, { recursive: true });
 const TEMP_DIR = process.env.TEMP_DIR || path.join(os.tmpdir(), "ftp-uploads");
 fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-const isProduction = true;
+const NODE_ENV = process.env.NODE_ENV || "development";
+const isProduction = NODE_ENV === "production";
 
+// In real production we require full FTP config; in dev/desktop we fall back to local storage
 if (isProduction) {
   if (
     !process.env.FTP_USER ||
@@ -34,6 +36,10 @@ if (isProduction) {
   ) {
     throw new Error("Invalid FTP Server configuration");
   }
+} else {
+  console.warn(
+    "FTP configuration is incomplete or NODE_ENV is not 'production'. Using local file storage instead of FTP."
+  );
 }
 
 const config = {
@@ -421,9 +427,10 @@ async function handleFileUploads(req, maxSizePerFileInMB, allowedExtensions) {
     }
   }
 
-  return process.env.NODE_ENV === "desktop"
-    ? handleFileUploadsDevelopment(req)
-    : handleFileUploadsProduction(req);
+  // Use FTP only in true production; otherwise use local development storage
+  return NODE_ENV === "production"
+    ? handleFileUploadsProduction(req)
+    : handleFileUploadsDevelopment(req);
 }
 
 async function uploadSingleFileToFTP(localFilePath, remoteFileName, ftpConfig) {
