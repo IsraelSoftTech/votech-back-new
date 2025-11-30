@@ -645,10 +645,16 @@ module.exports = function createStaffAttendanceRouter(pool, authenticateToken) {
       const overallAttendanceRate =
         totalRecords > 0 ? Math.round((totalPresent / totalRecords) * 100) : 0;
 
+      // Calculate total expected days for all staff
+      const totalExpectedDays = reportData.reduce(
+        (sum, staffReport) => sum + staffReport.expected_days,
+        0
+      );
+
       const report = {
         month: targetMonth,
         month_name: moment(targetMonth, "YYYY-MM").format("MMMM YYYY"),
-        total_staff: staffMembers.length,
+        total_staff: allStaff.length,
         total_records: totalRecords,
         total_expected_days: totalExpectedDays,
         settings: {
