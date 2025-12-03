@@ -1288,6 +1288,22 @@ const readOnlyGate = catchAsync(async (req, res, next) => {
     return next();
   }
 
+  // Allow localhost/development requests (for local development)
+  const isLocalhost = 
+    req.hostname === "localhost" || 
+    req.hostname === "127.0.0.1" ||
+    req.hostname === "::1" ||
+    req.ip === "127.0.0.1" ||
+    req.ip === "::1";
+  
+  const nodeEnv = process.env.NODE_ENV;
+  const isDevelopment = !nodeEnv || nodeEnv === "development" || nodeEnv === "dev";
+
+  // Allow all requests in development/localhost environment
+  if (isLocalhost || isDevelopment) {
+    return next();
+  }
+
   // Get current system mode
   const row = await SystemMode.findOne({ raw: true });
 
@@ -1301,7 +1317,6 @@ const readOnlyGate = catchAsync(async (req, res, next) => {
   }
 
   const currentMode = row.mode;
-  const nodeEnv = process.env.NODE_ENV;
 
   // SCENARIO 1: Desktop (local network) + Offline mode = ALLOW
   // Local users can write when system is in offline mode
