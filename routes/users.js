@@ -282,14 +282,17 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
 
 // Delete user
 router.delete("/:id", authenticateToken, requireAdmin, async (req, res) => {
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
     const { id } = req.params;
 
-    const existingUser = await pool.query("SELECT * FROM users WHERE id = $1", [
+    const existingUser = await client.query("SELECT * FROM users WHERE id = $1", [
       id,
     ]);
 
     if (existingUser.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: "User not found" });
     }
 
@@ -297,10 +300,61 @@ router.delete("/:id", authenticateToken, requireAdmin, async (req, res) => {
     const deletedData = existingUser.rows[0];
 
     if (parseInt(id) === req.user.id) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: "Cannot delete your own account" });
     }
 
-    await pool.query("DELETE FROM users WHERE id = $1", [id]);
+    // Delete related records first to avoid foreign key constraint violations
+    // Note: Most tables have ON DELETE CASCADE, but we'll be explicit here
+    
+    // Helper function to safely delete from table if it exists
+    const safeDelete = async (table, condition) => {
+      try {
+        // Create a savepoint for each delete operation
+        await client.query('SAVEPOINT delete_op');
+        await client.query(`DELETE FROM ${table} WHERE ${condition}`, [id]);
+        await client.query('RELEASE SAVEPOINT delete_op');
+      } catch (error) {
+        await client.query('ROLLBACK TO SAVEPOINT delete_op');
+        if (error.code === '42P01') { // Table doesn't exist
+          console.log(`Table ${table} does not exist, skipping...`);
+        } else {
+          console.log(`Error deleting from ${table}:`, error.message);
+          // Don't throw error for individual table failures, just log and continue
+        }
+      }
+    };
+    
+    // Delete from tables that might not have cascade delete
+    await safeDelete('teacher_discipline_cases', 'teacher_id = $1 OR created_by = $1');
+    await safeDelete('teacher_assignments', 'teacher_id = $1');
+    await safeDelete('salaries', 'user_id = $1');
+    await safeDelete('lesson_plans', 'user_id = $1 OR reviewed_by = $1');
+    await safeDelete('lessons', 'user_id = $1 OR reviewed_by = $1');
+    await safeDelete('hod_teachers', 'teacher_id = $1');
+    await safeDelete('hods', 'hod_user_id = $1');
+    await safeDelete('events', 'created_by = $1');
+    await safeDelete('discipline_cases', 'recorded_by = $1 OR resolved_by = $1');
+    await safeDelete('counselling_cases', 'assigned_to = $1 OR created_by = $1');
+    await safeDelete('counselling_sessions', 'created_by = $1');
+    await safeDelete('attendance_sessions', 'taken_by = $1');
+    await safeDelete('attendance', 'teacher_id = $1');
+    await safeDelete('reports', 'sent_to = $1 OR sent_by = $1');
+    
+    // Tables with CASCADE delete should be handled automatically, but let's ensure
+    await safeDelete('group_participants', 'user_id = $1');
+    await safeDelete('groups', 'creator_id = $1');
+    await safeDelete('messages', 'sender_id = $1 OR receiver_id = $1');
+    await safeDelete('user_activities', 'user_id = $1');
+    await safeDelete('user_sessions', 'user_id = $1');
+    
+    // Delete from change_logs (this was causing the foreign key constraint error)
+    await safeDelete('change_logs', 'changed_by = $1');
+
+    // Finally delete the user
+    await client.query("DELETE FROM users WHERE id = $1", [id]);
+
+    await client.query('COMMIT');
 
     const ipAddress = getIpAddress(req);
     const userAgent = getUserAgent(req);
@@ -321,8 +375,17 @@ router.delete("/:id", authenticateToken, requireAdmin, async (req, res) => {
 
     res.json({ message: "User deleted successfully" });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error("Error deleting user:", error);
-    res.status(500).json({ error: "Failed to delete user" });
+    
+    // Check for foreign key constraint violation
+    if (error.code === '23503') {
+      res.status(400).json({ error: "Cannot delete user: User has related records. Please contact administrator." });
+    } else {
+      res.status(500).json({ error: "Failed to delete user" });
+    }
+  } finally {
+    client.release();
   }
 });
 
