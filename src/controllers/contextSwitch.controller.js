@@ -663,6 +663,7 @@ async function ensureSystemModeTable(dbConfig) {
     try {
       await client.end();
     } catch (_) {}
+    console.log(dbConfig);
     throw new Error(
       `Failed to ensure system_mode table in ${dbConfig.database}: ${err.message}`
     );
@@ -1289,15 +1290,16 @@ const readOnlyGate = catchAsync(async (req, res, next) => {
   }
 
   // Allow localhost/development requests (for local development)
-  const isLocalhost = 
-    req.hostname === "localhost" || 
+  const isLocalhost =
+    req.hostname === "localhost" ||
     req.hostname === "127.0.0.1" ||
     req.hostname === "::1" ||
     req.ip === "127.0.0.1" ||
     req.ip === "::1";
-  
+
   const nodeEnv = process.env.NODE_ENV;
-  const isDevelopment = !nodeEnv || nodeEnv === "development" || nodeEnv === "dev";
+  const isDevelopment =
+    !nodeEnv || nodeEnv === "development" || nodeEnv === "dev";
 
   // Allow all requests in development/localhost environment
   if (isLocalhost || isDevelopment) {

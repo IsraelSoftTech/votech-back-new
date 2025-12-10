@@ -16,6 +16,11 @@ let CRUDMarks = new CRUD(MarksModel);
 let CRUDTerms = new CRUD(TermsModel);
 let CRUDSequences = new CRUD(SequencesModel);
 
+// Concurrency control
+const BATCH_SIZE = 10; // Process 10 marks at a time
+const MAX_RETRIES = 2; // Reduced from 3 for faster failure
+const RETRY_DELAY = 200; // Reduced from 500ms
+
 async function initMarks() {
   try {
     const tables = await MarksModel.sequelize
@@ -101,7 +106,6 @@ async function validateMarkData(
     throw new AppError(errors.join("; "), StatusCodes.BAD_REQUEST);
   }
 
-  // Only check for existing mark if not skipping (i.e., not batch upsert)
   if (!partial && !skipExistenceCheck) {
     const existing = await MarksModel.findOne({
       where: {
@@ -133,7 +137,7 @@ const readOneMark = catchAsync(async (req, res) => {
 });
 
 const readAllMarks = catchAsync(async (req, res) => {
-  await CRUDMarks.readAll(res, req);
+  await CRUDMarks.readAll(res, req, "student_id", 1, 300);
 });
 
 const updateMark = catchAsync(async (req, res) => {
@@ -145,7 +149,20 @@ const deleteMark = catchAsync(async (req, res) => {
   await CRUDMarks.delete(req.params.id, res, req);
 });
 
+/**
+ * OPTIMIZED FOR HIGH CONCURRENCY
+ * - Batched parallel processing (10 at a time)
+ * - Shorter transactions
+ * - Reduced retry attempts
+ * - Minimal logging
+ * - Fast failure detection
+ */
 const saveMarksBatch = catchAsync(async (req, res, next) => {
+  const startTime = Date.now();
+  const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+  console.log(`\n[${requestId}] 🚀 Batch save started`);
+
   const {
     academic_year_id,
     class_id,
@@ -156,153 +173,366 @@ const saveMarksBatch = catchAsync(async (req, res, next) => {
     uploaded_by,
   } = req.body;
 
+  // Step 1: Quick Validation
   if (
     !academic_year_id ||
     !class_id ||
     !term_id ||
     !sequence_id ||
     !subject_id ||
-    !Array.isArray(marks) ||
-    marks.length === 0
+    !uploaded_by
   ) {
+    console.error(`[${requestId}] ❌ Missing required fields`);
+    return next(new AppError("All fields required", StatusCodes.BAD_REQUEST));
+  }
+
+  if (!Array.isArray(marks) || marks.length === 0) {
+    console.error(`[${requestId}] ❌ Invalid marks array`);
     return next(
-      new AppError(
-        "academic_year_id, class_id, term_id, sequence_id, subject_id, and marks array are required",
-        StatusCodes.BAD_REQUEST
-      )
+      new AppError("marks must be non-empty array", StatusCodes.BAD_REQUEST)
     );
   }
 
-  const exist = await models.ClassSubject.findAll({
-    where: {
-      class_id,
-      subject_id,
-    },
-  });
-
-  if (exist.length < 1) {
+  if (marks.length > 1000) {
+    console.error(`[${requestId}] ❌ Batch too large: ${marks.length}`);
     return next(
-      new AppError(
-        "This class has not been assigned this subject!",
-        StatusCodes.FORBIDDEN
-      )
+      new AppError("Max 1000 marks per request", StatusCodes.BAD_REQUEST)
     );
   }
 
-  const marksToUpsert = [];
+  console.log(`[${requestId}] Processing ${marks.length} marks`);
 
-  for (const m of marks) {
-    const markData = {
-      ...m,
-      academic_year_id,
-      class_id,
-      term_id,
-      sequence_id,
-      subject_id,
-      uploaded_by,
-      uploaded_at: new Date(),
-    };
-
-    await validateMarkData(markData, false, true);
-    marksToUpsert.push(markData);
-  }
-
-  // -------------------------------------------------------
-  // 🔥 FETCH EXISTING RECORDS FIRST
-  // -------------------------------------------------------
-  const studentIds = marks.map((m) => m.student_id);
-
-  const existingMarks = await MarksModel.findAll({
-    where: {
-      student_id: studentIds,
-      subject_id,
-      class_id,
-      academic_year_id,
-      term_id,
-      sequence_id,
-    },
+  // Step 2: Verify Class-Subject (cached in production)
+  const classSubjectExists = await models.ClassSubject.findOne({
+    where: { class_id, subject_id },
   });
 
-  const existingMap = new Map();
-  for (const e of existingMarks) {
-    existingMap.set(e.student_id, e.toJSON());
+  if (!classSubjectExists) {
+    console.error(`[${requestId}] ❌ Class-Subject not assigned`);
+    return next(
+      new AppError("Class not assigned to subject", StatusCodes.FORBIDDEN)
+    );
   }
 
-  // -------------------------------------------------------
-  // 🔥 UPSERT ALL MARKS
-  // -------------------------------------------------------
-  await Promise.all(
-    marksToUpsert.map((mark) =>
-      MarksModel.upsert(mark, {
-        conflictFields: [
-          "student_id",
-          "subject_id",
-          "class_id",
-          "academic_year_id",
-          "term_id",
-          "sequence_id",
-        ],
-      })
-    )
-  );
+  // Step 3: Validate All Marks
+  const validMarks = [];
+  const validationErrors = [];
+  const seenStudents = new Set();
 
-  // -------------------------------------------------------
-  // 🔥 REFETCH UPDATED RECORDS (so we know the final form)
-  // -------------------------------------------------------
-  const updatedMarks = await MarksModel.findAll({
-    where: {
-      student_id: studentIds,
-      subject_id,
-      class_id,
-      academic_year_id,
-      term_id,
-      sequence_id,
-    },
-  });
+  for (let i = 0; i < marks.length; i++) {
+    const m = marks[i];
+    try {
+      if (seenStudents.has(m.student_id)) {
+        validationErrors.push({
+          index: i,
+          student_id: m.student_id,
+          error: "Duplicate",
+        });
+        continue;
+      }
 
-  // -------------------------------------------------------
-  // 🔥 LOG INSERTS / UPDATES INDIVIDUALLY
-  // -------------------------------------------------------
-  for (const row of updatedMarks) {
-    const old = existingMap.get(row.student_id);
+      if (!m.student_id || !Number.isInteger(m.student_id)) {
+        validationErrors.push({
+          index: i,
+          student_id: m.student_id,
+          error: "Invalid ID",
+        });
+        continue;
+      }
 
-    if (!old) {
-      // INSERT happened
-      await logChanges("marks", row.id, ChangeTypes.create, req.user, {
-        student_id: row.student_id,
-        value: row.value,
+      if (
+        m.score === undefined ||
+        m.score === null ||
+        typeof m.score !== "number"
+      ) {
+        validationErrors.push({
+          index: i,
+          student_id: m.student_id,
+          error: "Score required",
+        });
+        continue;
+      }
+
+      const score = Number(m.score);
+      if (isNaN(score) || score < 0 || score > 20) {
+        validationErrors.push({
+          index: i,
+          student_id: m.student_id,
+          error: `Invalid score: ${m.score}`,
+        });
+        continue;
+      }
+
+      const markData = {
+        student_id: m.student_id,
+        score,
+        academic_year_id,
+        class_id,
+        term_id,
+        sequence_id,
+        subject_id,
+        uploaded_by,
+        uploaded_at: new Date(),
+      };
+
+      await validateMarkData(markData, false, true);
+      validMarks.push(markData);
+      seenStudents.add(m.student_id);
+    } catch (error) {
+      validationErrors.push({
+        index: i,
+        student_id: m.student_id,
+        error: error.message,
       });
-    } else {
-      // UPDATE happened — detect field changes
-      const changedFields = {};
-      for (const key of Object.keys(row.toJSON())) {
-        if (old[key] !== row[key]) {
-          changedFields[key] = { before: old[key], after: row[key] };
-        }
-      }
-
-      // Only log if something actually changed
-      if (Object.keys(changedFields).length > 0) {
-        await logChanges(
-          "marks",
-          row.id,
-          ChangeTypes.update,
-          req.user,
-          changedFields
-        );
-      }
     }
   }
 
-  // -------------------------------------------------------
+  if (validMarks.length === 0) {
+    console.error(`[${requestId}] ❌ No valid marks`);
+    return appResponder(
+      StatusCodes.BAD_REQUEST,
+      {
+        status: "error",
+        message: "All marks failed validation",
+        errors: validationErrors.slice(0, 20),
+      },
+      res
+    );
+  }
 
-  const data = await MarksModel.findAll();
-
-  return appResponder(
-    StatusCodes.OK,
-    { status: "success", message: "Marks saved successfully", data },
-    res
+  console.log(
+    `[${requestId}] ${validMarks.length} valid, ${validationErrors.length} invalid`
   );
+
+  // Step 4: Start Transaction
+  const transaction = await MarksModel.sequelize.transaction();
+
+  try {
+    const studentIds = validMarks.map((m) => m.student_id);
+
+    // Step 5: Fetch Existing Marks
+    const existingMarks = await MarksModel.findAll({
+      where: {
+        student_id: studentIds,
+        subject_id,
+        class_id,
+        academic_year_id,
+        term_id,
+        sequence_id,
+      },
+      transaction,
+    });
+
+    const existingMap = new Map();
+    existingMarks.forEach((e) => existingMap.set(e.student_id, e.toJSON()));
+
+    // Step 6: BATCHED PARALLEL PROCESSING
+    const successfulSaves = [];
+    const failedSaves = [];
+    const created = [];
+    const updated = [];
+
+    // Process in batches of 10 to avoid overwhelming the database
+    for (
+      let batchStart = 0;
+      batchStart < validMarks.length;
+      batchStart += BATCH_SIZE
+    ) {
+      const batch = validMarks.slice(batchStart, batchStart + BATCH_SIZE);
+
+      const batchResults = await Promise.allSettled(
+        batch.map(async (mark) => {
+          const existingMark = existingMap.get(mark.student_id);
+          const isUpdate = !!existingMark;
+          let lastError = null;
+
+          // Retry logic
+          for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+              let savedId;
+
+              if (isUpdate) {
+                const [rows] = await MarksModel.update(
+                  {
+                    score: Number(mark.score),
+                    uploaded_by: mark.uploaded_by,
+                    uploaded_at: mark.uploaded_at,
+                  },
+                  { where: { id: existingMark.id }, transaction }
+                );
+                if (rows === 0) throw new Error("Update affected 0 rows");
+                savedId = existingMark.id;
+              } else {
+                const markToCreate = { ...mark, score: Number(mark.score) };
+                const newMark = await MarksModel.create(markToCreate, {
+                  transaction,
+                });
+                savedId = newMark.id;
+              }
+
+              // Quick verification
+              const verify = await MarksModel.findByPk(savedId, {
+                transaction,
+              });
+              if (!verify) throw new Error("Verification failed");
+              if (Number(verify.score) !== Number(mark.score)) {
+                throw new Error(
+                  `Score mismatch: ${verify.score} vs ${mark.score}`
+                );
+              }
+
+              return {
+                success: true,
+                student_id: mark.student_id,
+                score: mark.score,
+                action: isUpdate ? "updated" : "created",
+                id: savedId,
+                existingMark: isUpdate ? existingMark : null,
+              };
+            } catch (err) {
+              lastError = err;
+              if (attempt < MAX_RETRIES) {
+                await new Promise((r) => setTimeout(r, RETRY_DELAY));
+              }
+            }
+          }
+
+          return {
+            success: false,
+            student_id: mark.student_id,
+            error: lastError?.message || "Unknown error",
+          };
+        })
+      );
+
+      // Process batch results
+      for (const result of batchResults) {
+        if (result.status === "fulfilled" && result.value.success) {
+          const val = result.value;
+          successfulSaves.push({
+            student_id: val.student_id,
+            score: val.score,
+            action: val.action,
+            id: val.id,
+          });
+
+          if (val.action === "created") {
+            created.push(val.student_id);
+          } else {
+            updated.push(val.student_id);
+          }
+
+          // Async logging (don't wait)
+          if (
+            val.action === "updated" &&
+            val.existingMark &&
+            val.existingMark.score !== val.score
+          ) {
+            logChanges("marks", val.id, ChangeTypes.update, req.user, {
+              score: { before: val.existingMark.score, after: val.score },
+            }).catch((err) =>
+              console.warn(`[${requestId}] Log error: ${err.message}`)
+            );
+          } else if (val.action === "created") {
+            logChanges("marks", val.id, ChangeTypes.create, req.user, {
+              student_id: val.student_id,
+              score: val.score,
+            }).catch((err) =>
+              console.warn(`[${requestId}] Log error: ${err.message}`)
+            );
+          }
+        } else if (result.status === "fulfilled" && !result.value.success) {
+          failedSaves.push({
+            student_id: result.value.student_id,
+            error: result.value.error,
+          });
+        } else if (result.status === "rejected") {
+          failedSaves.push({
+            student_id: "unknown",
+            error: result.reason?.message || "Promise rejected",
+          });
+        }
+      }
+    }
+
+    const successRate = successfulSaves.length / validMarks.length;
+
+    // Step 7: Commit or Rollback
+    if (successRate < 0.9 && failedSaves.length > 0) {
+      await transaction.rollback();
+      console.error(
+        `[${requestId}] ❌ Rolled back: ${(successRate * 100).toFixed(
+          1
+        )}% success`
+      );
+
+      return appResponder(
+        StatusCodes.INTERNAL_SERVER_ERROR,
+        {
+          status: "error",
+          message: `Too many failures (${failedSaves.length}/${validMarks.length}). Rolled back.`,
+          saveErrors: failedSaves.slice(0, 20),
+        },
+        res
+      );
+    }
+
+    await transaction.commit();
+
+    const duration = Date.now() - startTime;
+    console.log(
+      `[${requestId}] ✅ Success: ${successfulSaves.length}/${validMarks.length} in ${duration}ms (${created.length} created, ${updated.length} updated)`
+    );
+
+    // Step 8: Final verification (outside transaction)
+    const finalMarks = await MarksModel.findAll({
+      where: { subject_id, class_id, academic_year_id, term_id, sequence_id },
+      order: [["student_id", "ASC"]],
+    });
+
+    const summary = {
+      total: marks.length,
+      validated: validMarks.length,
+      successful: successfulSaves.length,
+      failed: validationErrors.length + failedSaves.length,
+      created: created.length,
+      updated: updated.length,
+      duration_ms: duration,
+    };
+
+    const response = {
+      status: "success",
+      message: `Marks saved: ${summary.successful}/${summary.total}`,
+      data: finalMarks,
+      summary,
+    };
+
+    if (validationErrors.length > 0)
+      response.validationErrors = validationErrors.slice(0, 20);
+    if (failedSaves.length > 0) response.saveErrors = failedSaves.slice(0, 20);
+
+    return appResponder(
+      successfulSaves.length === validMarks.length
+        ? StatusCodes.OK
+        : StatusCodes.PARTIAL_CONTENT,
+      response,
+      res
+    );
+  } catch (error) {
+    await transaction.rollback();
+    const duration = Date.now() - startTime;
+    console.error(
+      `[${requestId}] ❌ Error after ${duration}ms:`,
+      error.message
+    );
+
+    return next(
+      new AppError(
+        `Save failed: ${error.message}`,
+        StatusCodes.INTERNAL_SERVER_ERROR
+      )
+    );
+  }
 });
 
 const readAllTerms = catchAsync(async (req, res) => {
@@ -312,314 +542,6 @@ const readAllTerms = catchAsync(async (req, res) => {
 const readAllSequences = catchAsync(async (req, res) => {
   await CRUDSequences.readAll(res, req, "", 1, 100000000000);
 });
-
-// function transformMarks(marks) {
-//   const subjectsMap = {};
-
-//   marks.forEach((mark) => {
-//     const subjectId = mark.subject.id;
-
-//     if (!subjectsMap[subjectId]) {
-//       subjectsMap[subjectId] = {
-//         code: mark.subject.code,
-//         title: mark.subject.name,
-//         coef: mark.subject.coefficient || 1,
-//         teacher:
-//           mark.class.class_master.name ||
-//           mark.class.class_master.username ||
-//           "",
-//         type: mark.subject.type,
-//         scores: {},
-//       };
-//     }
-
-//     // store sequence score dynamically
-//     subjectsMap[subjectId].scores[`seq${mark.sequence.id}`] = Number(
-//       mark.score
-//     );
-
-//     // store term average if exists
-//     if (mark.term && mark.term_average !== undefined) {
-//       subjectsMap[subjectId].scores[`term${mark.term.id}Avg`] =
-//         mark.term_average;
-//     }
-
-//     // store final average if exists
-//     if (mark.final_average !== undefined) {
-//       subjectsMap[subjectId].scores.finalAvg = mark.final_average;
-//     }
-//   });
-
-//   return Object.values(subjectsMap);
-// }
-
-// function splitSubjectsByType(subjects) {
-//   const generalSubjects = [];
-//   const professionalSubjects = [];
-
-//   subjects.forEach((subj) => {
-//     if (subj.type && subj.type === "general") {
-//       generalSubjects.push(subj);
-//     } else {
-//       professionalSubjects.push(subj);
-//     }
-//   });
-
-//   return { generalSubjects, professionalSubjects };
-// }
-
-// async function getStudentTermTotals(classId, academicYearId) {
-//   // 1️⃣ Fetch all marks for the class & academic year, including student & term
-//   const marks = await models.marks.findAll({
-//     where: { class_id: classId, academic_year_id: academicYearId },
-//     include: [
-//       {
-//         model: models.students,
-//         as: "student",
-//         attributes: ["id", "full_name"],
-//       },
-//       { model: models.Term, as: "term", attributes: ["id", "name"] },
-//       { model: models.Sequence, as: "sequence", attributes: ["id", "name"] },
-//     ],
-//     raw: true,
-//   });
-
-//   if (!marks.length) return {};
-
-//   // 2️⃣ Aggregate total & average per student per term
-//   const termTotalsMap = {}; // { studentId: { termId: { total, average } } }
-
-//   marks.forEach((m) => {
-//     const sId = m["student_id"];
-//     const tId = m["term_id"];
-//     if (!termTotalsMap[sId]) termTotalsMap[sId] = {};
-//     if (!termTotalsMap[sId][tId])
-//       termTotalsMap[sId][tId] = { total: 0, count: 0, average: 0 };
-
-//     termTotalsMap[sId][tId].total += Number(m.score);
-//     termTotalsMap[sId][tId].count += 1;
-//     termTotalsMap[sId][tId].average =
-//       termTotalsMap[sId][tId].total / termTotalsMap[sId][tId].count;
-//   });
-
-//   // 3️⃣ Convert to array format & compute ranks per term
-//   const students = [...new Set(marks.map((m) => m["student_id"]))];
-//   const terms = [...new Set(marks.map((m) => m["term_id"]))];
-
-//   const termRankings = {};
-
-//   terms.forEach((termId) => {
-//     const arr = students.map((studentId) => {
-//       const t = termTotalsMap[studentId][termId];
-//       return {
-//         student_id: studentId,
-//         total: t.total,
-//         average: Number(t.average.toFixed(2)),
-//       };
-//     });
-//     arr.sort((a, b) => b.total - a.total);
-//     arr.forEach((s, index) => {
-//       s.rank = index + 1;
-//       s.outOf = arr.length;
-//     });
-//     termRankings[termId] = arr;
-//   });
-
-//   // 4️⃣ Compute annual totals per student
-//   const annualTotals = students.map((studentId) => {
-//     const totals = terms.map((termId) => termTotalsMap[studentId][termId]);
-//     const total = totals.reduce((sum, t) => sum + t.total, 0);
-//     const average =
-//       totals.reduce((sum, t) => sum + t.average, 0) / totals.length;
-//     return {
-//       student_id: studentId,
-//       total,
-//       average: Number(average.toFixed(2)),
-//     };
-//   });
-
-//   // 5️⃣ Build final structured object per student
-//   const result = {};
-//   students.forEach((studentId) => {
-//     result[studentId] = {
-//       termTotals: {},
-//       annual: annualTotals.find((a) => a.student_id === studentId),
-//     };
-//     terms.forEach((termId) => {
-//       const termData = termRankings[termId].find(
-//         (s) => s.student_id === studentId
-//       );
-//       result[studentId].termTotals[`term${termId}`] = {
-//         total: termData.total,
-//         average: termData.average,
-//         rank: termData.rank,
-//         outOf: termData.outOf,
-//       };
-//     });
-//   });
-
-//   return result;
-// }
-
-// const getStudentReportCard = catchAsync(async (req, res, next) => {
-//   const { term, studentId, academicYearId, classId } = req.params;
-//   const sampleData = {
-//     // Sequences data structure
-
-//     // Calculated totals and averages
-//     termTotals: {
-//       term1: { total: 892, average: 15.2, rank: 2, outOf: 25 },
-//       term2: { total: 856, average: 14.6, rank: 3, outOf: 25 },
-//       term3: { total: 924, average: 15.8, rank: 1, outOf: 25 },
-//       annual: { total: 891, average: 15.2, rank: 2, outOf: 25 },
-//     },
-
-//     classStatistics: {
-//       classAverage: 12.8,
-//       highestAverage: 16.2,
-//       lowestAverage: 8.4,
-//     },
-
-//     conduct: {
-//       attendanceDays: 65,
-//       totalDays: 68,
-//       timesLate: 2,
-//       disciplinaryActions: 0,
-//     },
-
-//     administration: {
-//       classMaster: "NDICHIA GLIEM",
-//       principal: "Dr. ACADEMIC DIRECTOR",
-//       nextTermStarts: "September 2024",
-//       decision: "PROMOTED",
-//     },
-//   };
-
-//   if (!term) {
-//     return new AppError(
-//       "Please you must provide the term number in the query parameters",
-//       StatusCodes.BAD_REQUEST
-//     );
-//   }
-
-//   if (!studentId) {
-//     return new AppError(
-//       "Please you must provide the studen Id as a query paramenter",
-//       StatusCodes.BAD_REQUEST
-//     );
-//   }
-
-//   const reportCartTerm =
-//     term === 1 ? "FIRST TERM" : term === 2 ? "SECOND TERM" : "THIRD TERM";
-//   const studentInfo = await models.students.finByPk(studentId, {
-//     include: [
-//       {
-//         model: models.Class,
-//         as: "class",
-//         attributes: ["id", "name"],
-//       },
-//       {
-//         model: models.AcademicYear,
-//         as: "AcademicYear",
-//         attributes: ["id", "name", "start_date", "end_date"],
-//       },
-//       {
-//         model: models.specialties,
-//         as: "department",
-//         attributes: ["id", "name"],
-//       },
-//     ],
-//   });
-
-//   if (!studentInfo) {
-//     return next(
-//       new AppError("No such student Id in the database", StatusCodes.NOT_FOUND)
-//     );
-//   }
-
-//   const studentdob = new Date(studentInfo.registration_date);
-
-//   const formattedDOB = studentdob.toLocaleDateString("en-GB", {
-//     day: "numeric",
-//     month: "long",
-//     year: "numeric",
-//   });
-
-//   const marks = await models.marks.findAll({
-//     where: {
-//       student_id: studentId,
-//       academic_year_id: academicYearId,
-//       class_id: classId,
-//     },
-//     include: [
-//       {
-//         model: models.students,
-//         as: "student",
-//         attributes: ["id", "student_id", "full_name", "sex", "date_of_birth"],
-//       },
-//       {
-//         model: models.Subject,
-//         as: "subject",
-//         attributes: ["id", "name", "code"],
-//       },
-//       {
-//         model: models.Class,
-//         as: "class",
-//         attributes: ["id", "name"],
-//         include: [
-//           {
-//             model: models.users, // assuming class_master is a user
-//             as: "class_master",
-//             attributes: ["id", "username", "full_name"],
-//           },
-//         ],
-//       },
-//       {
-//         model: models.AcademicYear,
-//         as: "academic_year",
-//         attributes: ["id", "name"],
-//       },
-//       {
-//         model: models.Term,
-//         as: "term",
-//         attributes: ["id", "name"],
-//       },
-//       {
-//         model: models.Sequence,
-//         as: "sequence",
-//         attributes: ["id", "name"],
-//       },
-//     ],
-//     order: [["createdAt", "DESC"]],
-//   });
-
-//   const reducedMarks = transformMarks(marks);
-//   const { generalSubjects, professionalSubjects } = splitSubjects(reducedMarks);
-
-//   //Data objects
-//   const student = {
-//     name: studentInfo.full_name,
-//     registrationNumber: studentInfo.student_id,
-//     dateOfBirth: formattedDOB,
-//     class: `${studentInfo.class.name}`,
-//     option: studentInfo.department.name,
-//     academicYear: `${new Date(
-//       studentInfo.academicYear.start_date
-//     ).getFullYear()} - ${new Date(
-//       studentInfo.AcademicYear.end_date
-//     ).getFullYear()}`,
-//     term: reportCartTerm,
-//   };
-
-//   const sequences = {
-//     seq1: { name: "Sequence 1", weight: 1 },
-//     seq2: { name: "Sequence 2", weight: 1 },
-//     seq3: { name: "Sequence 3", weight: 1 },
-//     seq4: { name: "Sequence 4", weight: 1 },
-//     seq5: { name: "Sequence 5", weight: 1 },
-//     seq6: { name: "Sequence 6", weight: 1 },
-//   };
-// });
 
 module.exports = {
   initMarks,
