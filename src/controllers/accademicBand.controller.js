@@ -77,9 +77,9 @@ async function validateAcademicBandData(data, partial = false) {
     if (
       !data.comment ||
       typeof data.comment !== "string" ||
-      data.comment.length < 2
+      data.comment.length < 1
     ) {
-      errors.push("Comment is required and must be at least 2 characters");
+      errors.push("Comment is required and must be at least 1 character");
     }
   }
 

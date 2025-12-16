@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "20": "^3.1.9",
+    "archiver": "^7.0.1",
     "basic-ftp": "^5.0.5",
     "bcryptjs": "^2.4.3",
     "child_process": "^1.0.2",
@@ -30,6 +31,7 @@
     "puppeteer": "^24.16.0",
     "sequelize": "^6.37.7",
     "sequelize-auto": "^0.8.8",
+    "socket.io": "^4.8.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

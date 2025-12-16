@@ -10,5 +10,9 @@
   "production": {
     "url": "postgresql://votech_db_user:votech_db_2025@31.97.113.198:5432/votech_db",
     "dialect": "postgres"
+  },
+  "desktop": {
+    "url": "postgresql://SPVCEMVN@127.0.0.1:5432/votech",
+    "dialect": "postgres"
   }
 }

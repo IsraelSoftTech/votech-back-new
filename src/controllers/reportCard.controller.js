@@ -28,48 +28,51 @@ const administrationFormat = {
 
 const round = (n, d = 1) => Number(n.toFixed(d));
 
-// Shared builder: builds report cards and computes per-term + annual totals, ranks, and class stats
-function buildReportCardsFromMarks(marks, classMaster) {
-  // placeholders (keep them identical to bulk)
+// FIXED: Shared builder with corrected calculations
+function buildReportCardsFromMarks(marks, classMaster, termKey = "term3") {
   const sequences = { ...sequencesFormat };
   const administration = { ...administrationFormat, classMaster };
+  // Map term keys to term labels
+  const termLabels = {
+    term1: "FIRST TERM",
+    term2: "SECOND TERM",
+    term3: "THIRD TERM",
+    annual: "ANNUAL",
+  };
+  const termLabel = termLabels[termKey] || "THIRD TERM";
 
   const map = new Map();
 
+  // Step 1: Build student records and populate sequence scores
   for (const m of marks) {
     const stId = m?.student?.id;
     if (!stId) continue;
-
-    // const student = await models.students.findByPk(stId);
-
-    // let parents = [];
-
-    // if (student?.father_name) parents.push(student.father_name);
-    // if (student?.mother_name) parents.push(student.mother_name);
-
-    // administration.parents = parents.length > 0 ? parents.join(", ") : "N/A";
-
-    // administration.parents = parents.join(", ");
 
     // Create the student skeleton once
     if (!map.has(stId)) {
       map.set(stId, {
         student: {
           id: m.student.id,
-          name: m.student.full_name, // fixed to match selected attributes
+          name: m.student.full_name,
           registrationNumber: m.student.student_id,
           dateOfBirth: m.student.date_of_birth,
           class: m.student.Class?.name,
           option: m.student.Class?.department?.name,
           academicYear: m.academic_year?.name,
-          term: "THIRD TERM", // overall placeholder – not used for ranking
+          term: termLabel,
         },
         sequences,
         generalSubjects: [],
         professionalSubjects: [],
+        practicalSubjects: [],
         termTotals: { term1: {}, term2: {}, term3: {}, annual: {} },
-        classStatistics: {}, // filled later
-        conduct: {}, // placeholder
+        classStatistics: {},
+        conduct: {
+          attendanceDays: null,
+          totalDays: null,
+          timesLate: null,
+          disciplinaryActions: null,
+        },
         administration: {
           ...administration,
           parents:
@@ -86,14 +89,16 @@ function buildReportCardsFromMarks(marks, classMaster) {
     const arr =
       m.subject?.category === "professional"
         ? record.professionalSubjects
-        : record.generalSubjects;
+        : m.subject?.category === "general"
+        ? record.generalSubjects
+        : record.practicalSubjects;
 
     let subjectRow = arr.find((s) => s.code === m.subject.code);
     if (!subjectRow) {
       subjectRow = {
         code: m.subject.code,
-        title: m.subject.name, // fixed name/title mismatch
-        coef: m.subject.coefficient, // fixed coefficient naming
+        title: m.subject.name,
+        coef: m.subject.coefficient,
         teacher:
           m.subject.classSubjects?.find((el) => el.class_id === m.class_id)
             ?.teacher?.name ||
@@ -116,87 +121,130 @@ function buildReportCardsFromMarks(marks, classMaster) {
       arr.push(subjectRow);
     }
 
-    // Fill sequence score
+    // FIXED: Fill sequence score only once per sequence
     if (m.sequence?.order_number) {
-      subjectRow.scores[`seq${m.sequence.order_number}`] = +m.score;
+      const seqKey = `seq${m.sequence.order_number}`;
+      // Only set if not already set (prevents duplicates)
+      if (subjectRow.scores[seqKey] === null) {
+        subjectRow.scores[seqKey] = Number(m.score);
+      }
     }
   }
 
-  // Compute per-subject term averages and final average
+  // Step 2: FIXED - Calculate per-subject term averages correctly
   for (const rec of map.values()) {
     for (const subject of [
       ...rec.generalSubjects,
       ...rec.professionalSubjects,
+      ...rec.practicalSubjects,
     ]) {
-      const { scores, coef } = subject;
+      const { scores } = subject;
 
-      const avg = (...seqs) => {
-        const valid = seqs.filter((s) => s != null);
-        return valid.length
-          ? round(valid.reduce((a, b) => a + b, 0) / valid.length)
-          : null;
+      // FIXED: Calculate average of TWO sequences for each term
+      // If only one sequence exists, the average is that score divided by 1 (the count)
+      const calculateTermAverage = (seq1Score, seq2Score) => {
+        const validScores = [seq1Score, seq2Score].filter(
+          (s) => s !== null && s !== undefined && !isNaN(Number(s))
+        );
+
+        if (validScores.length === 0) return null;
+
+        // Average of available scores
+        const sum = validScores.reduce((a, b) => Number(a) + Number(b), 0);
+        return round(sum / validScores.length);
       };
 
-      scores.term1Avg = avg(scores.seq1, scores.seq2);
-      scores.term2Avg = avg(scores.seq3, scores.seq4);
-      scores.term3Avg = avg(scores.seq5, scores.seq6);
+      // Calculate term averages
+      scores.term1Avg = calculateTermAverage(scores.seq1, scores.seq2);
+      scores.term2Avg = calculateTermAverage(scores.seq3, scores.seq4);
+      scores.term3Avg = calculateTermAverage(scores.seq5, scores.seq6);
 
-      const terms = [scores.term1Avg, scores.term2Avg, scores.term3Avg];
-      const validTerms = terms.filter((t) => t != null);
+      // Calculate final average (average of all three term averages)
+      const termAverages = [
+        scores.term1Avg,
+        scores.term2Avg,
+        scores.term3Avg,
+      ].filter((t) => t !== null && t !== undefined && !isNaN(Number(t)));
 
-      const weightedSum = validTerms.reduce((sum, t) => sum + t * coef, 0);
-      scores.finalAvg = validTerms.length
-        ? round(weightedSum / (validTerms.length * coef))
-        : null;
+      if (termAverages.length > 0) {
+        scores.finalAvg = round(
+          termAverages.reduce((a, b) => a + b, 0) / termAverages.length
+        );
+      } else {
+        scores.finalAvg = null;
+      }
     }
   }
 
-  // Build per-term & annual totals + ranks
+  // Step 3: FIXED - Calculate per-student term totals and averages
   const studentsArray = Array.from(map.values());
 
-  const computeTerm = (studentRec, term) => {
+  const computeTerm = (studentRec, termKey) => {
     let totalWeighted = 0;
     let totalCoef = 0;
 
     for (const subj of [
       ...studentRec.generalSubjects,
       ...studentRec.professionalSubjects,
+      ...studentRec.practicalSubjects,
     ]) {
-      const avg = subj.scores[`term${term}Avg`];
-      if (avg !== null) {
-        totalWeighted += avg * subj.coef;
-        totalCoef += subj.coef;
+      const avg = subj.scores[`${termKey}Avg`];
+
+      // Only include subjects that have a valid average for this term
+      if (avg !== null && avg !== undefined && !isNaN(Number(avg))) {
+        totalWeighted += Number(avg) * Number(subj.coef);
+        totalCoef += Number(subj.coef);
       }
     }
 
-    const average = totalCoef ? round(totalWeighted / totalCoef) : 0;
-    return { total: totalWeighted, average };
+    const average = totalCoef > 0 ? round(totalWeighted / totalCoef) : 0;
+
+    return {
+      total: round(totalWeighted, 1),
+      average: average,
+    };
   };
 
-  // Term totals
+  // Calculate term totals for each student
   studentsArray.forEach((st) => {
-    st.termTotals.term1 = computeTerm(st, 1);
-    st.termTotals.term2 = computeTerm(st, 2);
-    st.termTotals.term3 = computeTerm(st, 3);
+    st.termTotals.term1 = computeTerm(st, "term1");
+    st.termTotals.term2 = computeTerm(st, "term2");
+    st.termTotals.term3 = computeTerm(st, "term3");
 
-    const annualWeighted =
-      st.termTotals.term1.total +
-      st.termTotals.term2.total +
-      st.termTotals.term3.total;
+    // FIXED: Annual calculation - average of the three term averages
+    const annualTermAverages = [
+      st.termTotals.term1.average,
+      st.termTotals.term2.average,
+      st.termTotals.term3.average,
+    ].filter((avg) => avg > 0);
 
-    const annualCoef =
-      [...st.generalSubjects, ...st.professionalSubjects].reduce(
-        (sum, s) => sum + s.coef,
-        0
-      ) * 3;
+    if (annualTermAverages.length > 0) {
+      const annualAverage = round(
+        annualTermAverages.reduce((a, b) => a + b, 0) /
+          annualTermAverages.length
+      );
 
-    st.termTotals.annual = {
-      total: annualWeighted,
-      average: annualCoef ? round(annualWeighted / annualCoef) : 0,
-    };
+      // Annual total is the sum of all term totals
+      const annualTotal = round(
+        st.termTotals.term1.total +
+          st.termTotals.term2.total +
+          st.termTotals.term3.total,
+        1
+      );
+
+      st.termTotals.annual = {
+        total: annualTotal,
+        average: annualAverage,
+      };
+    } else {
+      st.termTotals.annual = {
+        total: 0,
+        average: 0,
+      };
+    }
   });
 
-  // Ranks per term and annual
+  // Step 4: Calculate ranks per term and annual
   ["term1", "term2", "term3", "annual"].forEach((key) => {
     studentsArray
       .sort((a, b) => b.termTotals[key].average - a.termTotals[key].average)
@@ -206,19 +254,26 @@ function buildReportCardsFromMarks(marks, classMaster) {
       });
   });
 
-  // Class stats (based on annual average)
-  const averages = studentsArray.map((s) => s.termTotals.annual.average);
+  // Step 5: Calculate class statistics (based on annual average)
+  const averages = studentsArray
+    .map((s) => s.termTotals.annual.average)
+    .filter((avg) => avg > 0);
+
   const classStats = {
-    classAverage: round(averages.reduce((a, b) => a + b, 0) / averages.length),
-    highestAverage: Math.max(...averages),
-    lowestAverage: Math.min(...averages),
+    classAverage:
+      averages.length > 0
+        ? round(averages.reduce((a, b) => a + b, 0) / averages.length)
+        : 0,
+    highestAverage: averages.length > 0 ? round(Math.max(...averages)) : 0,
+    lowestAverage: averages.length > 0 ? round(Math.min(...averages)) : 0,
   };
+
   studentsArray.forEach((st) => (st.classStatistics = classStats));
 
   return studentsArray;
 }
 
-// BULK — unchanged behavior, but now uses the shared builder for consistency
+// BULK — unchanged behavior, but now uses the fixed builder
 const bulkReportCards = catchAsync(async (req, res, next) => {
   const { academicYearId, departmentId, classId } = req.query;
 
@@ -264,14 +319,20 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
   const marks = await models.marks.findAll({
     where: {
       academic_year_id: academicYearId,
-      // department_id: departmentId, // keep parity with your current bulk filter
       class_id: classId,
     },
     include: [
       {
         model: models.students,
         as: "student",
-        attributes: ["id", "full_name", "student_id", "date_of_birth"],
+        attributes: [
+          "id",
+          "full_name",
+          "student_id",
+          "date_of_birth",
+          "father_name",
+          "mother_name",
+        ],
         include: [
           {
             model: models.Class,
@@ -359,14 +420,20 @@ const singleReportCard = catchAsync(async (req, res, next) => {
   const marks = await models.marks.findAll({
     where: {
       academic_year_id: academicYearId,
-      // department_id: departmentId, // keep parity with your current bulk filter
       class_id: classId,
     },
     include: [
       {
         model: models.students,
         as: "student",
-        attributes: ["id", "full_name", "student_id", "date_of_birth"],
+        attributes: [
+          "id",
+          "full_name",
+          "student_id",
+          "date_of_birth",
+          "father_name",
+          "mother_name",
+        ],
         include: [
           {
             model: models.Class,
@@ -419,8 +486,6 @@ const singleReportCard = catchAsync(async (req, res, next) => {
 
   if (!marks.length) return next(new AppError("No data found", 404));
 
-  // Marks processed successfully
-
   const reportCardClass = await models.Class.findByPk(classId, {
     include: [
       {
@@ -436,7 +501,7 @@ const singleReportCard = catchAsync(async (req, res, next) => {
     reportCardClass?.classMaster?.username ||
     "";
 
-  const reportCards = await buildReportCardsFromMarks(marks, classMaster);
+  const reportCards = buildReportCardsFromMarks(marks, classMaster);
 
   const reportCard = reportCards.find(
     (rc) => String(rc.student.id) === String(studentId)
@@ -457,9 +522,9 @@ const singleReportCard = catchAsync(async (req, res, next) => {
 // Map query term -> internal key
 function selectedTermKey(term = "annual") {
   const t = String(term || "").toLowerCase();
-  if (t.includes("term1") || t.includes("first")) return "term1";
-  if (t.includes("term2") || t.includes("second")) return "term2";
-  if (t.includes("term3") || t.includes("third")) return "term3";
+  if (t.includes("term1") || t.includes("first") || t === "t1") return "term1";
+  if (t.includes("term2") || t.includes("second") || t === "t2") return "term2";
+  if (t.includes("term3") || t.includes("third") || t === "t3") return "term3";
   return "annual";
 }
 
@@ -478,7 +543,7 @@ function getColumnsForTerm(termKey) {
       { key: "seq4", label: "SEQ 4" },
       { key: "term2Avg", label: "TERM AVG" },
       { key: "term1Avg", label: "T1 AVG" },
-      { key: "yearAvg", label: "TOTAL AVG" }, // (T1+T2)/2
+      { key: "yearAvg", label: "TOTAL AVG" },
     ];
   }
   if (termKey === "term3") {
@@ -506,14 +571,10 @@ function getColumnsForTerm(termKey) {
   ];
 }
 
-// function round(n, d = 1) {
-//   const v = Number(n);
-//   if (!Number.isFinite(v)) return "";
-//   return Number(v.toFixed(d));
-// }
 function isNum(n) {
   return typeof n === "number" && !Number.isNaN(n);
 }
+
 function avg(values = []) {
   const arr = (values || []).map(Number).filter((x) => !Number.isNaN(x));
   if (!arr.length) return "";
@@ -556,21 +617,21 @@ const defaultGrading = [
 
 function remarkForAverage(n, grading = defaultGrading) {
   const v = Number(n);
-  if (Number.isNaN(v)) return { remark: "", remarkClass: "" };
+  if (Number.isNaN(v)) {
+    return { remark: "", remarkClass: "" };
+  }
 
-  // Pick the grading band that matches
-  const band = grading.find((g) => v >= g.band_min && v <= g.band_max);
+  // 1️⃣ Find remark text from the PROVIDED grading
+  const customBand = grading.find((g) => v >= g.band_min && v <= g.band_max);
 
-  if (!band) return { remark: "No Remark", remarkClass: "" };
-
-  // Find the *matching* default band to get its class
+  // 2️⃣ Find remark class STRICTLY from default grading
   const defaultBand = defaultGrading.find(
     (g) => v >= g.band_min && v <= g.band_max
   );
 
   return {
-    remark: band.comment, // from custom grading
-    remarkClass: defaultBand ? defaultBand.remarkClass : "",
+    remark: customBand?.comment ?? "No Remark",
+    remarkClass: defaultBand?.remarkClass ?? "",
   };
 }
 
@@ -597,7 +658,7 @@ function computeClassStatsForTerm(cards = [], termKey) {
 function toTemplateCard(rc, termKey, meta, grading) {
   const columns = getColumnsForTerm(termKey);
   const colCount = columns.length;
-  const subtotalColspan = colCount + 3; // CODE + SUBJECT + (columns) + COEF
+  const subtotalColspan = colCount + 3;
 
   const mapSubject = (subject) => {
     const s = subject.scores || {};
@@ -625,7 +686,6 @@ function toTemplateCard(rc, termKey, meta, grading) {
       };
     });
 
-    // per-row total = selected term avg * coef (or finalAvg for annual)
     let selAvg =
       termKey === "term1"
         ? s.term1Avg
@@ -654,6 +714,7 @@ function toTemplateCard(rc, termKey, meta, grading) {
 
   const generalRows = (rc.generalSubjects || []).map(mapSubject);
   const profRows = (rc.professionalSubjects || []).map(mapSubject);
+  const pracRows = (rc.practicalSubjects || []).map(mapSubject);
 
   const subtotal = (rows) => {
     const totalWeighted = rows
@@ -662,7 +723,7 @@ function toTemplateCard(rc, termKey, meta, grading) {
       .reduce((a, b) => a + b, 0);
     const totalCoef = rows.reduce((sum, r) => sum + (Number(r.coef) || 0), 0);
     const average = totalCoef ? round(totalWeighted / totalCoef, 1) : "";
-    const { remark, remarkClass } = remarkForAverage(average);
+    const { remark, remarkClass } = remarkForAverage(average, grading);
     return {
       totalWeighted: isNum(totalWeighted) ? Math.round(totalWeighted) : "",
       average,
@@ -673,6 +734,7 @@ function toTemplateCard(rc, termKey, meta, grading) {
 
   const generalSubtotal = subtotal(generalRows);
   const professionalSubtotal = subtotal(profRows);
+  const practicalSubtotal = subtotal(pracRows);
 
   const termTotals =
     termKey === "term1"
@@ -715,7 +777,12 @@ function toTemplateCard(rc, termKey, meta, grading) {
     subtotalColspan,
     generalSubjects: generalRows,
     professionalSubjects: profRows,
-    subtotals: { general: generalSubtotal, professional: professionalSubtotal },
+    practicalSubjects: pracRows,
+    subtotals: {
+      general: generalSubtotal,
+      professional: professionalSubtotal,
+      practical: practicalSubtotal,
+    },
     termTotals: {
       total: isNum(Number(termTotals?.total))
         ? Math.round(Number(termTotals.total))
@@ -732,6 +799,12 @@ function toTemplateCard(rc, termKey, meta, grading) {
       lowestAverage: "",
     },
     cumulativeAverage: isNum(Number(cumAvg)) ? round(Number(cumAvg), 1) : "",
+    conduct: rc.conduct || {
+      attendanceDays: null,
+      totalDays: null,
+      timesLate: null,
+      disciplinaryActions: null,
+    },
     administration: {
       classMaster: rc.administration?.classMaster || "",
       principal: rc.administration?.principal || "",
@@ -743,991 +816,1589 @@ function toTemplateCard(rc, termKey, meta, grading) {
   };
 }
 
-// Build a minimal safe HTML for Puppeteer (one page per card)
-// Build HTML for bulk report cards (A4 portrait, one page per card)
-// Pass an absolute defaultLogoUrl like `${req.protocol}://${req.get('host')}/public/logo.png`
 const imageDirectory = __dirname + "/../public/logo.png";
 
-function buildHTML(
-  reportCards,
-  { defaultLogoUrl = imageDirectory } = {},
-  grading
-) {
-  try {
-    const css = `
-    /* =============================== Report Card Styles =============================== */
-    /* Base page setup */
-    @page {
-      size: A4;
-      margin: 10mm;
+/**
+ * BULK REPORT CARD HTML GENERATOR
+ *
+ * Guarantees 1:1 parity with React ReportCard component
+ * - Exact same calculations, formatting, and rendering logic
+ * - Identical CSS and print styles
+ * - Auto-scaling for single-page fit
+ * - Edge-case handling (null values, missing subjects, term variations)
+ *
+ * @param {Array} students - Array of student data objects
+ * @param {Object} options - Configuration options
+ * @returns {String} Complete HTML document
+ */
+
+/**
+ * COMPLETELY REBUILT HTML GENERATOR - 1:1 REACT COMPONENT PARITY
+ *
+ * This function generates HTML that exactly matches the React ReportCard component
+ * with guaranteed single-page fit and all visual elements properly rendered.
+ */
+
+/**
+ * COMPLETELY REBUILT HTML GENERATOR - 1:1 REACT COMPONENT PARITY
+ *
+ * This function generates HTML that exactly matches the React ReportCard component
+ * with guaranteed single-page fit and all visual elements properly rendered.
+ */
+
+function buildHTML(students, options = {}) {
+  const {
+    grading = null,
+    logoUrl = "", // Base64 or URL
+    printMarginMm = 4, // Reduced from 8mm for better fit
+  } = options;
+
+  // ============================================================================
+  // EXACT GRADING LOGIC FROM REACT COMPONENT
+  // ============================================================================
+
+  const defaultGrading = [
+    { band_min: 18, band_max: 20, comment: "Excellent" },
+    { band_min: 16, band_max: 17.99, comment: "V.Good" },
+    { band_min: 14, band_max: 15.99, comment: "Good" },
+    { band_min: 12, band_max: 13.99, comment: "Fairly Good" },
+    { band_min: 10, band_max: 11.99, comment: "Average" },
+    { band_min: 0, band_max: 9.99, comment: "Weak" },
+  ];
+
+  const gradingScale = (
+    Array.isArray(grading) && grading.length ? grading : defaultGrading
+  )
+    .slice()
+    .sort((a, b) => b.band_min - a.band_min);
+
+  function getRemark(average) {
+    if (average == null || isNaN(Number(average))) return "N/A";
+    const band = gradingScale.find(
+      (g) => average >= g.band_min && average <= g.band_max
+    );
+    return band ? band.comment : "No Remark";
+  }
+
+  function getRemarkClass(remark) {
+    const norm = String(remark || "")
+      .toLowerCase()
+      .replace(/\./g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const map = {
+      excellent: "remark-excellent",
+      "v good": "remark-vgood",
+      "very good": "remark-vgood",
+      good: "remark-good",
+      "fairly good": "remark-fairly-good",
+      average: "remark-average",
+      weak: "remark-weak",
+    };
+
+    return map[norm] || "";
+  }
+
+  // ============================================================================
+  // EXACT TERM DATA LOGIC FROM REACT COMPONENT
+  // ============================================================================
+
+  function getCurrentTermData(term) {
+    if (term === "FIRST TERM") {
+      return {
+        showColumns: ["seq1", "seq2", "termAvg"],
+        columnHeaders: ["SEQ 1", "SEQ 2", "TERM AVG"],
+        getTermAvg: (subject) => subject.scores.term1Avg,
+      };
+    } else if (term === "SECOND TERM") {
+      return {
+        showColumns: ["seq3", "seq4", "termAvg", "term1Avg", "yearAvg"],
+        columnHeaders: ["SEQ 3", "SEQ 4", "TERM AVG", "T1 AVG", "TOTAL AVG"],
+        getTermAvg: (subject) => subject.scores.term2Avg,
+        calculateYearAvg: (subject) => {
+          const t1 = subject.scores.term1Avg;
+          const t2 = subject.scores.term2Avg;
+          if (t1 == null || t2 == null) return null;
+          return (t1 + t2) / 2;
+        },
+      };
+    } else {
+      // THIRD TERM
+      return {
+        showColumns: [
+          "seq5",
+          "seq6",
+          "termAvg",
+          "term1Avg",
+          "term2Avg",
+          "finalAvg",
+        ],
+        columnHeaders: [
+          "SEQ 5",
+          "SEQ 6",
+          "TERM AVG",
+          "T1 AVG",
+          "T2 AVG",
+          "FINAL AVG",
+        ],
+        getTermAvg: (subject) => subject.scores.term3Avg,
+        getFinalAvg: (subject) => subject.scores.finalAvg,
+      };
     }
-    
-    body, html {
-      margin: 0;
-      padding: 0;
-      font-family: Arial, sans-serif;
-      font-size: 12px;
-      line-height: 1.3;
-      background: white;
-    }
-    
-    /* Report card wrapper - ensures one card per page */
-    .report-card-wrapper {
-      page-break-after: always;
-      page-break-inside: avoid;
-      break-after: page;
-      break-inside: avoid;
-      background: white;
-      padding: 0;
-      margin: 0;
-      max-height: 277mm; /* A4 height minus margins */
-      overflow: hidden; /* Prevent bleeding */
-    }
-    
-    /* Main Report Card Container */
-    .report-card {
-      width: 100%;
-      background: white;
-      border: 1px solid #204080;
-      padding: 8px;
-      box-sizing: border-box;
-      position: relative;
-    }
-    
-    /* Document Header */
-    .document-header {
-      border-bottom: 1px solid #204080;
-      padding: 6px;
-      margin-bottom: 6px;
-      background: white;
-      border-radius: 4px;
-    }
-    
-    .header-content {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 6px;
-    }
-    
-    .left-section, .right-section {
-      flex: 1;
-      text-align: center;
-      font-size: 10px;
-      line-height: 1.3;
-    }
-    
-    .center-emblem {
-      flex: 0 0 80px;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-    }
-    
-    .center-text {
-      text-align: center;
-      margin-top: 3px;
-      font-size: 9px;
-    }
-    
-    .igniting-text {
-      font-weight: bold;
-      font-size: 9px;
-      color: #204080;
-    }
-    
-    .center-motto {
-      font-style: italic;
-      font-size: 8px;
-      color: #c9a96e;
-    }
-    
-    .report-card-logo {
-      height: 50px;
-      width: 50px;
-      object-fit: cover;
-    }
-    
-    /* Header Text */
-    .republic-text {
-      font-weight: bold;
-      font-size: 10px;
-      margin-bottom: 2px;
-      text-transform: uppercase;
-      color: #204080;
-    }
-    
-    .motto {
-      font-style: italic;
-      font-size: 9px;
-      margin-bottom: 2px;
-      color: #c9a96e;
-      font-weight: 600;
-    }
-    
-    .ministry {
-      font-weight: bold;
-      font-size: 9px;
-      margin-bottom: 2px;
-      text-transform: uppercase;
-      color: #204080;
-    }
-    
-    .department {
-      font-weight: bold;
-      font-size: 9px;
-      margin-bottom: 2px;
-      text-transform: uppercase;
-      color: #204080;
-    }
-    
-    .school-name-header {
-      font-weight: bold;
-      font-size: 9px;
-      margin-bottom: 2px;
-      text-transform: uppercase;
-      color: #204080;
-    }
-    
-    .location {
-      font-size: 9px;
-      color: #666;
-      margin-bottom: 2px;
+  }
+
+  // ============================================================================
+  // EXACT CUMULATIVE AVERAGE LOGIC FROM REACT COMPONENT
+  // ============================================================================
+
+  function getCumulativeAverageToDate(data) {
+    const term = data.student.term;
+    const t1 = data.termTotals?.term1?.average;
+    const t2 = data.termTotals?.term2?.average;
+    const t3 = data.termTotals?.term3?.average;
+
+    if (term === "FIRST TERM") {
+      return typeof t1 === "number" ? Number(t1.toFixed(1)) : null;
     }
 
-    /* Document Title */
-    .document-title {
-      text-align: center;
-      margin-top: 4px;
+    if (term === "SECOND TERM") {
+      const avgs = [t1, t2].filter((v) => typeof v === "number");
+      if (!avgs.length) return null;
+      return Number((avgs.reduce((a, b) => a + b, 0) / avgs.length).toFixed(1));
     }
-    
-    .document-title h1 {
-      font-size: 16px;
-      font-weight: bold;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin: 0 0 3px 0;
-      color: #204080;
-    }
-    
-    .term-info {
-      font-size: 12px;
-      color: #666;
-      margin-bottom: 5px;
-    }
-    
-    /* Student Information */
-    .student-info {
-      margin-bottom: 6px;
-      padding: 6px;
-      border-radius: 4px;
-      background: white;
-      border: 1px solid #204080;
-    }
-    
-    .info-table {
-      width: 100%;
-      border-collapse: separate;
-      border-spacing: 8px 3px;
-    }
-    
-    .info-table td {
-      padding: 3px 4px;
-      font-size: 11px;
-      vertical-align: middle;
-    }
-    
-    .info-table .label {
-      font-weight: bold;
-      width: 110px;
-      color: #204080;
-      white-space: nowrap;
-    }
-    
-    .info-table .value {
-      border-bottom: 1px solid #204080;
-      min-width: 130px;
-      font-weight: 600;
-      color: #333;
-    }
-    
-    /* Subjects Section */
-    .subjects-section {
-      margin-bottom: 6px;
-    }
-    
-    .section-header {
-      background: #204080;
-      color: #fff;
-      text-align: center;
-      padding: 4px;
-      margin-bottom: 0;
-      border-radius: 4px 4px 0 0;
-    }
-    
-    .section-header h3 {
-      font-size: 12px;
-      font-weight: bold;
-      text-transform: uppercase;
-      margin: 0;
-    }
-    
-    .subjects-table {
-      width: 100%;
-      border-collapse: collapse;
-      border: 1px solid #204080;
-    }
-    
-    .low-score {
-      color: #cc0000;
-    }
-    
-    .subjects-table th,
-    .subjects-table td {
-      border: 1px solid #204080;
-      padding: 2px 2px;
-      font-size: 10px;
-      text-align: center;
-      vertical-align: middle;
-      line-height: 1.2;
-    }
-    
-    .subjects-table th {
-      background: #e8eeff;
-      font-weight: bold;
-      text-transform: uppercase;
-      color: #204080;
-      height: 20px;
-      font-size: 9px;
-    }
-    
-    .code-cell {
-      font-weight: bold;
-      color: #204080;
-      width: 35px;
-    }
-    
-    .subject-cell {
-      text-align: left;
-      padding-left: 4px;
-      font-weight: normal;
-      color: #333;
-      width: 120px;
-      font-size: 10px;
-    }
-    
-    .score-cell,
-    .avg-cell,
-    .coef-cell,
-    .total-cell {
-      font-weight: bold;
-      color: #333;
-      width: 28px;
-      font-size: 10px;
-    }
-    
-    .avg-cell,
-    .total-cell {
-      font-weight: bold;
-      color: #204080;
-    }
-    
-    .remark-cell {
-      width: 55px;
-    }
-    
-    .remark-cell span {
-      font-size: 9px;
-      font-weight: bold;
-      display: inline-block;
-      min-width: 45px;
-      color: #333;
-    }
-    
-    /* Grade Colors */
-    .remark-excellent { color: #0d5f0d; }
-    .remark-vgood { color: #1a5f1a; }
-    .remark-good { color: #204080; }
-    .remark-fairly-good { color: #b8860b; }
-    .remark-average { color: #ff8c00; }
-    .remark-weak { color: #cc0000; }
-    
-    .teacher-cell {
-      text-align: left;
-      padding-left: 3px;
-      font-size: 9px;
-      color: #666;
-      width: 65px;
-    }
-    
-    .subtotal-row {
-      background: #e8eeff;
-      font-weight: bold;
-      border-top: 1px solid #204080;
-    }
-    
-    .subtotal-label {
-      text-transform: uppercase;
-      font-size: 10px;
-      color: #204080;
-      text-align: right;
-      padding-right: 5px;
-    }
-    
-    .subtotal-value {
-      font-size: 10px;
-      font-weight: bold;
-      color: #204080;
-    }
-    
-    .subtotal-remark {
-      font-weight: bold;
-      color: #204080;
-    }
-    
-    /* Performance Summary */
-    .performance-summary {
-      margin-bottom: 6px;
-      padding: 6px;
-      border-radius: 4px;
-      background: white;
-      border: 1px solid #204080;
-    }
-    
-    .summary-table {
-      width: 100%;
-      border-collapse: separate;
-      border-spacing: 8px 3px;
-    }
-    
-    .summary-table td {
-      padding: 3px 4px;
-      font-size: 11px;
-      font-weight: bold;
-    }
-    
-    .summary-label {
-      color: #204080;
-      text-transform: uppercase;
-    }
-    
-    .summary-value {
-      color: #333;
-      border-bottom: 1px solid #204080;
-      min-width: 70px;
-    }
-    
-    /* Bottom Section */
-    .bottom-section {
-      display: flex;
-      gap: 6px;
-      margin-bottom: 6px;
-    }
-    
-    .left-column,
-    .center-column,
-    .right-column {
-      flex: 1;
-    }
-    
-    .conduct-section,
-    .grading-scale,
-    .admin-section {
-      padding: 6px;
-      border-radius: 4px;
-      border: 1px solid #204080;
-      background: white;
-      height: 100%;
-    }
-    
-    .conduct-section h4,
-    .grading-scale h4,
-    .admin-section h4 {
-      text-align: center;
-      font-weight: bold;
-      font-size: 11px;
-      color: #204080;
-      border-bottom: 1px solid #204080;
-      padding-bottom: 4px;
-      margin: 0 0 4px 0;
-    }
-    
-    .conduct-table,
-    .scale-table,
-    .admin-table {
-      width: 100%;
-      border-collapse: separate;
-      border-spacing: 0 3px;
-    }
-    
-    .conduct-table td,
-    .scale-table td,
-    .admin-table td {
-      padding: 2px 3px;
-      font-size: 10px;
-    }
-    
-    .conduct-table td:first-child,
-    .scale-table td:first-child,
-    .admin-table td:first-child {
-      font-weight: bold;
-      color: #204080;
-    }
-    
-    .conduct-table td:last-child,
-    .scale-table td:last-child,
-    .admin-table td:last-child {
-      text-align: right;
-      font-weight: bold;
-      color: #333;
-    }
-    
-    /* Signature Section - Added space before signatures */
-    .signature-section {
-      display: flex;
-      gap: 6px;
-      margin: 12px 0 6px 0; /* Added top margin for spacing */
-      padding-top: 6px;
-      border-top: 1px dashed #eee; /* Subtle separator */
-    }
-    
-    .signature-box {
-      flex: 1;
-      padding: 6px;
-      border-radius: 4px;
-      border: 1px solid #204080;
-      text-align: center;
-      background: white;
-      min-height: 60px;
-    }
-    
-    .signature-title {
-      font-weight: bold;
-      text-transform: uppercase;
-      font-size: 10px;
-      margin-bottom: 5px;
-      color: #204080;
-    }
-    
-    .signature-line {
-      background-color: #204080;
-      margin: 8px 0;
-      height: 1px;
-      width: 100%;
-    }
-    
-    .signature-name {
-      font-weight: bold;
-      font-size: 10px;
-      color: #333;
-      margin-bottom: 3px;
-    }
-    
-    .signature-date {
-      font-size: 9px;
-      font-style: italic;
-      color: #666;
-    }
-    
-    /* Watermark */
-    .report-card::before {
-      content: "";
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%) rotate(-15deg);
-      width: 350px;
-      height: 350px;
-      background: var(--wm) no-repeat center;
-      background-size: contain;
-      z-index: 0;
-      pointer-events: none;
-      opacity: 0.05;
-    }
-    
-    /* Footer */
-    .footer-text {
-      display: flex;
-      justify-content: center;
-      font-size: 9px;
-      color: #666;
-      margin-top: 6px;
-      text-align: center;
-    }
-    
-    /* Auto-adjust for different content sizes */
-    @media print {
-      * {
-        -webkit-print-color-adjust: exact !important;
-        color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
-      
-      /* Overflow detection - if the card is too tall, adjust font sizes */
-      .report-card-wrapper.overflow-adjust .report-card {
-        font-size: 10px;
-      }
-      
-      .report-card-wrapper.overflow-adjust h1 {
-        font-size: 14px;
-      }
-      
-      .report-card-wrapper.overflow-adjust .subjects-table th,
-      .report-card-wrapper.overflow-adjust .subjects-table td {
-        font-size: 9px;
-        padding: 1px 1px;
-      }
-      
-      .report-card-wrapper.overflow-adjust .signature-section {
-        margin-top: 8px;
-      }
-      
-      .report-card-wrapper.overflow-adjust .signature-box {
-        min-height: 50px;
-      }
-      
-      /* Extreme overflow (many subjects) */
-      .report-card-wrapper.overflow-severe .report-card {
-        font-size: 9px;
-      }
-      
-      .report-card-wrapper.overflow-severe .subjects-table th,
-      .report-card-wrapper.overflow-severe .subjects-table td {
-        font-size: 8px;
-        padding: 1px 0;
-      }
-      
-      body, html {
-        width: 210mm;
-        height: 297mm;
-      }
-      
-      .report-card-wrapper {
-        page-break-after: always;
-        page-break-inside: avoid;
-        break-after: page;
-        break-inside: avoid;
-      }
-      
-      .report-card {
-        border: none;
-      }
-    }`;
 
-    const esc = (s) =>
-      String(s ?? "").replace(
-        /[&<>"']/g,
-        (m) =>
-          ({
-            "&": "&amp;",
-            "<": "&lt;",
-            ">": "&gt;",
-            '"': "&quot;",
-            "'": "&#39;",
-          }[m])
-      );
+    const avgs = [t1, t2, t3].filter((v) => typeof v === "number");
+    if (!avgs.length) return null;
+    return Number((avgs.reduce((a, b) => a + b, 0) / avgs.length).toFixed(1));
+  }
 
-    const renderCells = (cells = []) =>
-      cells
-        .map((c) => {
-          const cls = `${c.isAvg ? "avg-cell" : "score-cell"} ${
-            c.isLow ? "low-score" : ""
-          }`;
-          return `<td class="${cls}">${esc(c.value)}</td>`;
-        })
-        .join("");
+  // ============================================================================
+  // EXACT FORMATTING LOGIC FROM REACT COMPONENT
+  // ============================================================================
 
-    const renderSubjectRows = (subjects = []) =>
-      subjects
-        .map((r) => {
-          return `<tr class="subject-row">
-            <td class="code-cell">${esc(r.code)}</td>
-            <td class="subject-cell">${esc(r.title)}</td>
-            ${renderCells(r.cells)}
-            <td class="coef-cell">${esc(r.coef)}</td>
-            <td class="total-cell">${esc(r.total)}</td>
-            <td class="remark-cell"><span class="${esc(r.remarkClass)}">${esc(
-            r.remark
-          )}</span></td>
-            <td class="teacher-cell">${esc(r.teacher)}</td>
-          </tr>`;
-        })
-        .join("");
+  function formatNum(n) {
+    if (n == null || n === undefined || isNaN(Number(n))) return "-";
+    return Number.isInteger(Number(n)) ? String(n) : Number(n).toFixed(1);
+  }
 
-    const cardsHTML = reportCards
-      .map((rc, index) => {
-        const logoUrl =
-          rc.logoUrl && rc.logoUrl.trim() ? rc.logoUrl : defaultLogoUrl;
-        const colsHead = rc.columns
-          .map((c) => `<th>${esc(c.label)}</th>`)
-          .join("");
+  function formatRange(min, max) {
+    return `${formatNum(min)}-${formatNum(max)}`;
+  }
 
-        // Check if this card has many subjects (might need adjustment)
-        const totalSubjects =
-          (rc.generalSubjects?.length || 0) +
-          (rc.professionalSubjects?.length || 0);
+  // ============================================================================
+  // HTML ESCAPING
+  // ============================================================================
 
-        // Add overflow classes based on number of subjects
-        let overflowClass = "";
-        if (totalSubjects > 14) {
-          overflowClass = "overflow-severe";
-        } else if (totalSubjects > 10) {
-          overflowClass = "overflow-adjust";
+  function esc(str) {
+    return String(str ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  // ============================================================================
+  // EXACT SUBJECT ROW RENDERING LOGIC
+  // ============================================================================
+
+  function renderSubjectRow(subject, termData) {
+    const termAvg = termData.getTermAvg(subject);
+    const remark = termAvg != null ? getRemark(termAvg) : "N/A";
+    const remarkClass = termAvg != null ? getRemarkClass(remark) : "";
+
+    const cells = termData.showColumns
+      .map((col) => {
+        let value = null;
+        let isAvg = false;
+
+        if (col === "termAvg") {
+          value = termAvg;
+          isAvg = true;
+        } else if (col === "yearAvg" && termData.calculateYearAvg) {
+          value = termData.calculateYearAvg(subject);
+          isAvg = true;
+        } else if (col === "finalAvg" && termData.getFinalAvg) {
+          value = termData.getFinalAvg(subject);
+          isAvg = true;
+        } else if (["term1Avg", "term2Avg", "term3Avg"].includes(col)) {
+          value = subject.scores[col];
+          isAvg = true;
+        } else {
+          value = subject.scores[col];
+          isAvg = false;
         }
 
-        const generalRows = renderSubjectRows(rc.generalSubjects);
-        const profRows = renderSubjectRows(rc.professionalSubjects);
+        if (value == null || isNaN(Number(value))) {
+          return `<td class="${isAvg ? "avg-cell" : "score-cell"}">-</td>`;
+        }
 
-        const gradingRows = (grading || [])
-          .map((g) => {
-            // simple class mapping by lower bound
-            let remarkClass = "remark-good";
-            const min = Number(g.band_min);
-            if (!Number.isNaN(min)) {
-              if (min >= 18) remarkClass = "remark-excellent";
-              else if (min >= 16) remarkClass = "remark-vgood";
-              else if (min >= 14) remarkClass = "remark-good";
-              else if (min >= 12) remarkClass = "remark-fairly-good";
-              else if (min >= 10) remarkClass = "remark-average";
-              else remarkClass = "remark-weak";
-            }
-            return `<tr><td>${esc(g.band_min)}-${esc(
-              g.band_max
-            )}:</td><td><span class="${remarkClass}">${esc(
-              g.comment
-            )}</span></td></tr>`;
-          })
-          .join("");
+        const num = Number(value);
+        const formatted = isAvg ? num.toFixed(1) : num;
+        const baseClass = isAvg ? "avg-cell" : "score-cell";
+        const lowClass = num < 10 ? " low-score" : "";
 
-        const conductRows = `
-          <tr><td>Days Present:</td><td>${esc(
-            rc.conduct?.attendanceDays ?? ""
-          )}/${esc(rc.conduct?.totalDays ?? "")}</td></tr>
-          <tr><td>Times Late:</td><td>${esc(
-            rc.conduct?.timesLate ?? ""
-          )}</td></tr>
-          <tr><td>Disciplinary Actions:</td><td>${esc(
-            rc.conduct?.disciplinaryActions ?? ""
-          )}</td></tr>
-        `;
-
-        return `
-          <div class="report-card-wrapper ${overflowClass}">
-            <div class="report-card" style="--wm: url('${logoUrl}')">
-              <!-- Document Header -->
-              <div class="document-header">
-                <div class="header-content">
-                  <div class="left-section">
-                    <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
-                    <div class="motto">PAIX - TRAVAIL - PATRIE</div>
-                    <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
-                    <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
-                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
-                    <div class="location">AZIRE - MANKON</div>
-                  </div>
-                  
-                  <div class="center-emblem">
-                    <img src="${logoUrl}" alt="" class="report-card-logo" />
-                    <div class="center-text">
-                      <div class="igniting-text">IGNITING ''Preneurs</div>
-                      <div class="center-motto">Motto: Welfare, Productivity, Self Actualization</div>
-                    </div>
-                  </div>
-                  
-                  <div class="right-section">
-                    <div class="republic-text">REPUBLIC OF CAMEROON</div>
-                    <div class="motto">PEACE - WORK - FATHERLAND</div>
-                    <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
-                    <div class="department">DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE</div>
-                    <div class="school-name-header">VOTECH S7 ACADEMY</div>
-                    <div class="location">AZIRE - MANKON</div>
-                  </div>
-                </div>
-                
-                <div class="document-title">
-                  <h1>ACADEMIC REPORT CARD</h1>
-                  <div class="term-info">${esc(rc.student.term)} • ${esc(
-          rc.student.academicYear
-        )}</div>
-                </div>
-              </div>
-              
-              <!-- Student Information -->
-              <div class="student-info">
-                <table class="info-table">
-                  <tbody>
-                    <tr>
-                      <td class="label">Student Name:</td>
-                      <td class="value">${esc(rc.student.name)}</td>
-                      <td class="label">Class:</td>
-                      <td class="value">${esc(rc.student.class)}</td>
-                    </tr>
-                    <tr>
-                      <td class="label">Registration No:</td>
-                      <td class="value">${esc(
-                        rc.student.registrationNumber
-                      )}</td>
-                      <td class="label">Specialty:</td>
-                      <td class="value">${esc(rc.student.option)}</td>
-                    </tr>
-                    <tr>
-                      <td class="label">Date of Birth:</td>
-                      <td class="value">${esc(rc.student.dateOfBirth)}</td>
-                      <td class="label">Academic Year:</td>
-                      <td class="value">${esc(rc.student.academicYear)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              
-              <!-- General Subjects -->
-              <div class="subjects-section">
-                <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
-                <table class="subjects-table">
-                  <thead>
-                    <tr>
-                      <th>CODE</th>
-                      <th>SUBJECT TITLE</th>
-                      ${colsHead}
-                      <th>COEF</th>
-                      <th>TOTAL</th>
-                      <th>REMARK</th>
-                      <th>TEACHER</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${generalRows}
-                    <tr class="subtotal-row">
-                      <td colspan="${
-                        rc.subtotalColspan
-                      }" class="subtotal-label">SUB TOTAL:</td>
-                      <td class="subtotal-value">${esc(
-                        rc.subtotals.general.totalWeighted
-                      )}</td>
-                      <td class="subtotal-remark"><span class="${esc(
-                        rc.subtotals.general.remarkClass
-                      )}">${esc(rc.subtotals.general.remark)}</span></td>
-                      <td></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              
-              <!-- Professional Subjects -->
-              <div class="subjects-section">
-                <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
-                <table class="subjects-table">
-                  <thead>
-                    <tr>
-                      <th>CODE</th>
-                      <th>SUBJECT TITLE</th>
-                      ${colsHead}
-                      <th>COEF</th>
-                      <th>TOTAL</th>
-                      <th>REMARK</th>
-                      <th>TEACHER</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${profRows}
-                    <tr class="subtotal-row">
-                      <td colspan="${
-                        rc.subtotalColspan
-                      }" class="subtotal-label">SUB TOTAL:</td>
-                      <td class="subtotal-value">${esc(
-                        rc.subtotals.professional.totalWeighted
-                      )}</td>
-                      <td class="subtotal-remark"><span class="${esc(
-                        rc.subtotals.professional.remarkClass
-                      )}">${esc(rc.subtotals.professional.remark)}</span></td>
-                      <td></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              
-              <!-- Performance Summary -->
-              <div class="performance-summary">
-                <table class="summary-table">
-                  <tbody>
-                    <tr>
-                      <td class="summary-label">GRAND TOTAL:</td>
-                      <td class="summary-value">${esc(rc.termTotals.total)}</td>
-                      <td class="summary-label">STUDENT AVERAGE:</td>
-                      <td class="summary-value">${esc(
-                        rc.termTotals.average
-                      )}/20</td>
-                    </tr>
-                    <tr>
-                      <td class="summary-label">CLASS AVERAGE:</td>
-                      <td class="summary-value">${esc(
-                        rc.classStatistics.classAverage
-                      )}/20</td>
-                      <td class="summary-label">CLASS RANK:</td>
-                      <td class="summary-value">${esc(
-                        rc.termTotals.rank
-                      )}° of ${esc(rc.termTotals.outOf)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              
-              <!-- Bottom Section -->
-              <div class="bottom-section">
-                <div class="left-column">
-                  <div class="conduct-section">
-                    <h4>CONDUCT & ATTENDANCE</h4>
-                    <table class="conduct-table">
-                      <tbody>
-                        ${conductRows}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                
-                <div class="center-column">
-                  <div class="grading-scale">
-                    <h4>GRADING SCALE</h4>
-                    <table class="scale-table">
-                      <tbody>
-                        ${gradingRows}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                
-                <div class="right-column">
-                  <div class="admin-section">
-                    <h4>ADMINISTRATION</h4>
-                    <table class="admin-table">
-                      <tbody>
-                        <tr>
-                          <td>Class Master:</td>
-                          <td>${esc(
-                            (rc.administration.classMaster || "").toUpperCase()
-                          )}</td>
-                        </tr>
-                        <tr>
-                          <td>Decision:</td>
-                          <td><span class="remark-good">${esc(
-                            rc.administration.decision || ""
-                          )}</span></td>
-                        </tr>
-                        <tr>
-                          <td>Next Term:</td>
-                          <td>${esc(
-                            rc.administration.nextTermStarts || ""
-                          )}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-              
-              <!-- Signatures with added space -->
-              <div class="signature-section">
-                <div class="signature-box">
-                  <div class="signature-title">CLASS MASTER</div>
-                  <div class="signature-line"></div>
-                  <div class="signature-name">${esc(
-                    (rc.administration.classMaster || "").toUpperCase()
-                  )}</div>
-                  <div class="signature-date">Date & Signature</div>
-                </div>
-                
-                <div class="signature-box">
-                  <div class="signature-title">PRINCIPAL</div>
-                  <div class="signature-line"></div>
-                  <div class="signature-name">${esc(
-                    (rc.administration.principal || "").toUpperCase()
-                  )}</div>
-                  <div class="signature-date">Date, Signature & Seal</div>
-                </div>
-                
-                <div class="signature-box">
-                  <div class="signature-title">PARENT/GUARDIAN</div>
-                  <div class="signature-line"></div>
-                  <div class="signature-name">${esc(
-                    (rc.administration.parents || "").toUpperCase()
-                  )}</div>
-                  <div class="signature-date">Date & Signature</div>
-                </div>
-              </div>
-              
-              <div class="footer-text">© ${new Date().getFullYear()} Izzy Tech Team – Official Document | Votech (S7) Academy</div>
-            </div>
-          </div>
-        `;
+        return `<td class="${baseClass}${lowClass}">${formatted}</td>`;
       })
       .join("");
 
-    return `<!DOCTYPE html>
-  <html lang="en">
-    <head>
-      <meta charset="UTF-8" />
-      <title>Report Cards</title>
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <style>${css}</style>
-      <script>
-        // Enhanced overflow detection
-        window.addEventListener('load', function() {
-          // Check each report card wrapper
-          var wrappers = document.querySelectorAll('.report-card-wrapper');
-          wrappers.forEach(function(wrapper) {
-            var content = wrapper.querySelector('.report-card');
-            // If content height exceeds wrapper container
-            if (content && content.offsetHeight > wrapper.offsetHeight * 0.98) {
-              // Check if severe overflow (very tall content)
-              if (content.offsetHeight > wrapper.offsetHeight * 1.1) {
-                wrapper.classList.add('overflow-severe');
-              } else {
-                wrapper.classList.add('overflow-adjust');
-              }
-            }
-          });
-        });
-      </script>
-    </head>
-    <body>
-      <div class="batch-wrapper">
-        ${cardsHTML}
-      </div>
-    </body>
-  </html>`;
-  } catch (error) {
-    console.error("Error generating HTML:", error);
-    return `<!DOCTYPE html>
-    <html>
-      <head>
-        <title>Error generating report cards</title>
-      </head>
-      <body>
-        <h1>Error generating report cards</h1>
-        <p>There was an error processing the report cards. Please try again or contact support.</p>
-        <pre>${error.message || "Unknown error"}</pre>
-      </body>
-    </html>`;
+    const total =
+      termAvg != null && !isNaN(Number(termAvg))
+        ? (termAvg * subject.coef).toFixed(1)
+        : "-";
+
+    return `
+      <tr class="subject-row">
+        <td class="code-cell">${esc(subject.code)}</td>
+        <td class="subject-cell">${esc(subject.title)}</td>
+        ${cells}
+        <td class="coef-cell">${subject.coef}</td>
+        <td class="total-cell">${total}</td>
+        <td class="remark-cell"><span class="${remarkClass}">${esc(
+      remark
+    )}</span></td>
+        <td class="teacher-cell">${esc(subject.teacher)}</td>
+      </tr>
+    `;
   }
-}
-function selectedTermKey(rawTerm) {
-  const t = String(rawTerm ?? "annual")
-    .trim()
-    .toLowerCase();
 
-  // Direct strings
-  if (t === "annual" || t === "all") return "annual";
-  if (t === "term1" || t === "t1") return "term1";
-  if (t === "term2" || t === "t2") return "term2";
-  if (t === "term3" || t === "t3") return "term3";
+  // ============================================================================
+  // EXACT SUBTOTAL CALCULATION LOGIC
+  // ============================================================================
 
-  // Numeric inputs (try to interpret as order_number 1/2/3)
-  const n = Number(t);
-  if (!Number.isNaN(n) && [1, 2, 3].includes(n)) return `term${n}`;
+  function calculateSubtotal(subjects, termData) {
+    const { totalWeighted, totalCoef } = subjects.reduce(
+      (acc, subject) => {
+        const avg = termData.getTermAvg(subject);
+        if (avg != null && !isNaN(Number(avg))) {
+          acc.totalWeighted += avg * subject.coef;
+          acc.totalCoef += subject.coef;
+        }
+        return acc;
+      },
+      { totalWeighted: 0, totalCoef: 0 }
+    );
 
-  // Otherwise default to annual
-  return "annual";
+    const avg = totalCoef > 0 ? totalWeighted / totalCoef : 0;
+    const remark = getRemark(avg);
+    const remarkClass = getRemarkClass(remark);
+
+    return {
+      totalWeighted: totalWeighted.toFixed(0),
+      remark,
+      remarkClass,
+    };
+  }
+
+  // ============================================================================
+  // GENERATE SINGLE REPORT CARD HTML
+  // ============================================================================
+
+  function generateSingleCard(data) {
+    const termData = getCurrentTermData(data.student.term);
+    const cumulativeAvg = getCumulativeAverageToDate(data);
+
+    // Determine which term's totals to use
+    const termKey =
+      data.student.term === "FIRST TERM"
+        ? "term1"
+        : data.student.term === "SECOND TERM"
+        ? "term2"
+        : "term3";
+    const termTotals = data.termTotals[termKey];
+
+    // Counted label for cumulative average
+    const countedLabel =
+      data.student.term === "FIRST TERM"
+        ? "T1"
+        : data.student.term === "SECOND TERM"
+        ? "T1 + T2"
+        : "T1 + T2 + T3";
+
+    // Column headers
+    const colHeaders = termData.columnHeaders
+      .map((h) => `<th>${esc(h)}</th>`)
+      .join("");
+
+    // Calculate subtotal colspan (2 for code+title + number of columns)
+    const subtotalColspan = 2 + termData.showColumns.length;
+
+    // Render subject sections
+    const generalRows = (data.generalSubjects || [])
+      .map((s) => renderSubjectRow(s, termData))
+      .join("");
+    const generalSubtotal = calculateSubtotal(
+      data.generalSubjects || [],
+      termData
+    );
+
+    const professionalRows = (data.professionalSubjects || [])
+      .map((s) => renderSubjectRow(s, termData))
+      .join("");
+    const professionalSubtotal = calculateSubtotal(
+      data.professionalSubjects || [],
+      termData
+    );
+
+    const practicalRows = (data.practicalSubjects || [])
+      .map((s) => renderSubjectRow(s, termData))
+      .join("");
+    const practicalSubtotal = calculateSubtotal(
+      data.practicalSubjects || [],
+      termData
+    );
+
+    // Grading scale rows
+    const gradingRows = gradingScale
+      .map(
+        (g) => `
+      <tr>
+        <td>${formatRange(g.band_min, g.band_max)}:</td>
+        <td><span class="${getRemarkClass(g.comment)}">${esc(
+          g.comment
+        )}</span></td>
+      </tr>
+    `
+      )
+      .join("");
+
+    return `
+    <div class="report-card-container">
+      <div class="report-card" id="reportCard">
+        <!-- DOCUMENT HEADER -->
+        <div class="document-header">
+          <div class="header-content">
+            <div class="left-section">
+              <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
+              <div class="motto">PAIX - TRAVAIL - PATRIE</div>
+              <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
+              <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
+              <div class="school-name-header">VOTECH S7 ACADEMY</div>
+              <div class="location">AZIRE - MANKON</div>
+            </div>
+
+            <div class="center-emblem">
+              <img src="${logoUrl}" alt="School Logo" class="report-card-logo" style="width: 4rem; height: 4rem; background: #204080; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; margin-bottom: 6px;" />
+              <div class="center-text">
+                <div class="igniting-text">IGNITING ''Preneurs</div>
+                <div class="center-motto">Motto: Welfare, Productivity, Self Actualization</div>
+              </div>
+            </div>
+
+            <div class="right-section">
+              <div class="republic-text">REPUBLIC OF CAMEROON</div>
+              <div class="motto">PEACE - WORK - FATHERLAND</div>
+              <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
+              <div class="department">DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE</div>
+              <div class="school-name-header">VOTECH S7 ACADEMY</div>
+              <div class="location">AZIRE - MANKON</div>
+            </div>
+          </div>
+
+          <div class="document-title">
+            <h1>ACADEMIC REPORT CARD</h1>
+            <div class="term-info">${esc(data.student.term)} • ${esc(
+      data.student.academicYear
+    )}</div>
+          </div>
+        </div>
+
+        <!-- STUDENT INFO -->
+        <div class="student-info">
+          <table class="info-table">
+            <tbody>
+              <tr>
+                <td class="label">Student Name:</td>
+                <td class="value">${esc(data.student.name)}</td>
+                <td class="label">Class:</td>
+                <td class="value">${esc(data.student.class)}</td>
+              </tr>
+              <tr>
+                <td class="label">Registration No:</td>
+                <td class="value">${esc(data.student.registrationNumber)}</td>
+                <td class="label">Specialty:</td>
+                <td class="value">${esc(data.student.option)}</td>
+              </tr>
+              <tr>
+                <td class="label">Date of Birth:</td>
+                <td class="value">${esc(data.student.dateOfBirth)}</td>
+                <td class="label">Academic Year:</td>
+                <td class="value">${esc(data.student.academicYear)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- GENERAL SUBJECTS -->
+        ${
+          generalRows
+            ? `
+        <div class="subjects-section">
+          <div class="section-header">
+            <h3>GENERAL SUBJECTS</h3>
+          </div>
+          <table class="subjects-table">
+            <thead>
+              <tr>
+                <th>CODE</th>
+                <th>SUBJECT TITLE</th>
+                ${colHeaders}
+                <th>COEF</th>
+                <th>TOTAL</th>
+                <th>REMARK</th>
+                <th>TEACHER</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${generalRows}
+              <tr class="subtotal-row">
+                <td colspan="${subtotalColspan}" class="subtotal-label">SUB TOTAL:</td>
+                <td class="subtotal-value">${generalSubtotal.totalWeighted}</td>
+                <td class="subtotal-remark"><span class="${
+                  generalSubtotal.remarkClass
+                }">${esc(generalSubtotal.remark)}</span></td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        `
+            : ""
+        }
+
+        <!-- PROFESSIONAL SUBJECTS -->
+        ${
+          professionalRows
+            ? `
+        <div class="subjects-section">
+          <div class="section-header">
+            <h3>PROFESSIONAL SUBJECTS</h3>
+          </div>
+          <table class="subjects-table">
+            <thead>
+              <tr>
+                <th>CODE</th>
+                <th>SUBJECT TITLE</th>
+                ${colHeaders}
+                <th>COEF</th>
+                <th>TOTAL</th>
+                <th>REMARK</th>
+                <th>TEACHER</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${professionalRows}
+              <tr class="subtotal-row">
+                <td colspan="${subtotalColspan}" class="subtotal-label">SUB TOTAL:</td>
+                <td class="subtotal-value">${
+                  professionalSubtotal.totalWeighted
+                }</td>
+                <td class="subtotal-remark"><span class="${
+                  professionalSubtotal.remarkClass
+                }">${esc(professionalSubtotal.remark)}</span></td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        `
+            : ""
+        }
+
+        <!-- PRACTICAL SUBJECTS -->
+        ${
+          practicalRows
+            ? `
+        <div class="subjects-section">
+          <div class="section-header">
+            <h3>PRACTICAL SUBJECTS</h3>
+          </div>
+          <table class="subjects-table">
+            <thead>
+              <tr>
+                <th>CODE</th>
+                <th>SUBJECT TITLE</th>
+                ${colHeaders}
+                <th>COEF</th>
+                <th>TOTAL</th>
+                <th>REMARK</th>
+                <th>TEACHER</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${practicalRows}
+              <tr class="subtotal-row">
+                <td colspan="${subtotalColspan}" class="subtotal-label">SUB TOTAL:</td>
+                <td class="subtotal-value">${
+                  practicalSubtotal.totalWeighted
+                }</td>
+                <td class="subtotal-remark"><span class="${
+                  practicalSubtotal.remarkClass
+                }">${esc(practicalSubtotal.remark)}</span></td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        `
+            : ""
+        }
+
+        <!-- PERFORMANCE SUMMARY -->
+        <div class="performance-summary">
+          <table class="summary-table">
+            <tbody>
+              <tr>
+                <td class="summary-label">GRAND TOTAL:</td>
+                <td class="summary-value">${Math.round(termTotals.total)}</td>
+                <td class="summary-label">STUDENT AVERAGE:</td>
+                <td class="summary-value">${termTotals.average}/20</td>
+              </tr>
+              <tr>
+                <td class="summary-label">CLASS AVERAGE:</td>
+                <td class="summary-value">${
+                  data.classStatistics.classAverage
+                }/20</td>
+                <td class="summary-label">CLASS RANK:</td>
+                <td class="summary-value">${termTotals.rank}° of ${
+      termTotals.outOf
+    }</td>
+              </tr>
+              <tr>
+                <td class="summary-label">CUMULATIVE AVERAGE (${countedLabel}):</td>
+                <td class="summary-value">${
+                  cumulativeAvg !== null ? `${cumulativeAvg}/20` : "N/A"
+                }</td>
+                <td></td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- BOTTOM SECTION -->
+        <div class="bottom-section">
+          <div class="left-column">
+            <div class="conduct-section">
+              <h4>CONDUCT & ATTENDANCE</h4>
+              <table class="conduct-table">
+                <tbody>
+                  <tr>
+                    <td>Days Present:</td>
+                    <td>${data.conduct.attendanceDays || "-"}/${
+      data.conduct.totalDays || "-"
+    }</td>
+                  </tr>
+                  <tr>
+                    <td>Times Late:</td>
+                    <td>${data.conduct.timesLate || "-"}</td>
+                  </tr>
+                  <tr>
+                    <td>Disciplinary Actions:</td>
+                    <td>${data.conduct.disciplinaryActions || "-"}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="center-column">
+            <div class="grading-scale">
+              <h4>GRADING SCALE</h4>
+              <table class="scale-table">
+                <tbody>
+                  ${gradingRows}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="right-column">
+            <div class="admin-section">
+              <h4>ADMINISTRATION</h4>
+              <table class="admin-table">
+                <tbody>
+                  <tr>
+                    <td>Class Master:</td>
+                    <td>${esc(
+                      (data.administration.classMaster || "").toUpperCase()
+                    )}</td>
+                  </tr>
+                  <tr>
+                    <td>Decision:</td>
+                    <td><span class="remark-good">${esc(
+                      data.administration.decision || ""
+                    )}</span></td>
+                  </tr>
+                  <tr>
+                    <td>Next Term:</td>
+                    <td>${esc(data.administration.nextTermStarts || "")}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- SIGNATURE SECTION -->
+        <div class="signature-section">
+          <div class="signature-box">
+            <div class="signature-title">CLASS MASTER</div>
+            <div class="signature-line"></div>
+            <div class="signature-name">${esc(
+              (data.administration.classMaster || "").toUpperCase()
+            )}</div>
+            <div class="signature-date">Date & Signature</div>
+          </div>
+
+          <div class="signature-box">
+            <div class="signature-title">PRINCIPAL</div>
+            <div class="signature-line"></div>
+            <div class="signature-name">${esc(
+              (data.administration.principal || "").toUpperCase()
+            )}</div>
+            <div class="signature-date">Date, Signature & Seal</div>
+          </div>
+
+          <div class="signature-box">
+            <div class="signature-title">PARENT/GUARDIAN</div>
+            <div class="signature-line"></div>
+            <div class="signature-name">${esc(
+              (data.administration.parents || "").toUpperCase()
+            )}</div>
+            <div class="signature-date">Date & Signature</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FOOTER -->
+      <span class="footer-text">© ${new Date().getFullYear()} Izzy Tech Team – Official Document | Votech (S7) Academy</span>
+    </div>
+    `;
+  }
+
+  // ============================================================================
+  // EXACT CSS FROM REACT COMPONENT WITH CRITICAL FIXES
+  // ============================================================================
+
+  const css = `
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      /* SCREEN STYLES */
+      .report-card-container {
+        width: 100%;
+        min-height: 100vh;
+        background: #f5f5f5;
+        padding: 20px;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+      }
+
+      .report-card {
+        width: 100%;
+        max-width: 1200px;
+        background: white;
+        border: 2px solid #204080;
+        padding: 15px;
+        margin: 0 auto;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+        position: relative;
+        overflow: hidden;
+        font-family: "Arial", sans-serif;
+        line-height: 1.2;
+        font-size: 11px;
+      }
+
+      /* Watermark */
+      .report-card::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) rotate(-15deg);
+        width: 600px;
+        height: 600px;
+        background-size: contain;
+        z-index: 0;
+        pointer-events: none;
+        opacity: 0.04;
+      }
+
+      .report-card > * {
+        position: relative;
+        z-index: 1;
+      }
+
+      /* Document Header */
+      .document-header {
+        border-bottom: 2px solid #204080;
+        padding: 10px;
+        margin-bottom: 10px;
+        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+        border-radius: 6px;
+      }
+
+      .header-content {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 10px;
+        gap: 15px;
+      }
+
+      .left-section,
+      .right-section {
+        flex: 1;
+        text-align: center;
+        font-size: 9px;
+        line-height: 1.3;
+      }
+
+      .center-emblem {
+        flex: 0 0 160px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+      }
+
+      .report-card-logo {
+        height: 3.5rem;
+        width: 3.5rem;
+        object-fit: cover;
+        margin-bottom: 6px;
+      }
+
+      .center-text {
+        text-align: center;
+      }
+
+      .igniting-text {
+        font-size: 11px;
+        font-weight: bold;
+        color: #204080;
+        margin-bottom: 3px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .center-motto {
+        font-size: 8px;
+        font-style: italic;
+        color: #c9a96e;
+        font-weight: 600;
+      }
+
+      .republic-text {
+        font-weight: bold;
+        font-size: 10px;
+        margin-bottom: 2px;
+        text-transform: uppercase;
+        color: #204080;
+      }
+
+      .motto {
+        font-style: italic;
+        font-size: 8px;
+        margin-bottom: 2px;
+        color: #c9a96e;
+        font-weight: 600;
+      }
+
+      .ministry {
+        font-weight: bold;
+        font-size: 8px;
+        margin-bottom: 2px;
+        text-transform: uppercase;
+        color: #204080;
+      }
+
+      .department {
+        font-weight: bold;
+        font-size: 7.5px;
+        margin-bottom: 2px;
+        text-transform: uppercase;
+        color: #204080;
+      }
+
+      .school-name-header {
+        font-weight: bold;
+        font-size: 9px;
+        margin-bottom: 2px;
+        text-transform: uppercase;
+        color: #204080;
+        letter-spacing: 0.5px;
+      }
+
+      .location {
+        font-size: 8px;
+        color: #666;
+        font-weight: 600;
+      }
+
+      .document-title {
+        text-align: center;
+        margin-top: 10px;
+      }
+
+      .document-title h1 {
+        font-size: 16px;
+        font-weight: bold;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        margin-bottom: 4px;
+        color: #204080;
+      }
+
+      .term-info {
+        font-size: 11px;
+        color: #666;
+      }
+
+      /* Student Information */
+      .student-info {
+        margin-bottom: 10px;
+        padding: 8px;
+        border-radius: 4px;
+        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+        border: 1px solid #204080;
+      }
+
+      .info-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 12px 3px;
+      }
+
+      .info-table td {
+        padding: 3px 6px;
+        font-size: 10px;
+        vertical-align: middle;
+      }
+
+      .info-table .label {
+        font-weight: bold;
+        width: 120px;
+        color: #204080;
+        white-space: nowrap;
+      }
+
+      .info-table .value {
+        border-bottom: 1px solid #204080;
+        min-width: 150px;
+        font-weight: 600;
+        color: #333;
+      }
+
+      /* Subjects Section */
+      .subjects-section {
+        margin-bottom: 10px;
+        break-inside: avoid;
+      }
+
+      .section-header {
+        background: linear-gradient(135deg, #204080 0%, #3a5a9a 100%);
+        color: #fff;
+        text-align: center;
+        padding: 6px;
+        margin-bottom: 0;
+        border-radius: 4px 4px 0 0;
+        display: flex !important;
+        justify-content: center !important;
+      }
+
+      .section-header h3 {
+        font-size: 12px;
+        font-weight: bold;
+        text-transform: uppercase;
+        margin: 0;
+      }
+
+      .subjects-table {
+        width: 100%;
+        border-collapse: collapse;
+        border: 1px solid #204080;
+        border-radius: 0 0 4px 4px;
+        overflow: hidden;
+      }
+
+      .subjects-table th,
+      .subjects-table td {
+        border: 1px solid #204080;
+        padding: 2px 2px;
+        font-size: 8.5px;
+        text-align: center;
+        vertical-align: middle;
+        line-height: 1.1;
+      }
+
+      .subjects-table th {
+        background: linear-gradient(135deg, #e8eeff 0%, #f0f4ff 100%);
+        font-weight: bold;
+        text-transform: uppercase;
+        color: #204080;
+        height: 28px;
+        font-size: 7.5px;
+      }
+
+      .code-cell {
+        font-weight: bold;
+        color: #204080;
+        width: 38px;
+      }
+
+      .subject-cell {
+        text-align: left;
+        padding-left: 5px;
+        font-weight: normal;
+        color: #333;
+        min-width: 130px;
+        font-size: 7.5px;
+      }
+
+      .score-cell,
+      .avg-cell,
+      .coef-cell,
+      .total-cell {
+        font-weight: bold;
+        color: #333;
+        width: 32px;
+      }
+
+      .avg-cell,
+      .total-cell {
+        font-weight: bold;
+        color: #204080;
+        font-size: 8.5px;
+      }
+
+      .remark-cell {
+        width: 65px;
+      }
+
+      .remark-cell span {
+        font-size: 7.5px;
+        font-weight: bold;
+        display: inline-block;
+        min-width: 45px;
+        color: #333;
+      }
+
+      /* Grade Colors */
+      .remark-excellent {
+        color: #0d5f0d;
+      }
+      .remark-vgood {
+        color: #1a5f1a;
+      }
+      .remark-good {
+        color: #204080;
+      }
+      .remark-fairly-good {
+        color: #b8860b;
+      }
+      .remark-average {
+        color: #ff8c00;
+      }
+      .remark-weak {
+        color: #cc0000;
+      }
+
+      .teacher-cell {
+        text-align: left;
+        padding-left: 3px;
+        font-size: 6.5px;
+        color: #666;
+        min-width: 75px;
+      }
+
+      .subtotal-row {
+        background: linear-gradient(135deg, #e8eeff 0%, #f0f4ff 100%);
+        font-weight: bold;
+        border-top: 2px solid #204080;
+      }
+
+      .subtotal-label {
+        text-transform: uppercase;
+        font-size: 8.5px;
+        color: #204080;
+        text-align: right;
+        padding-right: 8px;
+      }
+
+      .subtotal-value {
+        font-size: 9px;
+        font-weight: bold;
+        color: #204080;
+      }
+
+      .subtotal-remark {
+        font-weight: bold;
+        color: #204080;
+      }
+
+      /* Performance Summary */
+      .performance-summary {
+        margin-bottom: 10px;
+        padding: 8px;
+        border-radius: 4px;
+        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+        border: 1px solid #204080;
+      }
+
+      .summary-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 12px 4px;
+        padding: 4px 0px;
+        border-width: 1px;
+        margin-top: 0 !important;
+      }
+
+      .summary-table td {
+        padding: 3px 8px;
+        font-size: 8.5px;
+        font-weight: bold;
+      }
+
+      .summary-label {
+        color: #204080;
+        text-transform: uppercase;
+      }
+
+      .summary-value {
+        color: #333;
+        border-bottom: 1px solid #204080;
+        min-width: 75px;
+      }
+
+      /* Bottom Section */
+      .bottom-section {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .left-column,
+      .center-column,
+      .right-column {
+        flex: 1;
+      }
+
+      .conduct-section,
+      .grading-scale,
+      .admin-section {
+        padding: 8px;
+        border-radius: 4px;
+        border: 1px solid #204080;
+        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+        height: 100%;
+      }
+
+      .conduct-section h4,
+      .grading-scale h4,
+      .admin-section h4 {
+        text-align: center;
+        font-weight: bold;
+        font-size: 10px;
+        color: #204080;
+        border-bottom: 1px solid #204080;
+        padding-bottom: 4px;
+        margin-bottom: 8px;
+      }
+
+      .conduct-table,
+      .scale-table,
+      .admin-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0 3px;
+      }
+
+      .conduct-table td,
+      .scale-table td,
+      .admin-table td {
+        padding: 2px 4px;
+        font-size: 8.5px;
+      }
+
+      .conduct-table td:first-child,
+      .scale-table td:first-child,
+      .admin-table td:first-child {
+        font-weight: bold;
+        color: #204080;
+      }
+
+      .conduct-table td:last-child,
+      .scale-table td:last-child,
+      .admin-table td:last-child {
+        text-align: right;
+        font-weight: bold;
+        color: #333;
+      }
+
+      /* Signature Section */
+      .signature-section {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .signature-box {
+        flex: 1;
+        padding: 12px 8px;
+        border-radius: 4px;
+        border: 1px solid #204080;
+        text-align: center;
+        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+        min-height: 70px;
+      }
+
+      .signature-title {
+        font-weight: bold;
+        text-transform: uppercase;
+        font-size: 9px;
+        margin-bottom: 8px;
+        color: #204080;
+      }
+
+      .signature-line {
+        background-color: #204080;
+        margin: 12px 0;
+        height: 1px;
+        width: 100%;
+      }
+
+      .signature-name {
+        font-weight: bold;
+        font-size: 8.5px;
+        color: #333;
+        margin-bottom: 2px;
+      }
+
+      .signature-date {
+        font-size: 7.5px;
+        font-style: italic;
+        color: #666;
+      }
+
+      .low-score {
+        color: #cc0000;
+      }
+
+      /* Footer */
+      .footer-text {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: none;
+        justify-content: center;
+        font-size: 12px;
+        color: rgb(133, 133, 133);
+        font-style: italic;
+      }
+
+      /* Print Button */
+      .print-button {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 12px 24px;
+        background: #204080;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-size: 14px;
+        font-weight: bold;
+        cursor: pointer;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        z-index: 1000;
+      }
+
+      .print-button:hover {
+        background: #3a5a9a;
+      }
+
+      .report-card::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) rotate(-15deg);
+        width: 570px;
+        height: 570px;
+        background: url(${logoUrl}) no-repeat center;
+        background-size: contain;
+        z-index: 10;
+        pointer-events: none;
+        opacity: 0.06;
+      }
+
+      /* ===============================
+   PRINT STYLES
+=============================== */
+
+      @media print {
+        :root {
+          --page-width-mm: 100%;
+          --page-height-mm: 297;
+          --page-margin-mm: 8;
+          --print-scale: 1;
+        }
+
+        @page {
+          size: A4 portrait;
+          margin: 2mm;
+        }
+
+        * {
+          -webkit-print-color-adjust: exact !important;
+          color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+
+        html,
+        body {
+          margin: 0 !important;
+          padding: 0 !important;
+          background: #fff !important;
+          overflow: visible !important;
+          display: block !important;
+        }
+
+        .print-button {
+          display: none !important;
+        }
+
+        .footer-text {
+          display: flex !important;
+          bottom: 1mm;
+          position: fixed;
+        }
+
+        .report-card::before {
+          opacity: 0.08;
+        }
+
+        .report-card-container {
+          background: white !important;
+          padding: 0 !important;
+          min-height: unset;
+          height: auto !important;
+          visibility: visible !important;
+          box-shadow: none !important;
+          width: 200mm !important;
+
+          margin: 0 auto;
+        }
+
+        .report-card .performance-summary .summary-table {
+          margin-top: 0 !important;
+          border-width: 1px !important;
+        }
+
+        .report-card .performance-summary .summary-table td {
+          font-size: 8.5px !important;
+        }
+
+        .report-card-container * {
+          visibility: visible !important;
+        }
+
+        .report-card {
+          border: none !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          overflow: visible !important;
+          box-shadow: none !important;
+          background: white !important;
+          transform: scale(var(--print-scale)) !important;
+          transform-origin: top center !important;
+          page-break-inside: avoid !important;
+          break-inside: avoid !important;
+          font-size: 9px !important;
+          line-height: 1.1 !important;
+          width: 100% !important;
+        }
+
+        .document-header {
+          padding: 3mm !important;
+          margin-bottom: 2mm !important;
+          border-bottom: 2px solid #204080 !important;
+          background: linear-gradient(
+            135deg,
+            #f8f9ff 0%,
+            #ffffff 100%
+          ) !important;
+        }
+
+        .header-content {
+          margin-bottom: 2mm !important;
+          gap: 1.5mm !important;
+        }
+
+        .left-section,
+        .right-section {
+          font-size: 7.5pt !important;
+          line-height: 1.2 !important;
+        }
+
+        .center-emblem {
+          flex: 0 0 32mm !important;
+        }
+
+        .report-card-logo {
+          width: 16mm !important;
+          height: 16mm !important;
+          margin-bottom: 1.5mm !important;
+        }
+
+        .igniting-text {
+          font-size: 8.5pt !important;
+          margin-bottom: 0.8mm !important;
+        }
+
+        .center-motto {
+          font-size: 6.5pt !important;
+        }
+
+        .republic-text {
+          font-size: 7.5pt !important;
+          margin-bottom: 0.3mm !important;
+        }
+
+        .motto {
+          font-size: 6.5pt !important;
+          margin-bottom: 0.3mm !important;
+        }
+
+        .ministry {
+          font-size: 7pt !important;
+          margin-bottom: 0.3mm !important;
+        }
+
+        .department {
+          font-size: 6.5pt !important;
+          margin-bottom: 0.3mm !important;
+        }
+
+        .school-name-header {
+          font-size: 7.5pt !important;
+          margin-bottom: 0.3mm !important;
+        }
+
+        .location {
+          font-size: 6.5pt !important;
+        }
+
+        .document-title h1 {
+          font-size: 11pt !important;
+          margin-bottom: 1.5mm !important;
+        }
+
+        .term-info {
+          font-size: 8.5pt !important;
+        }
+
+        .student-info {
+          margin-bottom: 2mm !important;
+          padding: 2mm !important;
+          background: linear-gradient(
+            135deg,
+            #f8f9ff 0%,
+            #ffffff 100%
+          ) !important;
+        }
+
+        .info-table {
+          border-spacing: 1.5mm 0.3mm !important;
+        }
+
+        .info-table td {
+          font-size: 8.5pt !important;
+          padding: 0.2mm 0.8mm !important;
+        }
+
+        .subjects-section {
+          margin-bottom: 1.5mm !important;
+          page-break-inside: avoid !important;
+        }
+
+        .section-header {
+          padding: 1.2mm !important;
+          background: linear-gradient(
+            135deg,
+            #204080 0%,
+            #3a5a9a 100%
+          ) !important;
+        }
+
+        .section-header h3 {
+          font-size: 8.5pt !important;
+        }
+
+        .subjects-table th,
+        .subjects-table td {
+          font-size: 7.5pt !important;
+          padding: 0.2mm 0.6mm !important;
+          line-height: 1.15 !important;
+        }
+
+        .subjects-table th {
+          height: 3mm !important;
+          background: linear-gradient(
+            135deg,
+            #e8eeff 0%,
+            #f0f4ff 100%
+          ) !important;
+          font-size: 7pt !important;
+        }
+
+        .subject-cell {
+          font-size: 7pt !important;
+        }
+
+        .teacher-cell {
+          font-size: 6pt !important;
+        }
+
+        .remark-cell span {
+          font-size: 7pt !important;
+        }
+
+        .subtotal-row {
+          background: linear-gradient(
+            135deg,
+            #e8eeff 0%,
+            #f0f4ff 100%
+          ) !important;
+        }
+
+        .performance-summary {
+          margin-bottom: 2mm !important;
+          padding: 2mm !important;
+          background: linear-gradient(
+            135deg,
+            #f8f9ff 0%,
+            #ffffff 100%
+          ) !important;
+        }
+
+        .bottom-section {
+          gap: 1.5mm !important;
+          margin-bottom: 2mm !important;
+        }
+
+        .conduct-section,
+        .grading-scale,
+        .admin-section {
+          padding: 2mm !important;
+          background: linear-gradient(
+            135deg,
+            #f8f9ff 0%,
+            #ffffff 100%
+          ) !important;
+        }
+
+        .conduct-section h4,
+        .grading-scale h4,
+        .admin-section h4 {
+          font-size: 8pt !important;
+          margin-bottom: 1.2mm !important;
+          padding-bottom: 0.6mm !important;
+        }
+
+        .conduct-table td,
+        .scale-table td,
+        .admin-table td {
+          font-size: 7.5pt !important;
+          padding: 0.2mm 0.6mm !important;
+        }
+
+        .signature-section {
+          gap: 1.5mm !important;
+          margin-top: 2mm !important;
+          page-break-inside: avoid !important;
+        }
+
+        .signature-box {
+          padding: 2mm !important;
+          min-height: 16mm !important;
+          background: linear-gradient(
+            135deg,
+            #f8f9ff 0%,
+            #ffffff 100%
+          ) !important;
+          border: 1px solid #204080 !important;
+        }
+
+        .signature-title {
+          font-size: 7.5pt !important;
+          margin-bottom: 3mm !important;
+        }
+
+        .signature-line {
+          margin: 1.2mm 0 !important;
+          background-color: #204080 !important;
+        }
+
+        .signature-name {
+          font-size: 7pt !important;
+          margin-bottom: 0.6mm !important;
+        }
+
+        .signature-date {
+          font-size: 6.5pt !important;
+        }
+
+        .document-header,
+        .student-info,
+        .subjects-section,
+        .performance-summary,
+        .bottom-section,
+        .signature-section {
+          page-break-inside: avoid !important;
+          break-inside: avoid !important;
+        }
+
+        .low-score {
+          color: #cc0000 !important;
+        }
+
+        .no-print {
+          display: none !important;
+        }
+      }
+  `;
+
+  // ============================================================================
+  // GENERATE COMPLETE HTML DOCUMENT
+  // ============================================================================
+
+  const reportCardsHTML = students
+    .map((student) => generateSingleCard(student))
+    .join("\n");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bulk Report Cards - Votech S7 Academy</title>
+  <style>${css}</style>
+</head>
+<body>
+${reportCardsHTML}
+</body>
+</html>`;
 }
 
 function termLabelFromKey(termKey) {
@@ -1743,25 +2414,21 @@ function termLabelFromKey(termKey) {
 const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
   const { academicYearId, departmentId, classId, term = "annual" } = req.query;
 
-  // Helpers (scoped here for drop-in use)
   const sanitizeFilename = (s = "") => String(s).replace(/[^\w\-]+/g, "_");
 
-  // Map flexible input → 'term1' | 'term2' | 'term3' | 'annual'
-  // Supports: "annual", "term2"/"t2", 2 (order_number), or a Term.id within the academic year
   const resolveTermKey = async (rawTerm) => {
     const t = String(rawTerm ?? "annual")
       .trim()
       .toLowerCase();
 
     if (t === "annual" || t === "all" || t === "") return "annual";
-    if (t === "term1" || t === "t1") return "term1";
-    if (t === "term2" || t === "t2") return "term2";
-    if (t === "term3" || t === "t3") return "term3";
+    if (t === "term1" || t === "t1" || t.includes("first")) return "term1";
+    if (t === "term2" || t === "t2" || t.includes("second")) return "term2";
+    if (t === "term3" || t === "t3" || t.includes("third")) return "term3";
 
     const n = Number(t);
     if (!Number.isNaN(n)) {
-      if ([1, 2, 3].includes(n)) return `term${n}`; // order_number
-      // Try as Term PK within the AY
+      if ([1, 2, 3].includes(n)) return `term${n}`;
       const termRow = await models.Term.findOne({
         where: { id: n, academic_year_id: academicYearId },
         attributes: ["order_number"],
@@ -1773,16 +2440,6 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
     return "annual";
   };
 
-  const termLabelFromKey = (termKey) =>
-    termKey === "term1"
-      ? "FIRST TERM"
-      : termKey === "term2"
-      ? "SECOND TERM"
-      : termKey === "term3"
-      ? "THIRD TERM"
-      : "ANNUAL";
-
-  // Validate required params
   if (!academicYearId || !departmentId || !classId) {
     return next(
       new AppError(
@@ -1792,7 +2449,6 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Fetch AY, department, class + classMaster
   const academicYearData = await models.AcademicYear.findByPk(academicYearId);
   if (!academicYearData)
     return next(new AppError("Academic year not found", StatusCodes.NOT_FOUND));
@@ -1818,10 +2474,8 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
     studentClass?.classMaster?.username ||
     "";
 
-  // Resolve which "view" to render (do not filter DB by term)
   const termKey = await resolveTermKey(term);
 
-  // Fetch all marks for the class/year so cumulative/annual calculations work
   const marks = await models.marks.findAll({
     where: { academic_year_id: academicYearId, class_id: classId },
     include: [
@@ -1895,7 +2549,6 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Build cards and class stats for the selected view
   const cards = buildReportCardsFromMarks(marks, classMaster);
   const classStats = computeClassStatsForTerm(cards, termKey);
 
@@ -1919,54 +2572,32 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
   const reportCards = cards.map((rc) =>
     toTemplateCard(rc, termKey, meta, grading)
   );
+  // Generate HTML directly from original cards
+  // buildHTML function expects the original structure from buildReportCardsFromMarks
+  // Generate HTML directly from original cards
+  // buildHTML function expects the original structure from buildReportCardsFromMarks
   const defaultLogoUrl = `${req.protocol}://${req.get("host")}/public/logo.png`;
-  const html = buildHTML(reportCards, { defaultLogoUrl }, grading);
+  const html = buildHTML(cards, { logoUrl: defaultLogoUrl }, grading);
 
   const browser = await puppeteer.launch({
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
 
-  // function findChromium() {
-  //   const candidates = [
-  //     "/usr/bin/chromium-browser",
-  //     "/usr/bin/chromium",
-  //     "/usr/bin/google-chrome",
-  //     "/usr/bin/google-chrome-stable",
-  //   ];
-  //   return candidates.find(fs.existsSync);
-  // }
-
-  // const executablePath = findChromium();
-
-  // const browser = await puppeteer.launch({
-  //   executablePath,
-  //   headless: true,
-  //   args: [
-  //     "--no-sandbox",
-  //     "--disable-setuid-sandbox",
-  //     "--disable-dev-shm-usage",
-  //     "--disable-gpu",
-  //     "--disable-software-rasterizer",
-  //   ],
-  // });
-
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "load" });
 
-    // Wait for all images to finish loading
     await page.evaluate(async () => {
       const selectors = Array.from(document.images).map((img) => {
         if (img.complete) return;
         return new Promise((resolve, reject) => {
           img.addEventListener("load", resolve);
-          img.addEventListener("error", resolve); // still resolve on error
+          img.addEventListener("error", resolve);
         });
       });
       await Promise.all(selectors);
     });
 
-    // Wait for fonts to be ready
     await page.evaluateHandle("document.fonts.ready");
 
     const pdfBuffer = await page.pdf({
@@ -1977,7 +2608,6 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
       margin: { top: "4mm", right: "10mm", bottom: "4mm", left: "10mm" },
     });
 
-    // Descriptive filename incl. AY, Dept, Class, Term
     const filename = `${sanitizeFilename(
       academicYearData.name
     )}-${sanitizeFilename(department.name)}-${sanitizeFilename(
@@ -1987,21 +2617,951 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader("Content-Length", pdfBuffer.length);
-
-    // CORS
-    res.setHeader("Access-Control-Allow-Origin", "*"); // or specific origin
+    res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader(
       "Access-Control-Allow-Headers",
       "Content-Type, Authorization"
     );
 
     res.status(200).end(pdfBuffer);
-
-    // Report card PDF generated successfully
   } catch (err) {
     return next(err);
   } finally {
     await browser.close();
   }
 });
-module.exports = { bulkReportCards, singleReportCard, bulkReportCardsPdf };
+
+/**
+ * Generate complete HTML for bulk report cards
+ * Returns HTML file that can be printed directly in browser
+ */
+const bulkReportCardsHTML = catchAsync(async (req, res, next) => {
+  const { academicYearId, departmentId, classId, term = "annual" } = req.query;
+
+  console.log("TERM: ..................: ", term);
+
+  // Validation
+  if (!academicYearId || !departmentId || !classId) {
+    return next(
+      new AppError(
+        `Missing parameters: academicYearId=${academicYearId}, departmentId=${departmentId}, classId=${classId}`,
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+
+  // Fetch necessary data
+  const [academicYearData, department, studentClass] = await Promise.all([
+    models.AcademicYear.findByPk(academicYearId),
+    models.specialties.findByPk(departmentId),
+    models.Class.findByPk(classId, {
+      include: [
+        {
+          model: models.users,
+          as: "classMaster",
+          attributes: ["name", "username"],
+        },
+      ],
+    }),
+  ]);
+
+  // Validation checks
+  if (!academicYearData) {
+    return next(new AppError("Academic year not found", StatusCodes.NOT_FOUND));
+  }
+  if (!department) {
+    return next(new AppError("Department not found", StatusCodes.NOT_FOUND));
+  }
+  if (!studentClass) {
+    return next(new AppError("Class not found", StatusCodes.NOT_FOUND));
+  }
+
+  const classMaster =
+    studentClass?.classMaster?.name ||
+    studentClass?.classMaster?.username ||
+    "";
+
+  // Resolve term key
+  const resolveTermKey = async (rawTerm) => {
+    const t = String(rawTerm ?? "annual")
+      .trim()
+      .toLowerCase();
+
+    if (t === "annual" || t === "all" || t === "") return "annual";
+    if (t === "term1" || t === "t1" || t.includes("first")) return "term1";
+    if (t === "term2" || t === "t2" || t.includes("second")) return "term2";
+    if (t === "term3" || t === "t3" || t.includes("third")) return "term3";
+
+    const n = Number(t);
+    if (!Number.isNaN(n)) {
+      if ([1, 2, 3].includes(n)) return `term${n}`;
+      const termRow = await models.Term.findOne({
+        where: { id: n, academic_year_id: academicYearId },
+        attributes: ["order_number"],
+      });
+      if (termRow && [1, 2, 3].includes(Number(termRow.order_number))) {
+        return `term${termRow.order_number}`;
+      }
+    }
+    return "annual";
+  };
+
+  const termKey = await resolveTermKey(term);
+
+  // Fetch marks with all necessary includes
+  const marks = await models.marks.findAll({
+    where: { academic_year_id: academicYearId, class_id: classId },
+    include: [
+      {
+        model: models.students,
+        as: "student",
+        attributes: [
+          "id",
+          "full_name",
+          "student_id",
+          "date_of_birth",
+          "father_name",
+          "mother_name",
+        ],
+        include: [
+          {
+            model: models.Class,
+            as: "Class",
+            attributes: ["name"],
+            include: [
+              {
+                model: models.specialties,
+                as: "department",
+                attributes: ["name"],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        model: models.Subject,
+        as: "subject",
+        attributes: ["code", "name", "coefficient", "category"],
+        include: [
+          {
+            model: models.ClassSubject,
+            as: "classSubjects",
+            attributes: ["id", "class_id"],
+            include: [
+              {
+                model: models.users,
+                as: "teacher",
+                attributes: ["id", "name", "username"],
+              },
+            ],
+          },
+        ],
+      },
+      { model: models.Term, as: "term", attributes: ["order_number", "name"] },
+      {
+        model: models.Sequence,
+        as: "sequence",
+        attributes: ["order_number", "name"],
+      },
+      { model: models.AcademicYear, as: "academic_year", attributes: ["name"] },
+    ],
+    order: [
+      [{ model: models.students, as: "student" }, "full_name", "ASC"],
+      [{ model: models.Subject, as: "subject" }, "code", "ASC"],
+      [{ model: models.Term, as: "term" }, "order_number", "ASC"],
+      [{ model: models.Sequence, as: "sequence" }, "order_number", "ASC"],
+    ],
+  });
+
+  if (!marks.length) {
+    return next(
+      new AppError(
+        `No marks available for ${studentClass.name} in ${department.name} (${academicYearData.name}).`,
+        StatusCodes.NOT_FOUND
+      )
+    );
+  }
+
+  // Build report cards from marks
+  const cards = buildReportCardsFromMarks(marks, classMaster, termKey);
+
+  // Fetch grading scale
+  const grading = await models.academic_bands.findAll({
+    where: {
+      academic_year_id: academicYearData.id,
+      class_id: studentClass.id,
+    },
+    raw: true,
+  });
+
+  console.log("Grading:  ", grading);
+
+  // FIXED: Generate HTML directly from original cards
+  // Do NOT transform to template cards - buildHTML expects original structure
+  const logoUrl = `${req.protocol}://${req.get("host")}/public/logo.png`;
+  const html = buildHTML(cards, {
+    logoUrl: logoUrl,
+    grading: grading,
+  });
+
+  // Generate filename
+  const sanitizeFilename = (s = "") => String(s).replace(/[^\w\-]+/g, "_");
+  const filename = `${sanitizeFilename(
+    academicYearData.name
+  )}-${sanitizeFilename(department.name)}-${sanitizeFilename(
+    studentClass.name
+  )}-${sanitizeFilename(termLabelFromKey(termKey))}-report-cards.html`;
+
+  // Set headers for HTML download
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+
+  // Send HTML
+  res.status(StatusCodes.OK).send(html);
+});
+/**
+ * TEST ENDPOINT - Generate HTML with mock data for QA testing
+ * Simulates bulk report cards with sample data (20 students)
+ * DO NOT USE IN PRODUCTION
+ */
+const bulkReportCardsHTMLTest = catchAsync(async (req, res, next) => {
+  const { term = "annual", studentCount = "100" } = req.query;
+
+  // Parse student count (max 50 for testing)
+  const count = Math.min(parseInt(studentCount) || 20, 200);
+
+  // Mock sample data template
+  const sampleDataTemplate = {
+    student: {
+      name: "NKONGHO LUA DANIEL",
+      registrationNumber: "VSA/2024/001",
+      dateOfBirth: "15 March 2008",
+      class: "LEVEL 2 MECHANICAL ENGINEERING",
+      option: "MECHANICAL ENGINEERING",
+      academicYear: "2023-2024",
+      term: "THIRD TERM", // FIRST TERM, SECOND TERM, THIRD TERM
+    },
+
+    // Sequences data structure
+    sequences: {
+      seq1: { name: "Sequence 1", weight: 1 },
+      seq2: { name: "Sequence 2", weight: 1 },
+      seq3: { name: "Sequence 3", weight: 1 },
+      seq4: { name: "Sequence 4", weight: 1 },
+      seq5: { name: "Sequence 5", weight: 1 },
+      seq6: { name: "Sequence 6", weight: 1 },
+    },
+
+    generalSubjects: [
+      {
+        code: "MTH",
+        title: "MATHEMATICS",
+        coef: 5,
+        teacher: "NJEMA PAUL",
+        scores: {
+          seq1: 16,
+          seq2: 18,
+          seq3: 15,
+          seq4: 17,
+          seq5: 16,
+          seq6: 19,
+          term1Avg: 17.0,
+          term2Avg: 16.0,
+          term3Avg: 17.5,
+          finalAvg: 16.8,
+        },
+      },
+      {
+        code: "ENG",
+        title: "ENGLISH LANGUAGE",
+        coef: 5,
+        teacher: "MBAH GRACE",
+        scores: {
+          seq1: 15,
+          seq2: 16,
+          seq3: 14,
+          seq4: 15,
+          seq5: 17,
+          seq6: 16,
+          term1Avg: 15.5,
+          term2Avg: 14.5,
+          term3Avg: 16.5,
+          finalAvg: 15.5,
+        },
+      },
+      {
+        code: "FRE",
+        title: "FRENCH LANGUAGE",
+        coef: 4,
+        teacher: "TABI MARIE",
+        scores: {
+          seq1: 12,
+          seq2: 13,
+          seq3: 11,
+          seq4: 12,
+          seq5: 14,
+          seq6: 13,
+          term1Avg: 12.5,
+          term2Avg: 11.5,
+          term3Avg: 13.5,
+          finalAvg: 12.5,
+        },
+      },
+      {
+        code: "COM",
+        title: "COMMERCE",
+        coef: 3,
+        teacher: "CHIEF EXAMINER",
+        scores: {
+          seq1: 14,
+          seq2: 15,
+          seq3: 13,
+          seq4: 14,
+          seq5: 15,
+          seq6: 16,
+          term1Avg: 14.5,
+          term2Avg: 13.5,
+          term3Avg: 15.5,
+          finalAvg: 14.5,
+        },
+      },
+      {
+        code: "ECO",
+        title: "ECONOMICS",
+        coef: 3,
+        teacher: "FOMBA JOHN",
+        scores: {
+          seq1: 13,
+          seq2: 14,
+          seq3: 12,
+          seq4: 13,
+          seq5: 15,
+          seq6: 14,
+          term1Avg: 13.5,
+          term2Avg: 12.5,
+          term3Avg: 14.5,
+          finalAvg: 13.5,
+        },
+      },
+    ],
+
+    professionalSubjects: [
+      {
+        code: "MED",
+        title: "MECHANICAL DRAWING",
+        coef: 6,
+        teacher: "ENG. TABI",
+        scores: {
+          seq1: 15,
+          seq2: 16,
+          seq3: 14,
+          seq4: 15,
+          seq5: 17,
+          seq6: 16,
+          term1Avg: 15.5,
+          term2Avg: 14.5,
+          term3Avg: 16.5,
+          finalAvg: 15.5,
+        },
+      },
+      {
+        code: "ELT",
+        title: "ELECTRICAL TECHNOLOGY",
+        coef: 5,
+        teacher: "TECH. MBAH",
+        scores: {
+          seq1: 14,
+          seq2: 15,
+          seq3: 13,
+          seq4: 14,
+          seq5: 16,
+          seq6: 15,
+          term1Avg: 14.5,
+          term2Avg: 13.5,
+          term3Avg: 15.5,
+          finalAvg: 14.5,
+        },
+      },
+      {
+        code: "WRP",
+        title: "WORKSHOP PRACTICE",
+        coef: 5,
+        teacher: "TECH. FOMBA",
+        scores: {
+          seq1: 16,
+          seq2: 17,
+          seq3: 15,
+          seq4: 16,
+          seq5: 18,
+          seq6: 17,
+          term1Avg: 16.5,
+          term2Avg: 15.5,
+          term3Avg: 17.5,
+          finalAvg: 16.5,
+        },
+      },
+      {
+        code: "SHW",
+        title: "SHEET METAL WORKS",
+        coef: 4,
+        teacher: "TECH. GRACE",
+        scores: {
+          seq1: 13,
+          seq2: 14,
+          seq3: 12,
+          seq4: 13,
+          seq5: 15,
+          seq6: 14,
+          term1Avg: 13.5,
+          term2Avg: 12.5,
+          term3Avg: 14.5,
+          finalAvg: 13.5,
+        },
+      },
+      {
+        code: "ENS",
+        title: "ENGINEERING SCIENCE",
+        coef: 5,
+        teacher: "ENG. PAUL",
+        scores: {
+          seq1: 15,
+          seq2: 16,
+          seq3: 14,
+          seq4: 15,
+          seq5: 17,
+          seq6: 16,
+          term1Avg: 15.5,
+          term2Avg: 14.5,
+          term3Avg: 16.5,
+          finalAvg: 15.5,
+        },
+      },
+      {
+        code: "ICT",
+        title: "INFORMATION TECHNOLOGY",
+        coef: 3,
+        teacher: "TECH. MARIE",
+        scores: {
+          seq1: 17,
+          seq2: 18,
+          seq3: 16,
+          seq4: 17,
+          seq5: 19,
+          seq6: 18,
+          term1Avg: 17.5,
+          term2Avg: 16.5,
+          term3Avg: 18.5,
+          finalAvg: 17.5,
+        },
+      },
+      {
+        code: "MTL",
+        title: "MATERIAL TECHNOLOGY",
+        coef: 4,
+        teacher: "ENG. NJEMA",
+        scores: {
+          seq1: 14,
+          seq2: 15,
+          seq3: 13,
+          seq4: 14,
+          seq5: 16,
+          seq6: 15,
+          term1Avg: 14.5,
+          term2Avg: 13.5,
+          term3Avg: 15.5,
+          finalAvg: 14.5,
+        },
+      },
+      {
+        code: "TDR",
+        title: "TECHNICAL DRAWING",
+        coef: 5,
+        teacher: "TECH. TABI",
+        scores: {
+          seq1: 16,
+          seq2: 17,
+          seq3: 15,
+          seq4: 16,
+          seq5: 18,
+          seq6: 17,
+          term1Avg: 16.5,
+          term2Avg: 15.5,
+          term3Avg: 17.5,
+          finalAvg: 16.5,
+        },
+      },
+      {
+        code: "AUT",
+        title: "AUTOMATION",
+        coef: 4,
+        teacher: "ENG. MBAH",
+        scores: {
+          seq1: 15,
+          seq2: 16,
+          seq3: 14,
+          seq4: 15,
+          seq5: 17,
+          seq6: 16,
+          term1Avg: 15.5,
+          term2Avg: 14.5,
+          term3Avg: 16.5,
+          finalAvg: 15.5,
+        },
+      },
+      {
+        code: "QCT",
+        title: "QUALITY CONTROL",
+        coef: 3,
+        teacher: "TECH. GRACE",
+        scores: {
+          seq1: 14,
+          seq2: 15,
+          seq3: 13,
+          seq4: 14,
+          seq5: 16,
+          seq6: 15,
+          term1Avg: 14.5,
+          term2Avg: 13.5,
+          term3Avg: 15.5,
+          finalAvg: 14.5,
+        },
+      },
+    ],
+
+    practicalSubjects: [
+      {
+        code: "WLD",
+        title: "WELDING PRACTICE",
+        coef: 6,
+        teacher: "WORKSHOP TEAM A",
+        scores: {
+          seq1: 18,
+          seq2: 19,
+          seq3: 17,
+          seq4: 18,
+          seq5: 19,
+          seq6: 18,
+          term1Avg: 18.5,
+          term2Avg: 17.5,
+          term3Avg: 18.5,
+          finalAvg: 18.2,
+        },
+      },
+      {
+        code: "MCH",
+        title: "MACHINING PRACTICE",
+        coef: 7,
+        teacher: "WORKSHOP TEAM B",
+        scores: {
+          seq1: 17,
+          seq2: 18,
+          seq3: 16,
+          seq4: 17,
+          seq5: 18,
+          seq6: 17,
+          term1Avg: 17.5,
+          term2Avg: 16.5,
+          term3Avg: 17.5,
+          finalAvg: 17.2,
+        },
+      },
+      {
+        code: "FTG",
+        title: "FITTING PRACTICE",
+        coef: 6,
+        teacher: "WORKSHOP TEAM C",
+        scores: {
+          seq1: 16,
+          seq2: 17,
+          seq3: 15,
+          seq4: 16,
+          seq5: 17,
+          seq6: 16,
+          term1Avg: 16.5,
+          term2Avg: 15.5,
+          term3Avg: 16.5,
+          finalAvg: 16.2,
+        },
+      },
+      {
+        code: "ASB",
+        title: "ASSEMBLY PRACTICE",
+        coef: 5,
+        teacher: "WORKSHOP TEAM D",
+        scores: {
+          seq1: 17,
+          seq2: 18,
+          seq3: 16,
+          seq4: 17,
+          seq5: 18,
+          seq6: 17,
+          term1Avg: 17.5,
+          term2Avg: 16.5,
+          term3Avg: 17.5,
+          finalAvg: 17.2,
+        },
+      },
+      {
+        code: "MNT",
+        title: "MAINTENANCE PRACTICE",
+        coef: 6,
+        teacher: "WORKSHOP TEAM E",
+        scores: {
+          seq1: 16,
+          seq2: 17,
+          seq3: 15,
+          seq4: 16,
+          seq5: 17,
+          seq6: 16,
+          term1Avg: 16.5,
+          term2Avg: 15.5,
+          term3Avg: 16.5,
+          finalAvg: 16.2,
+        },
+      },
+    ],
+
+    // CORRECTED CALCULATIONS - Calculated totals and averages
+    termTotals: {
+      // TERM 1 CALCULATIONS
+      // General: (17.0*5 + 15.5*5 + 12.5*4 + 14.5*3 + 13.5*3) / (5+5+4+3+3) = 286 / 20 = 14.3
+      // Professional: (15.5*6 + 14.5*5 + 16.5*5 + 13.5*4 + 15.5*5 + 17.5*3 + 14.5*4 + 16.5*5 + 15.5*4 + 14.5*3) / (6+5+5+4+5+3+4+5+4+3) = 658.5 / 44 = 14.966 ≈ 15.0
+      // Practical: (18.5*6 + 17.5*7 + 16.5*6 + 17.5*5 + 16.5*6) / (6+7+6+5+6) = 521.5 / 30 = 17.383 ≈ 17.4
+      // Total Weighted: 286 + 658.5 + 521.5 = 1466
+      // Total Coef: 20 + 44 + 30 = 94
+      // Average: 1466 / 94 = 15.595 ≈ 15.6
+      term1: { total: 1466.0, average: 15.6, rank: 2, outOf: 25 },
+
+      // TERM 2 CALCULATIONS
+      // General: (16.0*5 + 14.5*5 + 11.5*4 + 13.5*3 + 12.5*3) / 20 = 268.5 / 20 = 13.425 ≈ 13.4
+      // Professional: (14.5*6 + 13.5*5 + 15.5*5 + 12.5*4 + 14.5*5 + 16.5*3 + 13.5*4 + 15.5*5 + 14.5*4 + 13.5*3) / 44 = 617 / 44 = 14.023 ≈ 14.0
+      // Practical: (17.5*6 + 16.5*7 + 15.5*6 + 16.5*5 + 15.5*6) / 30 = 488 / 30 = 16.267 ≈ 16.3
+      // Total Weighted: 268.5 + 617 + 488 = 1373.5
+      // Average: 1373.5 / 94 = 14.612 ≈ 14.6
+      term2: { total: 1373.5, average: 14.6, rank: 3, outOf: 25 },
+
+      // TERM 3 CALCULATIONS
+      // General: (17.5*5 + 16.5*5 + 13.5*4 + 15.5*3 + 14.5*3) / 20 = 294 / 20 = 14.7
+      // Professional: (16.5*6 + 15.5*5 + 17.5*5 + 14.5*4 + 16.5*5 + 18.5*3 + 15.5*4 + 17.5*5 + 16.5*4 + 15.5*3) / 44 = 695 / 44 = 15.795 ≈ 15.8
+      // Practical: (18.5*6 + 17.5*7 + 16.5*6 + 17.5*5 + 16.5*6) / 30 = 521.5 / 30 = 17.383 ≈ 17.4
+      // Total Weighted: 294 + 695 + 521.5 = 1510.5
+      // Average: 1510.5 / 94 = 16.068 ≈ 16.1
+      term3: { total: 1510.5, average: 16.1, rank: 1, outOf: 25 },
+
+      // ANNUAL CALCULATIONS
+      // Annual Average = (15.6 + 14.6 + 16.1) / 3 = 46.3 / 3 = 15.433 ≈ 15.4
+      // Annual Total = 1466 + 1373.5 + 1510.5 = 4350
+      annual: { total: 4350.0, average: 15.4, rank: 2, outOf: 25 },
+    },
+
+    classStatistics: {
+      classAverage: 12.8,
+      highestAverage: 16.2,
+      lowestAverage: 8.4,
+    },
+
+    conduct: {
+      attendanceDays: 65,
+      totalDays: 68,
+      timesLate: 2,
+      disciplinaryActions: 0,
+    },
+
+    administration: {
+      classMaster: "NDICHIA GLIEM",
+      principal: "Dr. ACADEMIC DIRECTOR",
+      nextTermStarts: "September 2024",
+      decision: "PROMOTED",
+      parents: "MR. AND MRS. NKONGHO",
+    },
+  };
+
+  // Helper to generate varied student names
+  const firstNames = [
+    "NKONGHO LUA",
+    "MBAH GRACE",
+    "TABI MARIE",
+    "FOMBA JOHN",
+    "NJEMA PAUL",
+    "CHIEF EXAMINER",
+    "TANKO IBRAHIM",
+    "AYUK FLORENCE",
+    "MANGA PETER",
+    "NEBA COLLINS",
+    "ASHU DIVINE",
+    "KILO BLESSING",
+    "SAMA ERIC",
+    "NGWA MARTHA",
+    "NDIP JUNIOR",
+    "BATE SANDRA",
+    "KOMETA BRIAN",
+    "YONG VIVIAN",
+    "AWAH PATRICK",
+    "SHEY PROMISE",
+  ];
+
+  const lastNames = [
+    "DANIEL",
+    "WILLIAMS",
+    "SMITH",
+    "JOHNSON",
+    "BROWN",
+    "JONES",
+    "DAVIS",
+    "MILLER",
+    "WILSON",
+    "MOORE",
+    "TAYLOR",
+    "ANDERSON",
+    "THOMAS",
+    "JACKSON",
+    "WHITE",
+    "HARRIS",
+    "MARTIN",
+    "THOMPSON",
+    "GARCIA",
+    "MARTINEZ",
+  ];
+
+  // Helper to randomize scores slightly
+  const randomizeScore = (baseScore, variance = 3) => {
+    return Math.max(
+      0,
+      Math.min(
+        20,
+        baseScore + Math.floor(Math.random() * (variance * 2 + 1)) - variance
+      )
+    );
+  };
+
+  // Helper to randomize subject scores
+  const randomizeSubjectScores = (baseScores) => {
+    const newScores = { ...baseScores };
+
+    // Randomize sequence scores
+    newScores.seq1 = randomizeScore(baseScores.seq1, 2);
+    newScores.seq2 = randomizeScore(baseScores.seq2, 2);
+    newScores.seq3 = randomizeScore(baseScores.seq3, 2);
+    newScores.seq4 = randomizeScore(baseScores.seq4, 2);
+    newScores.seq5 = randomizeScore(baseScores.seq5, 2);
+    newScores.seq6 = randomizeScore(baseScores.seq6, 2);
+
+    // Recalculate term averages
+    newScores.term1Avg = Number(
+      ((newScores.seq1 + newScores.seq2) / 2).toFixed(1)
+    );
+    newScores.term2Avg = Number(
+      ((newScores.seq3 + newScores.seq4) / 2).toFixed(1)
+    );
+    newScores.term3Avg = Number(
+      ((newScores.seq5 + newScores.seq6) / 2).toFixed(1)
+    );
+    newScores.finalAvg = Number(
+      (
+        (newScores.term1Avg + newScores.term2Avg + newScores.term3Avg) /
+        3
+      ).toFixed(1)
+    );
+
+    return newScores;
+  };
+
+  // Generate mock students
+  const mockStudents = [];
+  for (let i = 0; i < count; i++) {
+    const firstName = firstNames[i % firstNames.length];
+    const lastName = lastNames[i % lastNames.length];
+    const studentNumber = String(i + 1).padStart(3, "0");
+
+    // Clone and customize student data
+    const studentData = JSON.parse(JSON.stringify(sampleDataTemplate));
+
+    studentData.student.name = `${firstName} ${lastName}`;
+    studentData.student.registrationNumber = `VSA/2024/${studentNumber}`;
+
+    // Randomize DOB (year 2005-2010)
+    const year = 2005 + (i % 6);
+    const month = (i % 12) + 1;
+    const day = (i % 28) + 1;
+    studentData.student.dateOfBirth = `${day} ${
+      [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+      ][month - 1]
+    } ${year}`;
+
+    // Randomize scores for variety
+    studentData.generalSubjects = studentData.generalSubjects.map(
+      (subject) => ({
+        ...subject,
+        scores: randomizeSubjectScores(subject.scores),
+      })
+    );
+
+    studentData.professionalSubjects = studentData.professionalSubjects.map(
+      (subject) => ({
+        ...subject,
+        scores: randomizeSubjectScores(subject.scores),
+      })
+    );
+
+    studentData.practicalSubjects = studentData.practicalSubjects.map(
+      (subject) => ({
+        ...subject,
+        scores: randomizeSubjectScores(subject.scores),
+      })
+    );
+
+    // Recalculate term totals based on new scores
+    const calculateTermTotal = (subjects, termKey) => {
+      let totalWeighted = 0;
+      let totalCoef = 0;
+
+      subjects.forEach((subject) => {
+        const avg = subject.scores[`${termKey}Avg`];
+        if (avg !== null && avg !== undefined) {
+          totalWeighted += avg * subject.coef;
+          totalCoef += subject.coef;
+        }
+      });
+
+      return {
+        total: Number(totalWeighted.toFixed(1)),
+        average:
+          totalCoef > 0 ? Number((totalWeighted / totalCoef).toFixed(1)) : 0,
+      };
+    };
+
+    const allSubjects = [
+      ...studentData.generalSubjects,
+      ...studentData.professionalSubjects,
+      ...studentData.practicalSubjects,
+    ];
+
+    studentData.termTotals.term1 = calculateTermTotal(allSubjects, "term1");
+    studentData.termTotals.term2 = calculateTermTotal(allSubjects, "term2");
+    studentData.termTotals.term3 = calculateTermTotal(allSubjects, "term3");
+
+    const annualAvg = Number(
+      (
+        (studentData.termTotals.term1.average +
+          studentData.termTotals.term2.average +
+          studentData.termTotals.term3.average) /
+        3
+      ).toFixed(1)
+    );
+
+    studentData.termTotals.annual = {
+      total: Number(
+        (
+          studentData.termTotals.term1.total +
+          studentData.termTotals.term2.total +
+          studentData.termTotals.term3.total
+        ).toFixed(1)
+      ),
+      average: annualAvg,
+    };
+
+    // Randomize conduct
+    studentData.conduct.attendanceDays = 60 + Math.floor(Math.random() * 8);
+    studentData.conduct.totalDays = 68;
+    studentData.conduct.timesLate = Math.floor(Math.random() * 5);
+    studentData.conduct.disciplinaryActions = Math.floor(Math.random() * 2);
+
+    // Randomize parents
+    studentData.administration.parents = `MR. AND MRS. ${lastName}`;
+
+    mockStudents.push(studentData);
+  }
+
+  // Calculate ranks after all students generated
+  ["term1", "term2", "term3", "annual"].forEach((termKey) => {
+    mockStudents
+      .sort(
+        (a, b) => b.termTotals[termKey].average - a.termTotals[termKey].average
+      )
+      .forEach((student, idx) => {
+        student.termTotals[termKey].rank = idx + 1;
+        student.termTotals[termKey].outOf = count;
+      });
+  });
+
+  // Calculate class statistics
+  const annualAverages = mockStudents.map((s) => s.termTotals.annual.average);
+  const classStats = {
+    classAverage: Number(
+      (annualAverages.reduce((a, b) => a + b, 0) / count).toFixed(1)
+    ),
+    highestAverage: Number(Math.max(...annualAverages).toFixed(1)),
+    lowestAverage: Number(Math.min(...annualAverages).toFixed(1)),
+  };
+
+  mockStudents.forEach((student) => {
+    student.classStatistics = classStats;
+  });
+
+  // Resolve term key
+  const resolveTermKey = (rawTerm) => {
+    const t = String(rawTerm ?? "annual")
+      .trim()
+      .toLowerCase();
+    if (t === "annual" || t === "all" || t === "") return "annual";
+    if (t === "term1" || t === "t1" || t.includes("first")) return "term1";
+    if (t === "term2" || t === "t2" || t.includes("second")) return "term2";
+    if (t === "term3" || t === "t3" || t.includes("third")) return "term3";
+    return "annual";
+  };
+
+  const termKey = resolveTermKey(term);
+
+  // Mock grading scale
+  const mockGrading = [
+    { band_min: 18, band_max: 20, comment: "Excellent" },
+    { band_min: 16, band_max: 17.99, comment: "V.Good" },
+    { band_min: 14, band_max: 15.99, comment: "Good" },
+    { band_min: 12, band_max: 13.99, comment: "Fairly Good" },
+    { band_min: 10, band_max: 11.99, comment: "Average" },
+    { band_min: 0, band_max: 9.99, comment: "Weak" },
+  ];
+
+  // FIXED: Generate HTML directly from mock students
+  // Do NOT use toTemplateCard - buildHTML expects original structure
+  const logoUrl = `${req.protocol}://${req.get("host")}/public/logo.png`;
+  const html = buildHTML(mockStudents, { logoUrl }, mockGrading);
+
+  // Generate filename
+  const sanitizeFilename = (s = "") => String(s).replace(/[^\w\-]+/g, "_");
+  const filename = `TEST-${count}Students-${sanitizeFilename(
+    termLabelFromKey(termKey)
+  )}-report-cards.html`;
+
+  // Set headers
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("X-Test-Data", "true"); // Flag to indicate test data
+
+  // Send HTML
+  res.status(StatusCodes.OK).send(html);
+});
+
+module.exports = {
+  bulkReportCards,
+  singleReportCard,
+  bulkReportCardsPdf,
+  bulkReportCardsHTML,
+  bulkReportCardsHTMLTest, // Add this export
+};

@@ -14,4 +14,8 @@ reportCardRouter
   .route("/bulk-pdfs")
   .get(reportCardControllers.bulkReportCardsPdf);
 
+reportCardRouter
+  .route("/bulk-html")
+  .get(reportCardControllers.bulkReportCardsHTMLTest);
+
 module.exports = reportCardRouter;

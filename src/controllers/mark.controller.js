@@ -173,359 +173,242 @@ const saveMarksBatch = catchAsync(async (req, res, next) => {
     uploaded_by,
   } = req.body;
 
-  // Step 1: Quick Validation
+  // Parse IDs
+  const parsedIds = {
+    academic_year_id: Number(academic_year_id),
+    class_id: Number(class_id),
+    term_id: Number(term_id),
+    sequence_id: Number(sequence_id),
+    subject_id: Number(subject_id),
+    uploaded_by: Number(uploaded_by),
+  };
+
+  // Validation
   if (
-    !academic_year_id ||
-    !class_id ||
-    !term_id ||
-    !sequence_id ||
-    !subject_id ||
-    !uploaded_by
+    !parsedIds.academic_year_id ||
+    !parsedIds.class_id ||
+    !parsedIds.term_id ||
+    !parsedIds.sequence_id ||
+    !parsedIds.subject_id ||
+    !parsedIds.uploaded_by
   ) {
-    console.error(`[${requestId}] ❌ Missing required fields`);
     return next(new AppError("All fields required", StatusCodes.BAD_REQUEST));
   }
 
   if (!Array.isArray(marks) || marks.length === 0) {
-    console.error(`[${requestId}] ❌ Invalid marks array`);
     return next(
       new AppError("marks must be non-empty array", StatusCodes.BAD_REQUEST)
     );
   }
 
-  if (marks.length > 1000) {
-    console.error(`[${requestId}] ❌ Batch too large: ${marks.length}`);
-    return next(
-      new AppError("Max 1000 marks per request", StatusCodes.BAD_REQUEST)
-    );
-  }
-
   console.log(`[${requestId}] Processing ${marks.length} marks`);
 
-  // Step 2: Verify Class-Subject (cached in production)
+  // Verify Class-Subject
   const classSubjectExists = await models.ClassSubject.findOne({
-    where: { class_id, subject_id },
+    where: { class_id: parsedIds.class_id, subject_id: parsedIds.subject_id },
   });
 
   if (!classSubjectExists) {
-    console.error(`[${requestId}] ❌ Class-Subject not assigned`);
     return next(
       new AppError("Class not assigned to subject", StatusCodes.FORBIDDEN)
     );
   }
 
-  // Step 3: Validate All Marks
+  // Validate marks
   const validMarks = [];
   const validationErrors = [];
   const seenStudents = new Set();
 
   for (let i = 0; i < marks.length; i++) {
     const m = marks[i];
-    try {
-      if (seenStudents.has(m.student_id)) {
-        validationErrors.push({
-          index: i,
-          student_id: m.student_id,
-          error: "Duplicate",
-        });
-        continue;
-      }
+    const studentId = Number(m.student_id);
+    const score = Number(m.score);
 
-      if (!m.student_id || !Number.isInteger(m.student_id)) {
-        validationErrors.push({
-          index: i,
-          student_id: m.student_id,
-          error: "Invalid ID",
-        });
-        continue;
-      }
+    if (seenStudents.has(studentId)) {
+      validationErrors.push({
+        index: i,
+        student_id: studentId,
+        error: "Duplicate",
+      });
+      continue;
+    }
 
-      if (
-        m.score === undefined ||
-        m.score === null ||
-        typeof m.score !== "number"
-      ) {
-        validationErrors.push({
-          index: i,
-          student_id: m.student_id,
-          error: "Score required",
-        });
-        continue;
-      }
-
-      const score = Number(m.score);
-      if (isNaN(score) || score < 0 || score > 20) {
-        validationErrors.push({
-          index: i,
-          student_id: m.student_id,
-          error: `Invalid score: ${m.score}`,
-        });
-        continue;
-      }
-
-      const markData = {
-        student_id: m.student_id,
-        score,
-        academic_year_id,
-        class_id,
-        term_id,
-        sequence_id,
-        subject_id,
-        uploaded_by,
-        uploaded_at: new Date(),
-      };
-
-      await validateMarkData(markData, false, true);
-      validMarks.push(markData);
-      seenStudents.add(m.student_id);
-    } catch (error) {
+    if (!studentId || isNaN(studentId) || studentId <= 0) {
       validationErrors.push({
         index: i,
         student_id: m.student_id,
-        error: error.message,
+        error: "Invalid student ID",
       });
+      continue;
     }
+
+    if (m.score === undefined || m.score === null || m.score === "") {
+      validationErrors.push({
+        index: i,
+        student_id: studentId,
+        error: "Score required",
+      });
+      continue;
+    }
+
+    if (isNaN(score) || score < 0 || score > 20) {
+      validationErrors.push({
+        index: i,
+        student_id: studentId,
+        error: `Invalid score: ${m.score}`,
+      });
+      continue;
+    }
+
+    validMarks.push({
+      student_id: studentId,
+      score: score,
+      academic_year_id: parsedIds.academic_year_id,
+      class_id: parsedIds.class_id,
+      term_id: parsedIds.term_id,
+      sequence_id: parsedIds.sequence_id,
+      subject_id: parsedIds.subject_id,
+      uploaded_by: parsedIds.uploaded_by,
+      uploaded_at: new Date(),
+      deletedAt: null, // 🔑 Important: Reset deletedAt for upsert
+    });
+    seenStudents.add(studentId);
   }
 
+  console.log(
+    `[${requestId}] Valid: ${validMarks.length}, Invalid: ${validationErrors.length}`
+  );
+
   if (validMarks.length === 0) {
-    console.error(`[${requestId}] ❌ No valid marks`);
     return appResponder(
       StatusCodes.BAD_REQUEST,
       {
         status: "error",
         message: "All marks failed validation",
-        errors: validationErrors.slice(0, 20),
+        errors: validationErrors,
       },
       res
     );
   }
 
-  console.log(
-    `[${requestId}] ${validMarks.length} valid, ${validationErrors.length} invalid`
-  );
-
-  // Step 4: Start Transaction
+  // Start transaction
   const transaction = await MarksModel.sequelize.transaction();
 
+  const successfulSaves = [];
+  const failedSaves = [];
+
   try {
-    const studentIds = validMarks.map((m) => m.student_id);
-
-    // Step 5: Fetch Existing Marks
-    const existingMarks = await MarksModel.findAll({
-      where: {
-        student_id: studentIds,
-        subject_id,
-        class_id,
-        academic_year_id,
-        term_id,
-        sequence_id,
-      },
-      transaction,
-    });
-
-    const existingMap = new Map();
-    existingMarks.forEach((e) => existingMap.set(e.student_id, e.toJSON()));
-
-    // Step 6: BATCHED PARALLEL PROCESSING
-    const successfulSaves = [];
-    const failedSaves = [];
-    const created = [];
-    const updated = [];
-
-    // Process in batches of 10 to avoid overwhelming the database
-    for (
-      let batchStart = 0;
-      batchStart < validMarks.length;
-      batchStart += BATCH_SIZE
-    ) {
-      const batch = validMarks.slice(batchStart, batchStart + BATCH_SIZE);
-
-      const batchResults = await Promise.allSettled(
-        batch.map(async (mark) => {
-          const existingMark = existingMap.get(mark.student_id);
-          const isUpdate = !!existingMark;
-          let lastError = null;
-
-          // Retry logic
-          for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-            try {
-              let savedId;
-
-              if (isUpdate) {
-                const [rows] = await MarksModel.update(
-                  {
-                    score: Number(mark.score),
-                    uploaded_by: mark.uploaded_by,
-                    uploaded_at: mark.uploaded_at,
-                  },
-                  { where: { id: existingMark.id }, transaction }
-                );
-                if (rows === 0) throw new Error("Update affected 0 rows");
-                savedId = existingMark.id;
-              } else {
-                const markToCreate = { ...mark, score: Number(mark.score) };
-                const newMark = await MarksModel.create(markToCreate, {
-                  transaction,
-                });
-                savedId = newMark.id;
-              }
-
-              // Quick verification
-              const verify = await MarksModel.findByPk(savedId, {
-                transaction,
-              });
-              if (!verify) throw new Error("Verification failed");
-              if (Number(verify.score) !== Number(mark.score)) {
-                throw new Error(
-                  `Score mismatch: ${verify.score} vs ${mark.score}`
-                );
-              }
-
-              return {
-                success: true,
-                student_id: mark.student_id,
-                score: mark.score,
-                action: isUpdate ? "updated" : "created",
-                id: savedId,
-                existingMark: isUpdate ? existingMark : null,
-              };
-            } catch (err) {
-              lastError = err;
-              if (attempt < MAX_RETRIES) {
-                await new Promise((r) => setTimeout(r, RETRY_DELAY));
-              }
-            }
-          }
-
-          return {
-            success: false,
+    // Process each mark with UPSERT
+    for (const mark of validMarks) {
+      try {
+        // Use upsert - handles both insert and update, including soft-deleted records
+        const [instance, created] = await MarksModel.upsert(
+          {
             student_id: mark.student_id,
-            error: lastError?.message || "Unknown error",
-          };
-        })
-      );
-
-      // Process batch results
-      for (const result of batchResults) {
-        if (result.status === "fulfilled" && result.value.success) {
-          const val = result.value;
-          successfulSaves.push({
-            student_id: val.student_id,
-            score: val.score,
-            action: val.action,
-            id: val.id,
-          });
-
-          if (val.action === "created") {
-            created.push(val.student_id);
-          } else {
-            updated.push(val.student_id);
+            subject_id: mark.subject_id,
+            class_id: mark.class_id,
+            academic_year_id: mark.academic_year_id,
+            term_id: mark.term_id,
+            sequence_id: mark.sequence_id,
+            score: mark.score,
+            uploaded_by: mark.uploaded_by,
+            uploaded_at: mark.uploaded_at,
+            deletedAt: null, // 🔑 Restore if soft-deleted
+          },
+          {
+            transaction,
+            returning: true,
+            // Specify which fields to update on conflict
+            conflictFields: [
+              "student_id",
+              "subject_id",
+              "class_id",
+              "academic_year_id",
+              "term_id",
+              "sequence_id",
+            ],
           }
+        );
 
-          // Async logging (don't wait)
-          if (
-            val.action === "updated" &&
-            val.existingMark &&
-            val.existingMark.score !== val.score
-          ) {
-            logChanges("marks", val.id, ChangeTypes.update, req.user, {
-              score: { before: val.existingMark.score, after: val.score },
-            }).catch((err) =>
-              console.warn(`[${requestId}] Log error: ${err.message}`)
-            );
-          } else if (val.action === "created") {
-            logChanges("marks", val.id, ChangeTypes.create, req.user, {
-              student_id: val.student_id,
-              score: val.score,
-            }).catch((err) =>
-              console.warn(`[${requestId}] Log error: ${err.message}`)
-            );
-          }
-        } else if (result.status === "fulfilled" && !result.value.success) {
-          failedSaves.push({
-            student_id: result.value.student_id,
-            error: result.value.error,
-          });
-        } else if (result.status === "rejected") {
-          failedSaves.push({
-            student_id: "unknown",
-            error: result.reason?.message || "Promise rejected",
-          });
-        }
+        successfulSaves.push({
+          student_id: mark.student_id,
+          score: mark.score,
+          action: created ? "created" : "updated",
+          id: instance.id,
+        });
+
+        console.log(
+          `[${requestId}] ✅ ${
+            created ? "Created" : "Updated"
+          } mark for student ${mark.student_id}`
+        );
+      } catch (err) {
+        console.error(
+          `[${requestId}] ❌ Error for student ${mark.student_id}:`,
+          err.message
+        );
+
+        failedSaves.push({
+          student_id: mark.student_id,
+          score: mark.score,
+          error: err.message,
+        });
       }
     }
 
-    const successRate = successfulSaves.length / validMarks.length;
-
-    // Step 7: Commit or Rollback
-    if (successRate < 0.9 && failedSaves.length > 0) {
+    // Check success rate
+    if (failedSaves.length > 0 && successfulSaves.length === 0) {
       await transaction.rollback();
-      console.error(
-        `[${requestId}] ❌ Rolled back: ${(successRate * 100).toFixed(
-          1
-        )}% success`
-      );
+      console.error(`[${requestId}] ❌ All saves failed, rolled back`);
 
       return appResponder(
         StatusCodes.INTERNAL_SERVER_ERROR,
         {
           status: "error",
-          message: `Too many failures (${failedSaves.length}/${validMarks.length}). Rolled back.`,
-          saveErrors: failedSaves.slice(0, 20),
+          message: "All marks failed to save",
+          errors: failedSaves,
         },
         res
       );
     }
 
+    // Commit
     await transaction.commit();
 
     const duration = Date.now() - startTime;
     console.log(
-      `[${requestId}] ✅ Success: ${successfulSaves.length}/${validMarks.length} in ${duration}ms (${created.length} created, ${updated.length} updated)`
+      `[${requestId}] ✅ Committed: ${successfulSaves.length} saved, ${failedSaves.length} failed in ${duration}ms`
     );
 
-    // Step 8: Final verification (outside transaction)
-    const finalMarks = await MarksModel.findAll({
-      where: { subject_id, class_id, academic_year_id, term_id, sequence_id },
-      order: [["student_id", "ASC"]],
-    });
-
-    const summary = {
-      total: marks.length,
-      validated: validMarks.length,
-      successful: successfulSaves.length,
-      failed: validationErrors.length + failedSaves.length,
-      created: created.length,
-      updated: updated.length,
-      duration_ms: duration,
-    };
-
     const response = {
-      status: "success",
-      message: `Marks saved: ${summary.successful}/${summary.total}`,
-      data: finalMarks,
-      summary,
+      status: failedSaves.length === 0 ? "success" : "partial",
+      message: `Saved ${successfulSaves.length}/${validMarks.length} marks`,
+      summary: {
+        total: marks.length,
+        validated: validMarks.length,
+        successful: successfulSaves.length,
+        failed: validationErrors.length + failedSaves.length,
+        created: successfulSaves.filter((s) => s.action === "created").length,
+        updated: successfulSaves.filter((s) => s.action === "updated").length,
+        duration_ms: duration,
+      },
     };
 
-    if (validationErrors.length > 0)
+    if (validationErrors.length > 0) {
       response.validationErrors = validationErrors.slice(0, 20);
-    if (failedSaves.length > 0) response.saveErrors = failedSaves.slice(0, 20);
+    }
+    if (failedSaves.length > 0) {
+      response.saveErrors = failedSaves.slice(0, 20);
+    }
 
     return appResponder(
-      successfulSaves.length === validMarks.length
-        ? StatusCodes.OK
-        : StatusCodes.PARTIAL_CONTENT,
+      failedSaves.length === 0 ? StatusCodes.OK : StatusCodes.PARTIAL_CONTENT,
       response,
       res
     );
   } catch (error) {
     await transaction.rollback();
-    const duration = Date.now() - startTime;
-    console.error(
-      `[${requestId}] ❌ Error after ${duration}ms:`,
-      error.message
-    );
-
+    console.error(`[${requestId}] ❌ Transaction error:`, error.message);
     return next(
       new AppError(
         `Save failed: ${error.message}`,

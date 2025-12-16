@@ -52,12 +52,12 @@ module.exports = (sequelize, DataTypes) => {
         },
       },
       category: {
-        type: DataTypes.ENUM("general", "professional"),
+        type: DataTypes.ENUM("general", "professional", "practical"),
         allowNull: false,
         validate: {
           isIn: {
-            args: [["general", "professional"]],
-            msg: "Category must be either 'general' or 'professional'",
+            args: [["general", "professional", "practical"]],
+            msg: "Category must be either 'general', 'practical' or 'professional'",
           },
         },
       },

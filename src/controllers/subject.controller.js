@@ -63,8 +63,10 @@ function validateSubjectData(data, partial = false) {
   }
 
   if (!partial || "category" in data) {
-    if (!["general", "professional"].includes(data.category)) {
-      errors.push("Category must be either 'general' or 'professional'");
+    if (!["general", "professional", "practical"].includes(data.category)) {
+      errors.push(
+        "Category must be either 'general', 'practical' or 'professional'"
+      );
     }
   }
 

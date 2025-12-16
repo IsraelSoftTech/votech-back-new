@@ -2,14 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Report Cards</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Report Card Test - Single Student</title>
     <style>
-      /* ===============================
-         Report Card Styles
-      =============================== */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
 
-      /* Container for the report card */
+      /* SCREEN STYLES */
       .report-card-container {
         width: 100%;
         min-height: 100vh;
@@ -20,27 +22,46 @@
         align-items: flex-start;
       }
 
-      /* Main Report Card Container */
       .report-card {
         width: 100%;
         max-width: 1200px;
         background: white;
         border: 2px solid #204080;
-        padding: 20px;
+        padding: 15px;
         margin: 0 auto;
         box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
         position: relative;
         overflow: hidden;
         font-family: "Arial", sans-serif;
-        line-height: 1.3;
-        font-size: 12px;
+        line-height: 1.2;
+        font-size: 11px;
+      }
+
+      /* Watermark */
+      .report-card::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) rotate(-15deg);
+        width: 600px;
+        height: 600px;
+        background-size: contain;
+        z-index: 0;
+        pointer-events: none;
+        opacity: 0.04;
+      }
+
+      .report-card > * {
+        position: relative;
+        z-index: 1;
       }
 
       /* Document Header */
       .document-header {
         border-bottom: 2px solid #204080;
-        padding: 15px;
-        margin-bottom: 15px;
+        padding: 10px;
+        margin-bottom: 10px;
         background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
         border-radius: 6px;
       }
@@ -48,117 +69,125 @@
       .header-content {
         display: flex;
         justify-content: space-between;
-        align-items: center;
-        margin-bottom: 15px;
+        align-items: flex-start;
+        margin-bottom: 10px;
+        gap: 15px;
       }
 
       .left-section,
       .right-section {
         flex: 1;
         text-align: center;
-        font-size: 10px;
-        line-height: 1.4;
+        font-size: 9px;
+        line-height: 1.3;
       }
 
       .center-emblem {
-        flex: 0 0 100px;
+        flex: 0 0 160px;
         display: flex;
+        flex-direction: column;
         justify-content: center;
         align-items: center;
+        text-align: center;
       }
 
       .report-card-logo {
-        height: 5rem;
-        width: 5rem;
+        height: 3.5rem;
+        width: 3.5rem;
         object-fit: cover;
+        margin-bottom: 6px;
       }
 
-      /* Header Text */
+      .center-text {
+        text-align: center;
+      }
+
+      .igniting-text {
+        font-size: 11px;
+        font-weight: bold;
+        color: #204080;
+        margin-bottom: 3px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .center-motto {
+        font-size: 8px;
+        font-style: italic;
+        color: #c9a96e;
+        font-weight: 600;
+      }
+
       .republic-text {
         font-weight: bold;
-        font-size: 11px;
-        margin-bottom: 3px;
+        font-size: 10px;
+        margin-bottom: 2px;
         text-transform: uppercase;
         color: #204080;
       }
 
       .motto {
         font-style: italic;
-        font-size: 9px;
-        margin-bottom: 3px;
+        font-size: 8px;
+        margin-bottom: 2px;
         color: #c9a96e;
         font-weight: 600;
       }
 
       .ministry {
         font-weight: bold;
-        font-size: 9px;
-        margin-bottom: 3px;
+        font-size: 8px;
+        margin-bottom: 2px;
         text-transform: uppercase;
         color: #204080;
       }
 
-      /* School Info */
-      .school-info {
-        text-align: center;
-        margin: 15px 0;
-        padding: 10px;
-        border-top: 1px solid #204080;
-        border-bottom: 1px solid #204080;
-        background: linear-gradient(
-          90deg,
-          #f8f9ff 0%,
-          #ffffff 50%,
-          #f8f9ff 100%
-        );
-      }
-
-      .school-name {
-        font-size: 16px;
+      .department {
         font-weight: bold;
+        font-size: 7.5px;
+        margin-bottom: 2px;
         text-transform: uppercase;
         color: #204080;
-        letter-spacing: 2px;
-        margin-bottom: 3px;
       }
 
-      .school-location {
-        font-size: 10px;
-        color: #666;
-        margin-bottom: 3px;
-      }
-
-      .school-motto {
+      .school-name-header {
+        font-weight: bold;
         font-size: 9px;
-        font-style: italic;
-        font-weight: 600;
-        color: #c9a96e;
+        margin-bottom: 2px;
+        text-transform: uppercase;
+        color: #204080;
+        letter-spacing: 0.5px;
       }
 
-      /* Document Title */
+      .location {
+        font-size: 8px;
+        color: #666;
+        font-weight: 600;
+      }
+
       .document-title {
         text-align: center;
-        margin-top: 15px;
+        margin-top: 10px;
       }
 
       .document-title h1 {
-        font-size: 18px;
+        font-size: 16px;
         font-weight: bold;
         text-transform: uppercase;
-        letter-spacing: 2px;
-        margin-bottom: 5px;
+        letter-spacing: 1.5px;
+        margin-bottom: 4px;
         color: #204080;
       }
 
       .term-info {
-        font-size: 12px;
+        font-size: 11px;
         color: #666;
       }
 
       /* Student Information */
       .student-info {
-        margin-bottom: 15px;
-        padding: 10px;
+        margin-bottom: 10px;
+        padding: 8px;
         border-radius: 4px;
         background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
         border: 1px solid #204080;
@@ -167,12 +196,12 @@
       .info-table {
         width: 100%;
         border-collapse: separate;
-        border-spacing: 15px 5px;
+        border-spacing: 12px 3px;
       }
 
       .info-table td {
-        padding: 4px 8px;
-        font-size: 11px;
+        padding: 3px 6px;
+        font-size: 10px;
         vertical-align: middle;
       }
 
@@ -192,7 +221,7 @@
 
       /* Subjects Section */
       .subjects-section {
-        margin-bottom: 15px;
+        margin-bottom: 10px;
         break-inside: avoid;
       }
 
@@ -200,13 +229,15 @@
         background: linear-gradient(135deg, #204080 0%, #3a5a9a 100%);
         color: #fff;
         text-align: center;
-        padding: 8px;
+        padding: 6px;
         margin-bottom: 0;
         border-radius: 4px 4px 0 0;
+        display: flex !important;
+        justify-content: center !important;
       }
 
       .section-header h3 {
-        font-size: 13px;
+        font-size: 12px;
         font-weight: bold;
         text-transform: uppercase;
         margin: 0;
@@ -220,16 +251,14 @@
         overflow: hidden;
       }
 
-      /* Any mark or average below 10 in red */
-
       .subjects-table th,
       .subjects-table td {
         border: 1px solid #204080;
-        padding: 4px 3px;
-        font-size: 9px;
+        padding: 2px 2px;
+        font-size: 8.5px;
         text-align: center;
         vertical-align: middle;
-        line-height: 1.2;
+        line-height: 1.1;
       }
 
       .subjects-table th {
@@ -237,23 +266,23 @@
         font-weight: bold;
         text-transform: uppercase;
         color: #204080;
-        height: 30px;
-        font-size: 8px;
+        height: 28px;
+        font-size: 7.5px;
       }
 
       .code-cell {
         font-weight: bold;
         color: #204080;
-        width: 40px;
+        width: 38px;
       }
 
       .subject-cell {
         text-align: left;
-        padding-left: 6px;
+        padding-left: 5px;
         font-weight: normal;
         color: #333;
-        min-width: 140px;
-        font-size: 8px;
+        min-width: 130px;
+        font-size: 7.5px;
       }
 
       .score-cell,
@@ -262,25 +291,25 @@
       .total-cell {
         font-weight: bold;
         color: #333;
-        width: 35px;
+        width: 32px;
       }
 
       .avg-cell,
       .total-cell {
         font-weight: bold;
         color: #204080;
-        font-size: 9px;
+        font-size: 8.5px;
       }
 
       .remark-cell {
-        width: 70px;
+        width: 65px;
       }
 
       .remark-cell span {
-        font-size: 8px;
+        font-size: 7.5px;
         font-weight: bold;
         display: inline-block;
-        min-width: 50px;
+        min-width: 45px;
         color: #333;
       }
 
@@ -306,10 +335,10 @@
 
       .teacher-cell {
         text-align: left;
-        padding-left: 4px;
-        font-size: 7px;
+        padding-left: 3px;
+        font-size: 6.5px;
         color: #666;
-        min-width: 80px;
+        min-width: 75px;
       }
 
       .subtotal-row {
@@ -320,14 +349,14 @@
 
       .subtotal-label {
         text-transform: uppercase;
-        font-size: 9px;
+        font-size: 8.5px;
         color: #204080;
         text-align: right;
-        padding-right: 10px;
+        padding-right: 8px;
       }
 
       .subtotal-value {
-        font-size: 10px;
+        font-size: 9px;
         font-weight: bold;
         color: #204080;
       }
@@ -339,8 +368,8 @@
 
       /* Performance Summary */
       .performance-summary {
-        margin-bottom: 15px;
-        padding: 10px;
+        margin-bottom: 10px;
+        padding: 8px;
         border-radius: 4px;
         background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
         border: 1px solid #204080;
@@ -349,12 +378,15 @@
       .summary-table {
         width: 100%;
         border-collapse: separate;
-        border-spacing: 15px 6px;
+        border-spacing: 12px 4px;
+        padding: 4px 0px;
+        border-width: 1px;
+        margin-top: 0 !important;
       }
 
       .summary-table td {
-        padding: 4px 10px;
-        font-size: 11px;
+        padding: 3px 8px;
+        font-size: 8.5px;
         font-weight: bold;
       }
 
@@ -366,14 +398,14 @@
       .summary-value {
         color: #333;
         border-bottom: 1px solid #204080;
-        min-width: 80px;
+        min-width: 75px;
       }
 
       /* Bottom Section */
       .bottom-section {
         display: flex;
-        gap: 15px;
-        margin-bottom: 15px;
+        gap: 12px;
+        margin-bottom: 10px;
       }
 
       .left-column,
@@ -385,7 +417,7 @@
       .conduct-section,
       .grading-scale,
       .admin-section {
-        padding: 10px;
+        padding: 8px;
         border-radius: 4px;
         border: 1px solid #204080;
         background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
@@ -397,11 +429,11 @@
       .admin-section h4 {
         text-align: center;
         font-weight: bold;
-        font-size: 11px;
+        font-size: 10px;
         color: #204080;
         border-bottom: 1px solid #204080;
-        padding-bottom: 5px;
-        margin-bottom: 10px;
+        padding-bottom: 4px;
+        margin-bottom: 8px;
       }
 
       .conduct-table,
@@ -409,14 +441,14 @@
       .admin-table {
         width: 100%;
         border-collapse: separate;
-        border-spacing: 0 4px;
+        border-spacing: 0 3px;
       }
 
       .conduct-table td,
       .scale-table td,
       .admin-table td {
-        padding: 3px 5px;
-        font-size: 9px;
+        padding: 2px 4px;
+        font-size: 8.5px;
       }
 
       .conduct-table td:first-child,
@@ -437,46 +469,84 @@
       /* Signature Section */
       .signature-section {
         display: flex;
-        gap: 15px;
-        margin-bottom: 15px;
+        gap: 12px;
+        margin-bottom: 10px;
       }
 
       .signature-box {
         flex: 1;
-        padding: 15px 10px;
+        padding: 12px 8px;
         border-radius: 4px;
         border: 1px solid #204080;
         text-align: center;
         background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
-        min-height: 80px;
+        min-height: 70px;
       }
 
       .signature-title {
         font-weight: bold;
         text-transform: uppercase;
-        font-size: 10px;
-        margin-bottom: 10px;
+        font-size: 9px;
+        margin-bottom: 8px;
         color: #204080;
       }
 
       .signature-line {
         background-color: #204080;
-        margin: 15px 0;
+        margin: 12px 0;
         height: 1px;
         width: 100%;
       }
 
       .signature-name {
         font-weight: bold;
-        font-size: 9px;
+        font-size: 8.5px;
         color: #333;
-        margin-bottom: 3px;
+        margin-bottom: 2px;
       }
 
       .signature-date {
-        font-size: 8px;
+        font-size: 7.5px;
         font-style: italic;
         color: #666;
+      }
+
+      .low-score {
+        color: #cc0000;
+      }
+
+      /* Footer */
+      .footer-text {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: none;
+        justify-content: center;
+        font-size: 12px;
+        color: rgb(133, 133, 133);
+        font-style: italic;
+      }
+
+      /* Print Button */
+      .print-button {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 12px 24px;
+        background: #204080;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-size: 14px;
+        font-weight: bold;
+        cursor: pointer;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        z-index: 1000;
+      }
+
+      .print-button:hover {
+        background: #3a5a9a;
       }
 
       .report-card::before {
@@ -485,80 +555,30 @@
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%) rotate(-15deg);
-        width: 550px;
-        height: 550px;
+        width: 570px;
+        height: 570px;
         background: url("./logo.png") no-repeat center;
         background-size: contain;
         z-index: 10;
         pointer-events: none;
-        opacity: 0.04;
-        /* filter: grayscale(100%); */
-      }
-
-      .section-header {
-        display: flex !important;
-        justify-content: center !important;
-      }
-
-      .footer-text {
-        position: fixed;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        display: flex;
-        justify-content: center;
-        font-size: 12px;
-        color: rgb(102, 102, 102);
-        display: none;
-      }
-
-      .low-score {
-        color: #cc0000;
-        /* font-weight: 700; */
-      }
-
-      .conduct-section h4,
-      .grading-scale h4,
-      .admin-section h4 {
-        font-size: 0.8rem !important;
-      }
-
-      .signature-section {
-        /* flex-direction: column; */
-        margin-top: 2rem;
+        opacity: 0.06;
       }
 
       /* ===============================
-           PROFESSIONAL PRINT STYLES
-        =============================== */
+   PRINT STYLES
+=============================== */
 
       @media print {
-        /* Critical: Force single page */
+        :root {
+          --page-width-mm: 100%;
+          --page-height-mm: 297;
+          --page-margin-mm: 8;
+          --print-scale: 1;
+        }
+
         @page {
-          size: A4;
-          margin: 0.4in;
-          background: white;
-          margin: 10mm;
-        }
-
-        .footer-text {
-          display: flex;
-        }
-
-        .report-card::before {
-          content: "";
-          position: absolute;
-          top: 60%;
-          left: 50%;
-          transform: translate(-50%, -50%) rotate(-15deg);
-          width: 400px;
-          height: 400px;
-          background: url("./logo.png") no-repeat center;
-          background-size: contain;
-          z-index: 10;
-          pointer-events: none;
-          opacity: 0.08;
-          /* filter: grayscale(100%); */
+          size: A4 portrait;
+          margin: 2mm;
         }
 
         * {
@@ -569,29 +589,46 @@
 
         html,
         body {
-          overflow: visible !important;
-          background: #fff !important;
-          display: flex;
-          align-items: start;
-        }
-
-        body {
           margin: 0 !important;
           padding: 0 !important;
-          background: white !important;
-          overflow: hidden !important;
+          background: #fff !important;
+          overflow: visible !important;
+          display: block !important;
+        }
+
+        .print-button {
+          display: none !important;
+        }
+
+        .footer-text {
+          display: flex !important;
+          bottom: 1mm;
+          position: fixed;
+        }
+
+        .report-card::before {
+          opacity: 0.08;
         }
 
         .report-card-container {
           background: white !important;
           padding: 0 !important;
-          min-height: auto !important;
+          min-height: unset;
           height: auto !important;
           visibility: visible !important;
           box-shadow: none !important;
-          width: 100% !important;
-          font-size: 11px !important;
-          line-height: 1.12 !important;
+          width: 200mm !important;
+
+          margin: 0 auto;
+        }
+
+        .report-card .performance-summary .summary-table {
+          margin-top: 0 !important;
+          border-width: 1px !important;
+        }
+
+        .report-card .performance-summary .summary-table td {
+          font-size: 8.5px !important;
         }
 
         .report-card-container * {
@@ -599,207 +636,251 @@
         }
 
         .report-card {
-          width: 100% !important;
-          max-width: 100% !important;
-          box-shadow: none !important;
-          border: 1px solid #204080 !important;
           border: none !important;
-          padding: 8px !important;
+          padding: 0 !important;
           margin: 0 !important;
           overflow: visible !important;
-          font-size: 15px !important;
-          line-height: 1.1 !important;
-
-          /* Critical: Force everything to fit on one page */
-          height: auto !important;
-          max-height: none !important;
+          box-shadow: none !important;
+          background: white !important;
+          transform: scale(var(--print-scale)) !important;
+          transform-origin: top center !important;
           page-break-inside: avoid !important;
           break-inside: avoid !important;
+          font-size: 9px !important;
+          line-height: 1.1 !important;
+          width: 100% !important;
         }
 
-        .remark-cell span {
-          font-size: 9px;
-        }
-
-        /* Compact header */
         .document-header {
-          padding: 6px !important;
-          margin-bottom: 8px !important;
-          background: white !important;
+          padding: 3mm !important;
+          margin-bottom: 2mm !important;
+          border-bottom: 2px solid #204080 !important;
+          background: linear-gradient(
+            135deg,
+            #f8f9ff 0%,
+            #ffffff 100%
+          ) !important;
         }
 
         .header-content {
-          margin-bottom: 8px !important;
+          margin-bottom: 2mm !important;
+          gap: 1.5mm !important;
+        }
+
+        .left-section,
+        .right-section {
+          font-size: 7.5pt !important;
+          line-height: 1.2 !important;
+        }
+
+        .center-emblem {
+          flex: 0 0 32mm !important;
         }
 
         .report-card-logo {
-          width: 90px !important;
-          height: 90px !important;
+          width: 16mm !important;
+          height: 16mm !important;
+          margin-bottom: 1.5mm !important;
         }
 
-        .school-info {
-          margin: 8px 0 !important;
-          padding: 6px !important;
-          background: white !important;
+        .igniting-text {
+          font-size: 8.5pt !important;
+          margin-bottom: 0.8mm !important;
         }
 
-        .school-name {
-          font-size: 21px !important;
-          margin-bottom: 2px !important;
+        .center-motto {
+          font-size: 6.5pt !important;
+        }
+
+        .republic-text {
+          font-size: 7.5pt !important;
+          margin-bottom: 0.3mm !important;
+        }
+
+        .motto {
+          font-size: 6.5pt !important;
+          margin-bottom: 0.3mm !important;
+        }
+
+        .ministry {
+          font-size: 7pt !important;
+          margin-bottom: 0.3mm !important;
+        }
+
+        .department {
+          font-size: 6.5pt !important;
+          margin-bottom: 0.3mm !important;
+        }
+
+        .school-name-header {
+          font-size: 7.5pt !important;
+          margin-bottom: 0.3mm !important;
+        }
+
+        .location {
+          font-size: 6.5pt !important;
         }
 
         .document-title h1 {
-          font-size: 21px !important;
-          margin-bottom: 3px !important;
+          font-size: 11pt !important;
+          margin-bottom: 1.5mm !important;
         }
 
         .term-info {
-          font-size: 16px !important;
+          font-size: 8.5pt !important;
         }
 
-        /* Compact student info */
         .student-info {
-          margin-bottom: 10px !important;
-          padding: 6px !important;
-          background: white !important;
+          margin-bottom: 2mm !important;
+          padding: 2mm !important;
+          background: linear-gradient(
+            135deg,
+            #f8f9ff 0%,
+            #ffffff 100%
+          ) !important;
         }
 
         .info-table {
-          border-spacing: 8px 2px !important;
+          border-spacing: 1.5mm 0.3mm !important;
         }
 
         .info-table td {
-          font-size: 15px !important;
-          padding: 2px 4px !important;
+          font-size: 8.5pt !important;
+          padding: 0.2mm 0.8mm !important;
         }
 
-        /* Ultra-compact subjects tables */
         .subjects-section {
-          margin-bottom: 8px !important;
+          margin-bottom: 1.5mm !important;
+          page-break-inside: avoid !important;
         }
 
         .section-header {
-          padding: 4px !important;
-          background: #204080 !important;
-          color: white !important;
-          display: flex !important;
-          justify-content: center !important;
+          padding: 1.2mm !important;
+          background: linear-gradient(
+            135deg,
+            #204080 0%,
+            #3a5a9a 100%
+          ) !important;
         }
 
         .section-header h3 {
-          font-size: 16px !important;
+          font-size: 8.5pt !important;
         }
 
         .subjects-table th,
         .subjects-table td {
-          font-size: 13px !important;
-          padding: 1px 2px !important;
-          line-height: 1.1 !important;
+          font-size: 7.5pt !important;
+          padding: 0.2mm 0.6mm !important;
+          line-height: 1.15 !important;
         }
 
         .subjects-table th {
-          height: 20px !important;
-          background: #e8eeff !important;
-          color: #204080 !important;
+          height: 3mm !important;
+          background: linear-gradient(
+            135deg,
+            #e8eeff 0%,
+            #f0f4ff 100%
+          ) !important;
+          font-size: 7pt !important;
         }
 
         .subject-cell {
-          font-size: 73px !important;
-          padding-left: 3px !important;
+          font-size: 7pt !important;
         }
 
         .teacher-cell {
-          font-size: 12px !important;
-          padding-left: 2px !important;
+          font-size: 6pt !important;
+        }
+
+        .remark-cell span {
+          font-size: 7pt !important;
         }
 
         .subtotal-row {
-          background: #e8eeff !important;
+          background: linear-gradient(
+            135deg,
+            #e8eeff 0%,
+            #f0f4ff 100%
+          ) !important;
         }
 
-        /* Compact performance summary */
         .performance-summary {
-          margin-bottom: 8px !important;
-          padding: 6px !important;
-          background: white !important;
+          margin-bottom: 2mm !important;
+          padding: 2mm !important;
+          background: linear-gradient(
+            135deg,
+            #f8f9ff 0%,
+            #ffffff 100%
+          ) !important;
         }
 
-        .summary-table {
-          border-spacing: 8px 3px !important;
-        }
-
-        .summary-table td {
-          font-size: 15px !important;
-          padding: 2px 6px !important;
-        }
-
-        /* Ultra-compact bottom section */
         .bottom-section {
-          gap: 8px !important;
-          margin-bottom: 8px !important;
+          gap: 1.5mm !important;
+          margin-bottom: 2mm !important;
         }
 
         .conduct-section,
         .grading-scale,
         .admin-section {
-          padding: 6px !important;
-          background: white !important;
+          padding: 2mm !important;
+          background: linear-gradient(
+            135deg,
+            #f8f9ff 0%,
+            #ffffff 100%
+          ) !important;
         }
 
         .conduct-section h4,
         .grading-scale h4,
         .admin-section h4 {
-          font-size: 14px !important;
-          margin-bottom: 6px !important;
-          padding-bottom: 3px !important;
+          font-size: 8pt !important;
+          margin-bottom: 1.2mm !important;
+          padding-bottom: 0.6mm !important;
         }
 
         .conduct-table td,
         .scale-table td,
         .admin-table td {
-          font-size: 13px !important;
-          padding: 1px 3px !important;
+          font-size: 7.5pt !important;
+          padding: 0.2mm 0.6mm !important;
         }
 
-        .conduct-table,
-        .scale-table,
-        .admin-table {
-          border-spacing: 0 2px !important;
-        }
-
-        /* Compact signatures */
         .signature-section {
-          gap: 8px !important;
-          margin-bottom: 0 !important;
+          gap: 1.5mm !important;
+          margin-top: 2mm !important;
+          page-break-inside: avoid !important;
         }
 
         .signature-box {
-          padding: 8px 6px !important;
-          min-height: 50px !important;
-          background: white !important;
+          padding: 2mm !important;
+          min-height: 16mm !important;
+          background: linear-gradient(
+            135deg,
+            #f8f9ff 0%,
+            #ffffff 100%
+          ) !important;
+          border: 1px solid #204080 !important;
         }
 
         .signature-title {
-          font-size: 14px !important;
-          margin-bottom: 6px !important;
+          font-size: 7.5pt !important;
+          margin-bottom: 3mm !important;
         }
 
         .signature-line {
-          margin: 8px 0 !important;
-          height: 1px !important;
-          width: 100% !important;
+          margin: 1.2mm 0 !important;
+          background-color: #204080 !important;
         }
 
         .signature-name {
-          font-size: 11px !important;
-          margin-bottom: 2px !important;
+          font-size: 7pt !important;
+          margin-bottom: 0.6mm !important;
         }
 
         .signature-date {
-          font-size: 12px !important;
+          font-size: 6.5pt !important;
         }
 
-        /* Force no page breaks */
         .document-header,
         .student-info,
         .subjects-section,
@@ -810,260 +891,125 @@
           break-inside: avoid !important;
         }
 
-        /* Remove all gradients and backgrounds for clean print */
-        .document-header,
-        .student-info,
-        .performance-summary,
-        .conduct-section,
-        .grading-scale,
-        .admin-section,
-        .signature-box {
-          background: white !important;
-          box-shadow: none !important;
-        }
-
-        .school-info {
-          background: white !important;
-        }
-
-        /* Ensure borders print correctly */
-        .document-header,
-        .student-info,
-        .subjects-section,
-        .performance-summary,
-        .conduct-section,
-        .grading-scale,
-        .admin-section,
-        .signature-box {
-          border-color: #204080 !important;
-        }
-
-        /* Hide non-essential elements */
-        .no-print {
-          display: none !important;
-        }
-
         .low-score {
           color: #cc0000 !important;
-          /* font-weight: 700; */
         }
 
-        .summary-table {
-          width: 100%;
-          border-collapse: separate;
-          border-spacing: 4px 4px;
-        }
-
-        .summary-table td {
-          padding: 4px 4px;
-          font-size: 8px;
-          font-weight: bold;
-        }
-
-        .summary-label {
-          color: #204080;
-          text-transform: uppercase;
-        }
-
-        .summary-value {
-          color: #333;
-          border-bottom: 1px solid #204080;
-          min-width: 80px;
-        }
-      }
-
-      /* Responsive design for smaller screens */
-      @media (max-width: 768px) {
-        .report-card-container {
-          padding: 10px;
-        }
-
-        .report-card {
-          padding: 15px;
-          max-width: 100%;
-        }
-
-        .header-content {
-          /* flex-direction: column; */
-          text-align: center;
-        }
-
-        .left-section,
-        .right-section,
-        .center-emblem {
-          margin-bottom: 10px;
-        }
-
-        .info-table {
-          border-spacing: 8px 4px;
-        }
-
-        .subjects-table th,
-        .subjects-table td {
-          font-size: 8px;
-          padding: 3px 2px;
-        }
-
-        .bottom-section {
-          /* flex-direction: column; */
-          gap: 10px;
-        }
-
-        .signature-section {
-          /* flex-direction: column; */
-
-          gap: 10px;
-        }
-      }
-
-      /* ========== AUTO-FIT TO ONE PAGE (A4) ========== */
-      @media print {
-        :root {
-          --page-width-mm: 210;
-          --page-height-mm: 297;
-          --page-margin-mm: 10; /* must match your @page margin */
-          --print-scale: 1; /* JS sets this before printing */
-        }
-
-        @page {
-          size: A4 portrait;
-          margin: calc(var(--page-margin-mm) * 1mm);
-        }
-
-        /* Keep the outer container sized to the printable width */
-        .report-card-container {
-          width: calc(
-            (var(--page-width-mm) - 2 * var(--page-margin-mm)) * 1mm
-          ) !important;
-          margin: 0 auto !important;
-        }
-
-        /* Scale the report to fit in height while keeping printable width */
-        #reportCard {
-          /* Pre-scale width so after transform it visually equals printable width */
-          width: calc(
-            ((var(--page-width-mm) - 2 * var(--page-margin-mm)) * 1mm) /
-              var(--print-scale)
-          ) !important;
-          transform: scale(var(--print-scale)) !important;
-          transform-origin: top center !important;
-        }
-
-        /* Tighter, consistent print type (also fixes the 73px typo) */
-        .report-card {
-          font-size: 11px !important;
-          line-height: 1.12 !important;
-        }
-        .subjects-table th,
-        .subjects-table td {
-          font-size: 10px !important;
-          line-height: 1.1 !important;
-          padding: 1px 2px !important;
-        }
-        .subject-cell {
-          font-size: 10px !important;
-          padding-left: 3px !important;
-        } /* FIXED from 73px */
-        .teacher-cell {
-          font-size: 9px !important;
-          padding-left: 2px !important;
-        }
-        .summary-table td {
-          font-size: 11px !important;
-        }
-
-        /* Avoid extra borders and backgrounds to maximize space */
-        .document-header,
-        .student-info,
-        .subjects-section,
-        .performance-summary,
-        .conduct-section,
-        .grading-scale,
-        .admin-section,
-        .signature-box {
-          background: white !important;
-          box-shadow: none !important;
+        .no-print {
+          display: none !important;
         }
       }
     </style>
   </head>
   <body>
-    <div class="batch-wrapper">
-      {{#each reportCards}}
-      <section class="report-card">
+    <!-- PRINT BUTTON -->
+    <button class="print-button" onclick="window.print()">
+      🖨️ PRINT REPORT CARD
+    </button>
+
+    <!-- REPORT CARD -->
+    <div class="report-card-container">
+      <div class="report-card" id="reportCard">
+        <!-- DOCUMENT HEADER -->
         <div class="document-header">
           <div class="header-content">
             <div class="left-section">
-              <div class="republic-text">REPUBLIC OF CAMEROON</div>
-              <div class="motto">Peace • Work • Fatherland</div>
-              <div class="ministry">
-                MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING
-              </div>
-            </div>
-            <div class="center-emblem">
-              <img src="./logo.png" alt="Logo" class="report-card-logo" />
-            </div>
-            <div class="right-section">
               <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
-              <div class="motto">Paix • Travail • Patrie</div>
+              <div class="motto">PAIX - TRAVAIL - PATRIE</div>
               <div class="ministry">
                 MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE
               </div>
+              <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
+              <div class="school-name-header">VOTECH S7 ACADEMY</div>
+              <div class="location">AZIRE - MANKON</div>
             </div>
-          </div>
 
-          <div class="school-info">
-            <div class="school-name">VOTECH (S7) ACADEMY</div>
-            <div class="school-location">Azire, Mankon - Bamenda</div>
-            <div class="school-motto">
-              Excellence • Productivity • Self Actualization
+            <div class="center-emblem">
+              <img
+                style="
+                  width: 4rem;
+                  height: 4rem;
+                  background: #204080;
+                  border-radius: 50%;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  color: white;
+                  font-weight: bold;
+                  margin-bottom: 6px;
+                "
+                src="./logo.png"
+              />
+              <div class="center-text">
+                <div class="igniting-text">IGNITING ''Preneurs</div>
+                <div class="center-motto">
+                  Motto: Welfare, Productivity, Self Actualization
+                </div>
+              </div>
+            </div>
+
+            <div class="right-section">
+              <div class="republic-text">REPUBLIC OF CAMEROON</div>
+              <div class="motto">PEACE - WORK - FATHERLAND</div>
+              <div class="ministry">
+                MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING
+              </div>
+              <div class="department">
+                DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE
+              </div>
+              <div class="school-name-header">VOTECH S7 ACADEMY</div>
+              <div class="location">AZIRE - MANKON</div>
             </div>
           </div>
 
           <div class="document-title">
             <h1>ACADEMIC REPORT CARD</h1>
-            <div class="term-info">
-              {{student.term}} • {{student.academicYear}}
-            </div>
+            <div class="term-info">THIRD TERM • 2023-2024</div>
           </div>
         </div>
 
+        <!-- STUDENT INFO -->
         <div class="student-info">
           <table class="info-table">
             <tbody>
               <tr>
                 <td class="label">Student Name:</td>
-                <td class="value">{{student.name}}</td>
+                <td class="value">NKONGHO LUA DANIEL</td>
                 <td class="label">Class:</td>
-                <td class="value">{{student.class}}</td>
+                <td class="value">LEVEL 2 MECHANICAL ENGINEERING</td>
               </tr>
               <tr>
                 <td class="label">Registration No:</td>
-                <td class="value">{{student.registrationNumber}}</td>
+                <td class="value">VSA/2024/001</td>
                 <td class="label">Specialty:</td>
-                <td class="value">{{student.option}}</td>
+                <td class="value">MECHANICAL ENGINEERING</td>
               </tr>
               <tr>
                 <td class="label">Date of Birth:</td>
-                <td class="value">{{student.dateOfBirth}}</td>
+                <td class="value">15 March 2008</td>
                 <td class="label">Academic Year:</td>
-                <td class="value">{{student.academicYear}}</td>
+                <td class="value">2023-2024</td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <!-- General Subjects -->
+        <!-- GENERAL SUBJECTS -->
         <div class="subjects-section">
-          <div class="section-header"><h3>GENERAL SUBJECTS</h3></div>
+          <div class="section-header">
+            <h3>GENERAL SUBJECTS</h3>
+          </div>
           <table class="subjects-table">
             <thead>
               <tr>
                 <th>CODE</th>
                 <th>SUBJECT TITLE</th>
-                {{#each ../columns}}
-                <th>{{label}}</th>
-                {{/each}}
+                <th>SEQ 5</th>
+                <th>SEQ 6</th>
+                <th>TERM AVG</th>
+                <th>T1 AVG</th>
+                <th>T2 AVG</th>
+                <th>FINAL AVG</th>
                 <th>COEF</th>
                 <th>TOTAL</th>
                 <th>REMARK</th>
@@ -1071,46 +1017,91 @@
               </tr>
             </thead>
             <tbody>
-              {{#each generalSubjects}}
               <tr class="subject-row">
-                <td class="code-cell">{{code}}</td>
-                <td class="subject-cell">{{title}}</td>
-
-                {{#each ../../columns}} {{!-- Expect scores to contain the key
-                (precompute termAvg/yearAvg/finalAvg on server) --}} {{#with
-                (lookup ../scores key) as |val|}} {{!-- Score/Avg cell: red if
-                <10 handled via server (optional) --}}
-                <td
-                  class="{{#if (lt val 10)}}low-score{{/if}} {{#if (or (eq ../key 'term1Avg') (eq ../key 'term2Avg') (eq ../key 'term3Avg') (eq ../key 'finalAvg'))}}avg-cell{{else}}score-cell{{/if}}"
-                >
-                  {{val}}
-                </td>
-                {{/with}} {{/each}}
-
-                <td class="coef-cell">{{coef}}</td>
-                <td class="total-cell">{{total}}</td>
+                <td class="code-cell">MTH</td>
+                <td class="subject-cell">MATHEMATICS</td>
+                <td class="score-cell">16</td>
+                <td class="score-cell">19</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">17.0</td>
+                <td class="avg-cell">16.0</td>
+                <td class="avg-cell">16.8</td>
+                <td class="coef-cell">5</td>
+                <td class="total-cell">87.5</td>
                 <td class="remark-cell">
-                  <span class="{{remarkClass}}">{{remark}}</span>
+                  <span class="remark-vgood">V.Good</span>
                 </td>
-                <td class="teacher-cell">{{teacher}}</td>
+                <td class="teacher-cell">NJEMA PAUL</td>
               </tr>
-              {{/each}}
-
-              <!-- General Subtotal -->
+              <tr class="subject-row">
+                <td class="code-cell">ENG</td>
+                <td class="subject-cell">ENGLISH LANGUAGE</td>
+                <td class="score-cell">17</td>
+                <td class="score-cell">16</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="coef-cell">5</td>
+                <td class="total-cell">82.5</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">MBAH GRACE</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">FRE</td>
+                <td class="subject-cell">FRENCH LANGUAGE</td>
+                <td class="score-cell">14</td>
+                <td class="score-cell">13</td>
+                <td class="avg-cell">13.5</td>
+                <td class="avg-cell">12.5</td>
+                <td class="avg-cell">11.5</td>
+                <td class="avg-cell">12.5</td>
+                <td class="coef-cell">4</td>
+                <td class="total-cell">54.0</td>
+                <td class="remark-cell">
+                  <span class="remark-fairly-good">Fairly Good</span>
+                </td>
+                <td class="teacher-cell">TABI MARIE</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">COM</td>
+                <td class="subject-cell">COMMERCE</td>
+                <td class="score-cell">15</td>
+                <td class="score-cell">16</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="coef-cell">3</td>
+                <td class="total-cell">46.5</td>
+                <td class="remark-cell">
+                  <span class="remark-good">Good</span>
+                </td>
+                <td class="teacher-cell">CHIEF EXAMINER</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">ECO</td>
+                <td class="subject-cell">ECONOMICS</td>
+                <td class="score-cell">15</td>
+                <td class="score-cell">14</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="avg-cell">12.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="coef-cell">3</td>
+                <td class="total-cell">43.5</td>
+                <td class="remark-cell">
+                  <span class="remark-fairly-good">Fairly Good</span>
+                </td>
+                <td class="teacher-cell">FOMBA JOHN</td>
+              </tr>
               <tr class="subtotal-row">
-                <td
-                  colspan="{{add (length ../columns) 3}}"
-                  class="subtotal-label"
-                >
-                  SUB TOTAL:
-                </td>
-                <td class="subtotal-value">
-                  {{subtotals.general.totalWeighted}}
-                </td>
+                <td colspan="8" class="subtotal-label">SUB TOTAL:</td>
+                <td class="subtotal-value">294</td>
                 <td class="subtotal-remark">
-                  <span class="{{subtotals.general.remarkClass}}"
-                    >{{subtotals.general.remark}}</span
-                  >
+                  <span class="remark-good">Good</span>
                 </td>
                 <td></td>
               </tr>
@@ -1118,17 +1109,22 @@
           </table>
         </div>
 
-        <!-- Professional Subjects -->
+        <!-- PROFESSIONAL SUBJECTS -->
         <div class="subjects-section">
-          <div class="section-header"><h3>PROFESSIONAL SUBJECTS</h3></div>
+          <div class="section-header">
+            <h3>PROFESSIONAL SUBJECTS</h3>
+          </div>
           <table class="subjects-table">
             <thead>
               <tr>
                 <th>CODE</th>
                 <th>SUBJECT TITLE</th>
-                {{#each ../columns}}
-                <th>{{label}}</th>
-                {{/each}}
+                <th>SEQ 5</th>
+                <th>SEQ 6</th>
+                <th>TERM AVG</th>
+                <th>T1 AVG</th>
+                <th>T2 AVG</th>
+                <th>FINAL AVG</th>
                 <th>COEF</th>
                 <th>TOTAL</th>
                 <th>REMARK</th>
@@ -1136,44 +1132,171 @@
               </tr>
             </thead>
             <tbody>
-              {{#each professionalSubjects}}
               <tr class="subject-row">
-                <td class="code-cell">{{code}}</td>
-                <td class="subject-cell">{{title}}</td>
-
-                {{#each ../../columns}} {{#with (lookup ../scores key) as
-                |val|}}
-                <td
-                  class="{{#if (lt val 10)}}low-score{{/if}} {{#if (or (eq ../key 'term1Avg') (eq ../key 'term2Avg') (eq ../key 'term3Avg') (eq ../key 'finalAvg'))}}avg-cell{{else}}score-cell{{/if}}"
-                >
-                  {{val}}
-                </td>
-                {{/with}} {{/each}}
-
-                <td class="coef-cell">{{coef}}</td>
-                <td class="total-cell">{{total}}</td>
+                <td class="code-cell">MED</td>
+                <td class="subject-cell">MECHANICAL DRAWING</td>
+                <td class="score-cell">17</td>
+                <td class="score-cell">16</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="coef-cell">6</td>
+                <td class="total-cell">99.0</td>
                 <td class="remark-cell">
-                  <span class="{{remarkClass}}">{{remark}}</span>
+                  <span class="remark-vgood">V.Good</span>
                 </td>
-                <td class="teacher-cell">{{teacher}}</td>
+                <td class="teacher-cell">ENG. TABI</td>
               </tr>
-              {{/each}}
-
-              <!-- Professional Subtotal -->
+              <tr class="subject-row">
+                <td class="code-cell">ELT</td>
+                <td class="subject-cell">ELECTRICAL TECHNOLOGY</td>
+                <td class="score-cell">16</td>
+                <td class="score-cell">15</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="coef-cell">5</td>
+                <td class="total-cell">77.5</td>
+                <td class="remark-cell">
+                  <span class="remark-good">Good</span>
+                </td>
+                <td class="teacher-cell">TECH. MBAH</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">WRP</td>
+                <td class="subject-cell">WORKSHOP PRACTICE</td>
+                <td class="score-cell">18</td>
+                <td class="score-cell">17</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="coef-cell">5</td>
+                <td class="total-cell">87.5</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">TECH. FOMBA</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">SHW</td>
+                <td class="subject-cell">SHEET METAL WORKS</td>
+                <td class="score-cell">15</td>
+                <td class="score-cell">14</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="avg-cell">12.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="coef-cell">4</td>
+                <td class="total-cell">58.0</td>
+                <td class="remark-cell">
+                  <span class="remark-fairly-good">Fairly Good</span>
+                </td>
+                <td class="teacher-cell">TECH. GRACE</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">ENS</td>
+                <td class="subject-cell">ENGINEERING SCIENCE</td>
+                <td class="score-cell">17</td>
+                <td class="score-cell">16</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="coef-cell">5</td>
+                <td class="total-cell">82.5</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">ENG. PAUL</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">ICT</td>
+                <td class="subject-cell">INFORMATION TECHNOLOGY</td>
+                <td class="score-cell">19</td>
+                <td class="score-cell">18</td>
+                <td class="avg-cell">18.5</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">17.5</td>
+                <td class="coef-cell">3</td>
+                <td class="total-cell">55.5</td>
+                <td class="remark-cell">
+                  <span class="remark-excellent">Excellent</span>
+                </td>
+                <td class="teacher-cell">TECH. MARIE</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">MTL</td>
+                <td class="subject-cell">MATERIAL TECHNOLOGY</td>
+                <td class="score-cell">16</td>
+                <td class="score-cell">15</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="coef-cell">4</td>
+                <td class="total-cell">62.0</td>
+                <td class="remark-cell">
+                  <span class="remark-good">Good</span>
+                </td>
+                <td class="teacher-cell">ENG. NJEMA</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">TDR</td>
+                <td class="subject-cell">TECHNICAL DRAWING</td>
+                <td class="score-cell">18</td>
+                <td class="score-cell">17</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="coef-cell">5</td>
+                <td class="total-cell">87.5</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">TECH. TABI</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">AUT</td>
+                <td class="subject-cell">AUTOMATION</td>
+                <td class="score-cell">17</td>
+                <td class="score-cell">16</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="coef-cell">4</td>
+                <td class="total-cell">66.0</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">ENG. MBAH</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">QCT</td>
+                <td class="subject-cell">QUALITY CONTROL</td>
+                <td class="score-cell">16</td>
+                <td class="score-cell">15</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="coef-cell">3</td>
+                <td class="total-cell">46.5</td>
+                <td class="remark-cell">
+                  <span class="remark-good">Good</span>
+                </td>
+                <td class="teacher-cell">TECH. GRACE</td>
+              </tr>
               <tr class="subtotal-row">
-                <td
-                  colspan="{{add (length ../columns) 3}}"
-                  class="subtotal-label"
-                >
-                  SUB TOTAL:
-                </td>
-                <td class="subtotal-value">
-                  {{subtotals.professional.totalWeighted}}
-                </td>
+                <td colspan="8" class="subtotal-label">SUB TOTAL:</td>
+                <td class="subtotal-value">695</td>
                 <td class="subtotal-remark">
-                  <span class="{{subtotals.professional.remarkClass}}"
-                    >{{subtotals.professional.remark}}</span
-                  >
+                  <span class="remark-good">Good</span>
                 </td>
                 <td></td>
               </tr>
@@ -1181,29 +1304,142 @@
           </table>
         </div>
 
-        <!-- Performance Summary -->
+        <!-- PRACTICAL SUBJECTS -->
+        <div class="subjects-section">
+          <div class="section-header">
+            <h3>PRACTICAL SUBJECTS</h3>
+          </div>
+          <table class="subjects-table">
+            <thead>
+              <tr>
+                <th>CODE</th>
+                <th>SUBJECT TITLE</th>
+                <th>SEQ 5</th>
+                <th>SEQ 6</th>
+                <th>TERM AVG</th>
+                <th>T1 AVG</th>
+                <th>T2 AVG</th>
+                <th>FINAL AVG</th>
+                <th>COEF</th>
+                <th>TOTAL</th>
+                <th>REMARK</th>
+                <th>TEACHER</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="subject-row">
+                <td class="code-cell">WLD</td>
+                <td class="subject-cell">WELDING PRACTICE</td>
+                <td class="score-cell">19</td>
+                <td class="score-cell">18</td>
+                <td class="avg-cell">18.5</td>
+                <td class="avg-cell">18.5</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">18.2</td>
+                <td class="coef-cell">6</td>
+                <td class="total-cell">111.0</td>
+                <td class="remark-cell">
+                  <span class="remark-excellent">Excellent</span>
+                </td>
+                <td class="teacher-cell">WORKSHOP TEAM A</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">MCH</td>
+                <td class="subject-cell">MACHINING PRACTICE</td>
+                <td class="score-cell">18</td>
+                <td class="score-cell">17</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">17.2</td>
+                <td class="coef-cell">7</td>
+                <td class="total-cell">122.5</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">WORKSHOP TEAM B</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">FTG</td>
+                <td class="subject-cell">FITTING PRACTICE</td>
+                <td class="score-cell">17</td>
+                <td class="score-cell">16</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">16.2</td>
+                <td class="coef-cell">6</td>
+                <td class="total-cell">99.0</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">WORKSHOP TEAM C</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">ASB</td>
+                <td class="subject-cell">ASSEMBLY PRACTICE</td>
+                <td class="score-cell">18</td>
+                <td class="score-cell">17</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">17.2</td>
+                <td class="coef-cell">5</td>
+                <td class="total-cell">87.5</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">WORKSHOP TEAM D</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">MNT</td>
+                <td class="subject-cell">MAINTENANCE PRACTICE</td>
+                <td class="score-cell">17</td>
+                <td class="score-cell">16</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">16.2</td>
+                <td class="coef-cell">6</td>
+                <td class="total-cell">99.0</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">WORKSHOP TEAM E</td>
+              </tr>
+              <tr class="subtotal-row">
+                <td colspan="8" class="subtotal-label">SUB TOTAL:</td>
+                <td class="subtotal-value">522</td>
+                <td class="subtotal-remark">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- PERFORMANCE SUMMARY -->
         <div class="performance-summary">
           <table class="summary-table">
             <tbody>
               <tr>
                 <td class="summary-label">GRAND TOTAL:</td>
-                <td class="summary-value">{{termTotals.total}}</td>
+                <td class="summary-value">1511</td>
                 <td class="summary-label">STUDENT AVERAGE:</td>
-                <td class="summary-value">{{termTotals.average}}/20</td>
+                <td class="summary-value">16.1/20</td>
               </tr>
               <tr>
                 <td class="summary-label">CLASS AVERAGE:</td>
-                <td class="summary-value">
-                  {{classStatistics.classAverage}}/20
-                </td>
+                <td class="summary-value">12.8/20</td>
                 <td class="summary-label">CLASS RANK:</td>
-                <td class="summary-value">
-                  {{termTotals.rank}}° of {{termTotals.outOf}}
-                </td>
+                <td class="summary-value">1° of 25</td>
               </tr>
               <tr>
-                <td class="summary-label">CUMULATIVE AVERAGE:</td>
-                <td class="summary-value">{{cumulativeAverage}}/20</td>
+                <td class="summary-label">
+                  CUMULATIVE AVERAGE (T1 + T2 + T3):
+                </td>
+                <td class="summary-value">15.4/20</td>
                 <td></td>
                 <td></td>
               </tr>
@@ -1211,7 +1447,7 @@
           </table>
         </div>
 
-        <!-- Bottom Section -->
+        <!-- BOTTOM SECTION -->
         <div class="bottom-section">
           <div class="left-column">
             <div class="conduct-section">
@@ -1220,21 +1456,15 @@
                 <tbody>
                   <tr>
                     <td>Days Present:</td>
-                    <td>
-                      <!-- {{conduct.attendanceDays}}/{{conduct.totalDays}} -->
-                    </td>
+                    <td>65/68</td>
                   </tr>
                   <tr>
                     <td>Times Late:</td>
-                    <td>
-                      <!-- {{conduct.timesLate}} -->
-                    </td>
+                    <td>2</td>
                   </tr>
                   <tr>
                     <td>Disciplinary Actions:</td>
-                    <td>
-                      <!-- {{conduct.disciplinaryActions}} -->
-                    </td>
+                    <td>0</td>
                   </tr>
                 </tbody>
               </table>
@@ -1246,12 +1476,30 @@
               <h4>GRADING SCALE</h4>
               <table class="scale-table">
                 <tbody>
-                  {{#each gradingScale}}
                   <tr>
-                    <td>{{band_min}}-{{band_max}}:</td>
-                    <td><span class="{{remarkClass}}">{{comment}}</span></td>
+                    <td>18-20:</td>
+                    <td><span class="remark-excellent">Excellent</span></td>
                   </tr>
-                  {{/each}}
+                  <tr>
+                    <td>16-17.99:</td>
+                    <td><span class="remark-vgood">V.Good</span></td>
+                  </tr>
+                  <tr>
+                    <td>14-15.99:</td>
+                    <td><span class="remark-good">Good</span></td>
+                  </tr>
+                  <tr>
+                    <td>12-13.99:</td>
+                    <td><span class="remark-fairly-good">Fairly Good</span></td>
+                  </tr>
+                  <tr>
+                    <td>10-11.99:</td>
+                    <td><span class="remark-average">Average</span></td>
+                  </tr>
+                  <tr>
+                    <td>0-9.99:</td>
+                    <td><span class="remark-weak">Weak</span></td>
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -1264,21 +1512,15 @@
                 <tbody>
                   <tr>
                     <td>Class Master:</td>
-                    <td>{{uppercase administration.classMaster}}</td>
+                    <td>NDICHIA GLIEM</td>
                   </tr>
                   <tr>
                     <td>Decision:</td>
-                    <td>
-                      <span class="remark-good">
-                        <!-- {{administration.decision}} -->
-                      </span>
-                    </td>
+                    <td><span class="remark-good">PROMOTED</span></td>
                   </tr>
                   <tr>
                     <td>Next Term:</td>
-                    <td>
-                      <!-- {{administration.nextTermStarts}} -->
-                    </td>
+                    <td>September 2024</td>
                   </tr>
                 </tbody>
               </table>
@@ -1286,40 +1528,685 @@
           </div>
         </div>
 
-        <!-- Signatures -->
+        <!-- SIGNATURE SECTION -->
         <div class="signature-section">
           <div class="signature-box">
             <div class="signature-title">CLASS MASTER</div>
             <div class="signature-line"></div>
-            <div class="signature-name">
-              {{uppercase administration.classMaster}}
-            </div>
+            <div class="signature-name">NDICHIA GLIEM</div>
             <div class="signature-date">Date & Signature</div>
           </div>
+
           <div class="signature-box">
             <div class="signature-title">PRINCIPAL</div>
             <div class="signature-line"></div>
-            <div class="signature-name">
-              {{uppercase administration.principal}}
-            </div>
+            <div class="signature-name">DR. ACADEMIC DIRECTOR</div>
             <div class="signature-date">Date, Signature & Seal</div>
           </div>
+
           <div class="signature-box">
             <div class="signature-title">PARENT/GUARDIAN</div>
             <div class="signature-line"></div>
-            <div class="signature-name">
-              {{uppercase administration.parents}}
-            </div>
+            <div class="signature-name">MR. AND MRS. NKONGHO</div>
             <div class="signature-date">Date & Signature</div>
           </div>
         </div>
+      </div>
 
-        <span class="footer-text"
-          >© {{year}} Izzy Tech Team – Official Document | Votech (S7)
-          Academy</span
-        >
-      </section>
-      {{/each}}
+      <!-- FOOTER -->
+      <span class="footer-text"
+        >© 2024 Izzy Tech Team – Official Document | Votech (S7) Academy</span
+      >
+    </div>
+    <div class="report-card-container">
+      <div class="report-card" id="reportCard">
+        <!-- DOCUMENT HEADER -->
+        <div class="document-header">
+          <div class="header-content">
+            <div class="left-section">
+              <div class="republic-text">RÉPUBLIQUE DU CAMEROUN</div>
+              <div class="motto">PAIX - TRAVAIL - PATRIE</div>
+              <div class="ministry">
+                MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE
+              </div>
+              <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
+              <div class="school-name-header">VOTECH S7 ACADEMY</div>
+              <div class="location">AZIRE - MANKON</div>
+            </div>
+
+            <div class="center-emblem">
+              <img
+                style="
+                  width: 4rem;
+                  height: 4rem;
+                  background: #204080;
+                  border-radius: 50%;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  color: white;
+                  font-weight: bold;
+                  margin-bottom: 6px;
+                "
+                src="./logo.png"
+              />
+              <div class="center-text">
+                <div class="igniting-text">IGNITING ''Preneurs</div>
+                <div class="center-motto">
+                  Motto: Welfare, Productivity, Self Actualization
+                </div>
+              </div>
+            </div>
+
+            <div class="right-section">
+              <div class="republic-text">REPUBLIC OF CAMEROON</div>
+              <div class="motto">PEACE - WORK - FATHERLAND</div>
+              <div class="ministry">
+                MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING
+              </div>
+              <div class="department">
+                DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE
+              </div>
+              <div class="school-name-header">VOTECH S7 ACADEMY</div>
+              <div class="location">AZIRE - MANKON</div>
+            </div>
+          </div>
+
+          <div class="document-title">
+            <h1>ACADEMIC REPORT CARD</h1>
+            <div class="term-info">THIRD TERM • 2023-2024</div>
+          </div>
+        </div>
+
+        <!-- STUDENT INFO -->
+        <div class="student-info">
+          <table class="info-table">
+            <tbody>
+              <tr>
+                <td class="label">Student Name:</td>
+                <td class="value">NKONGHO LUA DANIEL</td>
+                <td class="label">Class:</td>
+                <td class="value">LEVEL 2 MECHANICAL ENGINEERING</td>
+              </tr>
+              <tr>
+                <td class="label">Registration No:</td>
+                <td class="value">VSA/2024/001</td>
+                <td class="label">Specialty:</td>
+                <td class="value">MECHANICAL ENGINEERING</td>
+              </tr>
+              <tr>
+                <td class="label">Date of Birth:</td>
+                <td class="value">15 March 2008</td>
+                <td class="label">Academic Year:</td>
+                <td class="value">2023-2024</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- GENERAL SUBJECTS -->
+        <div class="subjects-section">
+          <div class="section-header">
+            <h3>GENERAL SUBJECTS</h3>
+          </div>
+          <table class="subjects-table">
+            <thead>
+              <tr>
+                <th>CODE</th>
+                <th>SUBJECT TITLE</th>
+                <th>SEQ 5</th>
+                <th>SEQ 6</th>
+                <th>TERM AVG</th>
+                <th>T1 AVG</th>
+                <th>T2 AVG</th>
+                <th>FINAL AVG</th>
+                <th>COEF</th>
+                <th>TOTAL</th>
+                <th>REMARK</th>
+                <th>TEACHER</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="subject-row">
+                <td class="code-cell">MTH</td>
+                <td class="subject-cell">MATHEMATICS</td>
+                <td class="score-cell">16</td>
+                <td class="score-cell">19</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">17.0</td>
+                <td class="avg-cell">16.0</td>
+                <td class="avg-cell">16.8</td>
+                <td class="coef-cell">5</td>
+                <td class="total-cell">87.5</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">NJEMA PAUL</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">ENG</td>
+                <td class="subject-cell">ENGLISH LANGUAGE</td>
+                <td class="score-cell">17</td>
+                <td class="score-cell">16</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="coef-cell">5</td>
+                <td class="total-cell">82.5</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">MBAH GRACE</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">FRE</td>
+                <td class="subject-cell">FRENCH LANGUAGE</td>
+                <td class="score-cell">14</td>
+                <td class="score-cell">13</td>
+                <td class="avg-cell">13.5</td>
+                <td class="avg-cell">12.5</td>
+                <td class="avg-cell">11.5</td>
+                <td class="avg-cell">12.5</td>
+                <td class="coef-cell">4</td>
+                <td class="total-cell">54.0</td>
+                <td class="remark-cell">
+                  <span class="remark-fairly-good">Fairly Good</span>
+                </td>
+                <td class="teacher-cell">TABI MARIE</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">COM</td>
+                <td class="subject-cell">COMMERCE</td>
+                <td class="score-cell">15</td>
+                <td class="score-cell">16</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="coef-cell">3</td>
+                <td class="total-cell">46.5</td>
+                <td class="remark-cell">
+                  <span class="remark-good">Good</span>
+                </td>
+                <td class="teacher-cell">CHIEF EXAMINER</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">ECO</td>
+                <td class="subject-cell">ECONOMICS</td>
+                <td class="score-cell">15</td>
+                <td class="score-cell">14</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="avg-cell">12.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="coef-cell">3</td>
+                <td class="total-cell">43.5</td>
+                <td class="remark-cell">
+                  <span class="remark-fairly-good">Fairly Good</span>
+                </td>
+                <td class="teacher-cell">FOMBA JOHN</td>
+              </tr>
+              <tr class="subtotal-row">
+                <td colspan="8" class="subtotal-label">SUB TOTAL:</td>
+                <td class="subtotal-value">294</td>
+                <td class="subtotal-remark">
+                  <span class="remark-good">Good</span>
+                </td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- PROFESSIONAL SUBJECTS -->
+        <div class="subjects-section">
+          <div class="section-header">
+            <h3>PROFESSIONAL SUBJECTS</h3>
+          </div>
+          <table class="subjects-table">
+            <thead>
+              <tr>
+                <th>CODE</th>
+                <th>SUBJECT TITLE</th>
+                <th>SEQ 5</th>
+                <th>SEQ 6</th>
+                <th>TERM AVG</th>
+                <th>T1 AVG</th>
+                <th>T2 AVG</th>
+                <th>FINAL AVG</th>
+                <th>COEF</th>
+                <th>TOTAL</th>
+                <th>REMARK</th>
+                <th>TEACHER</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="subject-row">
+                <td class="code-cell">MED</td>
+                <td class="subject-cell">MECHANICAL DRAWING</td>
+                <td class="score-cell">17</td>
+                <td class="score-cell">16</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="coef-cell">6</td>
+                <td class="total-cell">99.0</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">ENG. TABI</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">ELT</td>
+                <td class="subject-cell">ELECTRICAL TECHNOLOGY</td>
+                <td class="score-cell">16</td>
+                <td class="score-cell">15</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="coef-cell">5</td>
+                <td class="total-cell">77.5</td>
+                <td class="remark-cell">
+                  <span class="remark-good">Good</span>
+                </td>
+                <td class="teacher-cell">TECH. MBAH</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">WRP</td>
+                <td class="subject-cell">WORKSHOP PRACTICE</td>
+                <td class="score-cell">18</td>
+                <td class="score-cell">17</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="coef-cell">5</td>
+                <td class="total-cell">87.5</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">TECH. FOMBA</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">SHW</td>
+                <td class="subject-cell">SHEET METAL WORKS</td>
+                <td class="score-cell">15</td>
+                <td class="score-cell">14</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="avg-cell">12.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="coef-cell">4</td>
+                <td class="total-cell">58.0</td>
+                <td class="remark-cell">
+                  <span class="remark-fairly-good">Fairly Good</span>
+                </td>
+                <td class="teacher-cell">TECH. GRACE</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">ENS</td>
+                <td class="subject-cell">ENGINEERING SCIENCE</td>
+                <td class="score-cell">17</td>
+                <td class="score-cell">16</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="coef-cell">5</td>
+                <td class="total-cell">82.5</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">ENG. PAUL</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">ICT</td>
+                <td class="subject-cell">INFORMATION TECHNOLOGY</td>
+                <td class="score-cell">19</td>
+                <td class="score-cell">18</td>
+                <td class="avg-cell">18.5</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">17.5</td>
+                <td class="coef-cell">3</td>
+                <td class="total-cell">55.5</td>
+                <td class="remark-cell">
+                  <span class="remark-excellent">Excellent</span>
+                </td>
+                <td class="teacher-cell">TECH. MARIE</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">MTL</td>
+                <td class="subject-cell">MATERIAL TECHNOLOGY</td>
+                <td class="score-cell">16</td>
+                <td class="score-cell">15</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="coef-cell">4</td>
+                <td class="total-cell">62.0</td>
+                <td class="remark-cell">
+                  <span class="remark-good">Good</span>
+                </td>
+                <td class="teacher-cell">ENG. NJEMA</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">TDR</td>
+                <td class="subject-cell">TECHNICAL DRAWING</td>
+                <td class="score-cell">18</td>
+                <td class="score-cell">17</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="coef-cell">5</td>
+                <td class="total-cell">87.5</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">TECH. TABI</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">AUT</td>
+                <td class="subject-cell">AUTOMATION</td>
+                <td class="score-cell">17</td>
+                <td class="score-cell">16</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="coef-cell">4</td>
+                <td class="total-cell">66.0</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">ENG. MBAH</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">QCT</td>
+                <td class="subject-cell">QUALITY CONTROL</td>
+                <td class="score-cell">16</td>
+                <td class="score-cell">15</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="avg-cell">13.5</td>
+                <td class="avg-cell">14.5</td>
+                <td class="coef-cell">3</td>
+                <td class="total-cell">46.5</td>
+                <td class="remark-cell">
+                  <span class="remark-good">Good</span>
+                </td>
+                <td class="teacher-cell">TECH. GRACE</td>
+              </tr>
+              <tr class="subtotal-row">
+                <td colspan="8" class="subtotal-label">SUB TOTAL:</td>
+                <td class="subtotal-value">695</td>
+                <td class="subtotal-remark">
+                  <span class="remark-good">Good</span>
+                </td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- PRACTICAL SUBJECTS -->
+        <div class="subjects-section">
+          <div class="section-header">
+            <h3>PRACTICAL SUBJECTS</h3>
+          </div>
+          <table class="subjects-table">
+            <thead>
+              <tr>
+                <th>CODE</th>
+                <th>SUBJECT TITLE</th>
+                <th>SEQ 5</th>
+                <th>SEQ 6</th>
+                <th>TERM AVG</th>
+                <th>T1 AVG</th>
+                <th>T2 AVG</th>
+                <th>FINAL AVG</th>
+                <th>COEF</th>
+                <th>TOTAL</th>
+                <th>REMARK</th>
+                <th>TEACHER</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="subject-row">
+                <td class="code-cell">WLD</td>
+                <td class="subject-cell">WELDING PRACTICE</td>
+                <td class="score-cell">19</td>
+                <td class="score-cell">18</td>
+                <td class="avg-cell">18.5</td>
+                <td class="avg-cell">18.5</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">18.2</td>
+                <td class="coef-cell">6</td>
+                <td class="total-cell">111.0</td>
+                <td class="remark-cell">
+                  <span class="remark-excellent">Excellent</span>
+                </td>
+                <td class="teacher-cell">WORKSHOP TEAM A</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">MCH</td>
+                <td class="subject-cell">MACHINING PRACTICE</td>
+                <td class="score-cell">18</td>
+                <td class="score-cell">17</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">17.2</td>
+                <td class="coef-cell">7</td>
+                <td class="total-cell">122.5</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">WORKSHOP TEAM B</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">FTG</td>
+                <td class="subject-cell">FITTING PRACTICE</td>
+                <td class="score-cell">17</td>
+                <td class="score-cell">16</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">16.2</td>
+                <td class="coef-cell">6</td>
+                <td class="total-cell">99.0</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">WORKSHOP TEAM C</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">ASB</td>
+                <td class="subject-cell">ASSEMBLY PRACTICE</td>
+                <td class="score-cell">18</td>
+                <td class="score-cell">17</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">17.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">17.2</td>
+                <td class="coef-cell">5</td>
+                <td class="total-cell">87.5</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">WORKSHOP TEAM D</td>
+              </tr>
+              <tr class="subject-row">
+                <td class="code-cell">MNT</td>
+                <td class="subject-cell">MAINTENANCE PRACTICE</td>
+                <td class="score-cell">17</td>
+                <td class="score-cell">16</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">16.5</td>
+                <td class="avg-cell">15.5</td>
+                <td class="avg-cell">16.2</td>
+                <td class="coef-cell">6</td>
+                <td class="total-cell">99.0</td>
+                <td class="remark-cell">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td class="teacher-cell">WORKSHOP TEAM E</td>
+              </tr>
+              <tr class="subtotal-row">
+                <td colspan="8" class="subtotal-label">SUB TOTAL:</td>
+                <td class="subtotal-value">522</td>
+                <td class="subtotal-remark">
+                  <span class="remark-vgood">V.Good</span>
+                </td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- PERFORMANCE SUMMARY -->
+        <div class="performance-summary">
+          <table class="summary-table">
+            <tbody>
+              <tr>
+                <td class="summary-label">GRAND TOTAL:</td>
+                <td class="summary-value">1511</td>
+                <td class="summary-label">STUDENT AVERAGE:</td>
+                <td class="summary-value">16.1/20</td>
+              </tr>
+              <tr>
+                <td class="summary-label">CLASS AVERAGE:</td>
+                <td class="summary-value">12.8/20</td>
+                <td class="summary-label">CLASS RANK:</td>
+                <td class="summary-value">1° of 25</td>
+              </tr>
+              <tr>
+                <td class="summary-label">
+                  CUMULATIVE AVERAGE (T1 + T2 + T3):
+                </td>
+                <td class="summary-value">15.4/20</td>
+                <td></td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- BOTTOM SECTION -->
+        <div class="bottom-section">
+          <div class="left-column">
+            <div class="conduct-section">
+              <h4>CONDUCT & ATTENDANCE</h4>
+              <table class="conduct-table">
+                <tbody>
+                  <tr>
+                    <td>Days Present:</td>
+                    <td>65/68</td>
+                  </tr>
+                  <tr>
+                    <td>Times Late:</td>
+                    <td>2</td>
+                  </tr>
+                  <tr>
+                    <td>Disciplinary Actions:</td>
+                    <td>0</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="center-column">
+            <div class="grading-scale">
+              <h4>GRADING SCALE</h4>
+              <table class="scale-table">
+                <tbody>
+                  <tr>
+                    <td>18-20:</td>
+                    <td><span class="remark-excellent">Excellent</span></td>
+                  </tr>
+                  <tr>
+                    <td>16-17.99:</td>
+                    <td><span class="remark-vgood">V.Good</span></td>
+                  </tr>
+                  <tr>
+                    <td>14-15.99:</td>
+                    <td><span class="remark-good">Good</span></td>
+                  </tr>
+                  <tr>
+                    <td>12-13.99:</td>
+                    <td><span class="remark-fairly-good">Fairly Good</span></td>
+                  </tr>
+                  <tr>
+                    <td>10-11.99:</td>
+                    <td><span class="remark-average">Average</span></td>
+                  </tr>
+                  <tr>
+                    <td>0-9.99:</td>
+                    <td><span class="remark-weak">Weak</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="right-column">
+            <div class="admin-section">
+              <h4>ADMINISTRATION</h4>
+              <table class="admin-table">
+                <tbody>
+                  <tr>
+                    <td>Class Master:</td>
+                    <td>NDICHIA GLIEM</td>
+                  </tr>
+                  <tr>
+                    <td>Decision:</td>
+                    <td><span class="remark-good">PROMOTED</span></td>
+                  </tr>
+                  <tr>
+                    <td>Next Term:</td>
+                    <td>September 2024</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- SIGNATURE SECTION -->
+        <div class="signature-section">
+          <div class="signature-box">
+            <div class="signature-title">CLASS MASTER</div>
+            <div class="signature-line"></div>
+            <div class="signature-name">NDICHIA GLIEM</div>
+            <div class="signature-date">Date & Signature</div>
+          </div>
+
+          <div class="signature-box">
+            <div class="signature-title">PRINCIPAL</div>
+            <div class="signature-line"></div>
+            <div class="signature-name">DR. ACADEMIC DIRECTOR</div>
+            <div class="signature-date">Date, Signature & Seal</div>
+          </div>
+
+          <div class="signature-box">
+            <div class="signature-title">PARENT/GUARDIAN</div>
+            <div class="signature-line"></div>
+            <div class="signature-name">MR. AND MRS. NKONGHO</div>
+            <div class="signature-date">Date & Signature</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FOOTER -->
+      <span class="footer-text"
+        >© 2024 Izzy Tech Team – Official Document | Votech (S7) Academy</span
+      >
     </div>
   </body>
 </html>
