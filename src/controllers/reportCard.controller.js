@@ -2057,6 +2057,7 @@ function buildHTML(students, options = {}) {
         @page {
           size: A4 portrait;
           margin: 2mm;
+          margin-top: 200mm;
         }
 
         * {
@@ -2067,7 +2068,7 @@ function buildHTML(students, options = {}) {
 
         html,
         body {
-          margin: 0 !important;
+          margin: 2mm 0mm 0mm 0mm !important;
           padding: 0 !important;
           background: #fff !important;
           overflow: visible !important;

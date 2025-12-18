@@ -16,6 +16,6 @@ reportCardRouter
 
 reportCardRouter
   .route("/bulk-html")
-  .get(reportCardControllers.bulkReportCardsHTMLTest);
+  .get(reportCardControllers.bulkReportCardsHTML);
 
 module.exports = reportCardRouter;
