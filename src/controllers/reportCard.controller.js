@@ -1483,901 +1483,924 @@ function buildHTML(students, options = {}) {
   // ============================================================================
 
   const css = `
-      * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-      }
-
-      /* SCREEN STYLES */
-      .report-card-container {
-        width: 100%;
-        min-height: 100vh;
-        background: #f5f5f5;
-        padding: 20px;
-        display: flex;
-        justify-content: center;
-        align-items: flex-start;
-      }
-
-      .report-card {
-        width: 100%;
-        max-width: 1200px;
-        background: white;
-        border: 2px solid #204080;
-        padding: 15px;
-        margin: 0 auto;
-        box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
-        position: relative;
-        overflow: hidden;
-        font-family: "Arial", sans-serif;
-        line-height: 1.2;
-        font-size: 11px;
-      }
-
-      /* Watermark */
-      .report-card::before {
-        content: "";
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%) rotate(-15deg);
-        width: 600px;
-        height: 600px;
-        background-size: contain;
-        z-index: 0;
-        pointer-events: none;
-        opacity: 0.04;
-      }
-
-      .report-card > * {
-        position: relative;
-        z-index: 1;
-      }
-
-      /* Document Header */
-      .document-header {
-        border-bottom: 2px solid #204080;
-        padding: 10px;
-        margin-bottom: 10px;
-        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
-        border-radius: 6px;
-      }
-
-      .header-content {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 10px;
-        gap: 15px;
-      }
-
-      .left-section,
-      .right-section {
-        flex: 1;
-        text-align: center;
-        font-size: 9px;
-        line-height: 1.3;
-      }
-
-      .center-emblem {
-        flex: 0 0 160px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        text-align: center;
-      }
-
-      .report-card-logo {
-        height: 3.5rem;
-        width: 3.5rem;
-        object-fit: cover;
-        margin-bottom: 6px;
-      }
-
-      .center-text {
-        text-align: center;
-      }
-
-      .igniting-text {
-        font-size: 11px;
-        font-weight: bold;
-        color: #204080;
-        margin-bottom: 3px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-
-      .center-motto {
-        font-size: 8px;
-        font-style: italic;
-        color: #c9a96e;
-        font-weight: 600;
-      }
-
-      .republic-text {
-        font-weight: bold;
-        font-size: 10px;
-        margin-bottom: 2px;
-        text-transform: uppercase;
-        color: #204080;
-      }
-
-      .motto {
-        font-style: italic;
-        font-size: 8px;
-        margin-bottom: 2px;
-        color: #c9a96e;
-        font-weight: 600;
-      }
-
-      .ministry {
-        font-weight: bold;
-        font-size: 8px;
-        margin-bottom: 2px;
-        text-transform: uppercase;
-        color: #204080;
-      }
-
-      .department {
-        font-weight: bold;
-        font-size: 7.5px;
-        margin-bottom: 2px;
-        text-transform: uppercase;
-        color: #204080;
-      }
-
-      .school-name-header {
-        font-weight: bold;
-        font-size: 9px;
-        margin-bottom: 2px;
-        text-transform: uppercase;
-        color: #204080;
-        letter-spacing: 0.5px;
-      }
-
-      .location {
-        font-size: 8px;
-        color: #666;
-        font-weight: 600;
-      }
-
-      .document-title {
-        text-align: center;
-        margin-top: 10px;
-      }
-
-      .document-title h1 {
-        font-size: 16px;
-        font-weight: bold;
-        text-transform: uppercase;
-        letter-spacing: 1.5px;
-        margin-bottom: 4px;
-        color: #204080;
-      }
-
-      .term-info {
-        font-size: 11px;
-        color: #666;
-      }
-
-      /* Student Information */
-      .student-info {
-        margin-bottom: 10px;
-        padding: 8px;
-        border-radius: 4px;
-        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
-        border: 1px solid #204080;
-      }
-
-      .info-table {
-        width: 100%;
-        border-collapse: separate;
-        border-spacing: 12px 3px;
-      }
-
-      .info-table td {
-        padding: 3px 6px;
-        font-size: 10px;
-        vertical-align: middle;
-      }
-
-      .info-table .label {
-        font-weight: bold;
-        width: 120px;
-        color: #204080;
-        white-space: nowrap;
-      }
-
-      .info-table .value {
-        border-bottom: 1px solid #204080;
-        min-width: 150px;
-        font-weight: 600;
-        color: #333;
-      }
-
-      /* Subjects Section */
-      .subjects-section {
-        margin-bottom: 10px;
-        break-inside: avoid;
-      }
-
-      .section-header {
-        background: linear-gradient(135deg, #204080 0%, #3a5a9a 100%);
-        color: #fff;
-        text-align: center;
-        padding: 6px;
-        margin-bottom: 0;
-        border-radius: 4px 4px 0 0;
-        display: flex !important;
-        justify-content: center !important;
-      }
-
-      .section-header h3 {
-        font-size: 12px;
-        font-weight: bold;
-        text-transform: uppercase;
-        margin: 0;
-      }
-
-      .subjects-table {
-        width: 100%;
-        border-collapse: collapse;
-        border: 1px solid #204080;
-        border-radius: 0 0 4px 4px;
-        overflow: hidden;
-      }
-
-      .subjects-table th,
-      .subjects-table td {
-        border: 1px solid #204080;
-        padding: 2px 2px;
-        font-size: 8.5px;
-        text-align: center;
-        vertical-align: middle;
-        line-height: 1.1;
-      }
-
-      .subjects-table th {
-        background: linear-gradient(135deg, #e8eeff 0%, #f0f4ff 100%);
-        font-weight: bold;
-        text-transform: uppercase;
-        color: #204080;
-        height: 28px;
-        font-size: 7.5px;
-      }
-
-      .code-cell {
-        font-weight: bold;
-        color: #204080;
-        width: 38px;
-      }
-
-      .subject-cell {
-        text-align: left;
-        padding-left: 5px;
-        font-weight: normal;
-        color: #333;
-        min-width: 130px;
-        font-size: 7.5px;
-      }
-
-      .score-cell,
-      .avg-cell,
-      .coef-cell,
-      .total-cell {
-        font-weight: bold;
-        color: #333;
-        width: 32px;
-      }
-
-      .avg-cell,
-      .total-cell {
-        font-weight: bold;
-        color: #204080;
-        font-size: 8.5px;
-      }
-
-      .remark-cell {
-        width: 65px;
-      }
-
-      .remark-cell span {
-        font-size: 7.5px;
-        font-weight: bold;
-        display: inline-block;
-        min-width: 45px;
-        color: #333;
-      }
-
-      /* Grade Colors */
-      .remark-excellent {
-        color: #0d5f0d;
-      }
-      .remark-vgood {
-        color: #1a5f1a;
-      }
-      .remark-good {
-        color: #204080;
-      }
-      .remark-fairly-good {
-        color: #b8860b;
-      }
-      .remark-average {
-        color: #ff8c00;
-      }
-      .remark-weak {
-        color: #cc0000;
-      }
-
-      .teacher-cell {
-        text-align: left;
-        padding-left: 3px;
-        font-size: 6.5px;
-        color: #666;
-        min-width: 75px;
-      }
-
-      .subtotal-row {
-        background: linear-gradient(135deg, #e8eeff 0%, #f0f4ff 100%);
-        font-weight: bold;
-        border-top: 2px solid #204080;
-      }
-
-      .subtotal-label {
-        text-transform: uppercase;
-        font-size: 8.5px;
-        color: #204080;
-        text-align: right;
-        padding-right: 8px;
-      }
-
-      .subtotal-value {
-        font-size: 9px;
-        font-weight: bold;
-        color: #204080;
-      }
-
-      .subtotal-remark {
-        font-weight: bold;
-        color: #204080;
-      }
-
-      /* Performance Summary */
-      .performance-summary {
-        margin-bottom: 10px;
-        padding: 8px;
-        border-radius: 4px;
-        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
-        border: 1px solid #204080;
-      }
-
-      .summary-table {
-        width: 100%;
-        border-collapse: separate;
-        border-spacing: 12px 4px;
-        padding: 4px 0px;
-        border-width: 1px;
-        margin-top: 0 !important;
-      }
-
-      .summary-table td {
-        padding: 3px 8px;
-        font-size: 8.5px;
-        font-weight: bold;
-      }
-
-      .summary-label {
-        color: #204080;
-        text-transform: uppercase;
-      }
-
-      .summary-value {
-        color: #333;
-        border-bottom: 1px solid #204080;
-        min-width: 75px;
-      }
-
-      /* Bottom Section */
-      .bottom-section {
-        display: flex;
-        gap: 12px;
-        margin-bottom: 10px;
-      }
-
-      .left-column,
-      .center-column,
-      .right-column {
-        flex: 1;
-      }
-
-      .conduct-section,
-      .grading-scale,
-      .admin-section {
-        padding: 8px;
-        border-radius: 4px;
-        border: 1px solid #204080;
-        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
-        height: 100%;
-      }
-
-      .conduct-section h4,
-      .grading-scale h4,
-      .admin-section h4 {
-        text-align: center;
-        font-weight: bold;
-        font-size: 10px;
-        color: #204080;
-        border-bottom: 1px solid #204080;
-        padding-bottom: 4px;
-        margin-bottom: 8px;
-      }
-
-      .conduct-table,
-      .scale-table,
-      .admin-table {
-        width: 100%;
-        border-collapse: separate;
-        border-spacing: 0 3px;
-      }
-
-      .conduct-table td,
-      .scale-table td,
-      .admin-table td {
-        padding: 2px 4px;
-        font-size: 8.5px;
-      }
-
-      .conduct-table td:first-child,
-      .scale-table td:first-child,
-      .admin-table td:first-child {
-        font-weight: bold;
-        color: #204080;
-      }
-
-      .conduct-table td:last-child,
-      .scale-table td:last-child,
-      .admin-table td:last-child {
-        text-align: right;
-        font-weight: bold;
-        color: #333;
-      }
-
-      /* Signature Section */
-      .signature-section {
-        display: flex;
-        gap: 12px;
-        margin-bottom: 10px;
-      }
-
-      .signature-box {
-        flex: 1;
-        padding: 12px 8px;
-        border-radius: 4px;
-        border: 1px solid #204080;
-        text-align: center;
-        background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
-        min-height: 70px;
-      }
-
-      .signature-title {
-        font-weight: bold;
-        text-transform: uppercase;
-        font-size: 9px;
-        margin-bottom: 8px;
-        color: #204080;
-      }
-
-      .signature-line {
-        background-color: #204080;
-        margin: 12px 0;
-        height: 1px;
-        width: 100%;
-      }
-
-      .signature-name {
-        font-weight: bold;
-        font-size: 8.5px;
-        color: #333;
-        margin-bottom: 2px;
-      }
-
-      .signature-date {
-        font-size: 7.5px;
-        font-style: italic;
-        color: #666;
-      }
-
-      .low-score {
-        color: #cc0000;
-      }
-
-      /* Footer */
-      .footer-text {
-        position: fixed;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        display: none;
-        justify-content: center;
-        font-size: 12px;
-        color: rgb(133, 133, 133);
-        font-style: italic;
-      }
-
-      /* Print Button */
-      .print-button {
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        padding: 12px 24px;
-        background: #204080;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        font-size: 14px;
-        font-weight: bold;
-        cursor: pointer;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-        z-index: 1000;
-      }
-
-      .print-button:hover {
-        background: #3a5a9a;
-      }
-
-      .report-card::before {
-        content: "";
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%) rotate(-15deg);
-        width: 570px;
-        height: 570px;
-        background: url(${logoUrl}) no-repeat center;
-        background-size: contain;
-        z-index: 10;
-        pointer-events: none;
-        opacity: 0.06;
-      }
-
-      /* ===============================
-   PRINT STYLES
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  /* SCREEN STYLES */
+  .report-card-container {
+    width: 100%;
+    min-height: 100vh;
+    background: #f5f5f5;
+    padding: 20px;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+  }
+
+  .report-card {
+    width: 100%;
+    max-width: 1200px;
+    background: white;
+    border: 2px solid #204080;
+    padding: 15px;
+    margin: 0 auto;
+    box-shadow: none;
+    position: relative;
+    overflow: hidden;
+    font-family: "Arial", sans-serif;
+    line-height: 1.2;
+    font-size: 11px;
+  }
+
+  /* Watermark */
+  .report-card::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(-15deg);
+    width: 600px;
+    height: 600px;
+    background-size: contain;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.04;
+  }
+
+  .report-card > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Document Header */
+  .document-header {
+    border-bottom: 2px solid #204080;
+    padding: 10px;
+    margin-bottom: 10px;
+    background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+    border-radius: 6px;
+  }
+
+  .header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+    gap: 15px;
+  }
+
+  .left-section,
+  .right-section {
+    flex: 1;
+    text-align: center;
+    font-size: 9px;
+    line-height: 1.3;
+  }
+
+  .center-emblem {
+    flex: 0 0 160px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+  }
+
+  .report-card-logo {
+    height: 3.5rem;
+    width: 3.5rem;
+    object-fit: cover;
+    margin-bottom: 6px;
+  }
+
+  .center-text {
+    text-align: center;
+  }
+
+  .igniting-text {
+    font-size: 11px;
+    font-weight: bold;
+    color: #204080;
+    margin-bottom: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .center-motto {
+    font-size: 8px;
+    font-style: italic;
+    color: #c9a96e;
+    font-weight: 600;
+  }
+
+  .republic-text {
+    font-weight: bold;
+    font-size: 10px;
+    margin-bottom: 2px;
+    text-transform: uppercase;
+    color: #204080;
+  }
+
+  .motto {
+    font-style: italic;
+    font-size: 8px;
+    margin-bottom: 2px;
+    color: #c9a96e;
+    font-weight: 600;
+  }
+
+  .ministry {
+    font-weight: bold;
+    font-size: 8px;
+    margin-bottom: 2px;
+    text-transform: uppercase;
+    color: #204080;
+  }
+
+  .department {
+    font-weight: bold;
+    font-size: 7.5px;
+    margin-bottom: 2px;
+    text-transform: uppercase;
+    color: #204080;
+  }
+
+  .school-name-header {
+    font-weight: bold;
+    font-size: 9px;
+    margin-bottom: 2px;
+    text-transform: uppercase;
+    color: #204080;
+    letter-spacing: 0.5px;
+  }
+
+  .location {
+    font-size: 8px;
+    color: #666;
+    font-weight: 600;
+  }
+
+  .document-title {
+    text-align: center;
+    margin-top: 10px;
+  }
+
+  .document-title h1 {
+    font-size: 16px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 4px;
+    color: #204080;
+  }
+
+  .term-info {
+    font-size: 11px;
+    color: #666;
+  }
+
+  /* Student Information */
+  .student-info {
+    margin-bottom: 10px;
+    padding: 8px;
+    border-radius: 4px;
+    background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+    border: 1px solid #204080;
+  }
+
+  .info-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 12px 3px;
+  }
+
+  .info-table td {
+    padding: 3px 6px;
+    font-size: 10px;
+    vertical-align: middle;
+  }
+
+  .info-table .label {
+    font-weight: bold;
+    width: 120px;
+    color: #204080;
+    white-space: nowrap;
+  }
+
+  .info-table .value {
+    border-bottom: 1px solid #204080;
+    min-width: 150px;
+    font-weight: 600;
+    color: #333;
+  }
+
+  /* Subjects Section */
+  .subjects-section {
+    margin-bottom: 10px;
+    break-inside: avoid;
+  }
+
+  .section-header {
+    background: linear-gradient(135deg, #204080 0%, #3a5a9a 100%);
+    color: #fff;
+    text-align: center;
+    padding: 6px;
+    margin-bottom: 0;
+    border-radius: 4px 4px 0 0;
+    display: flex !important;
+    justify-content: center !important;
+  }
+
+  .section-header h3 {
+    font-size: 12px;
+    font-weight: bold;
+    text-transform: uppercase;
+    margin: 0;
+  }
+
+  .subjects-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid #204080;
+    border-radius: 0 0 4px 4px;
+    overflow: hidden;
+  }
+
+  .subjects-table th,
+  .subjects-table td {
+    border: 1px solid #204080;
+    padding: 2px 2px;
+    font-size: 8.5px;
+    text-align: center;
+    vertical-align: middle;
+    line-height: 1.1;
+  }
+
+  .subjects-table th {
+    background: linear-gradient(135deg, #e8eeff 0%, #f0f4ff 100%);
+    font-weight: bold;
+    text-transform: uppercase;
+    color: #204080;
+    height: 28px;
+    font-size: 7.5px;
+  }
+
+  .code-cell {
+    font-weight: bold;
+    color: #204080;
+    width: 38px;
+  }
+
+  .subject-cell {
+    text-align: left;
+    padding-left: 5px;
+    font-weight: normal;
+    color: #333;
+    min-width: 130px;
+    font-size: 7.5px;
+  }
+
+  .score-cell,
+  .avg-cell,
+  .coef-cell,
+  .total-cell {
+    font-weight: bold;
+    color: #333;
+    width: 32px;
+  }
+
+  .avg-cell,
+  .total-cell {
+    font-weight: bold;
+    color: #204080;
+    font-size: 8.5px;
+  }
+
+  .remark-cell {
+    width: 65px;
+  }
+
+  .remark-cell span {
+    font-size: 7.5px;
+    font-weight: bold;
+    display: inline-block;
+    min-width: 45px;
+    color: #333;
+  }
+
+  /* Grade Colors */
+  .remark-excellent {
+    color: #0d5f0d;
+  }
+  .remark-vgood {
+    color: #1a5f1a;
+  }
+  .remark-good {
+    color: #204080;
+  }
+  .remark-fairly-good {
+    color: #b8860b;
+  }
+  .remark-average {
+    color: #ff8c00;
+  }
+  .remark-weak {
+    color: #cc0000;
+  }
+
+  .teacher-cell {
+    text-align: left;
+    padding-left: 3px;
+    font-size: 6.5px;
+    color: #666;
+    min-width: 75px;
+  }
+
+  .subtotal-row {
+    background: linear-gradient(135deg, #e8eeff 0%, #f0f4ff 100%);
+    font-weight: bold;
+    border-top: 2px solid #204080;
+  }
+
+  .subtotal-label {
+    text-transform: uppercase;
+    font-size: 8.5px;
+    color: #204080;
+    text-align: right;
+    padding-right: 8px;
+  }
+
+  .subtotal-value {
+    font-size: 9px;
+    font-weight: bold;
+    color: #204080;
+  }
+
+  .subtotal-remark {
+    font-weight: bold;
+    color: #204080;
+  }
+
+  /* Performance Summary - ENHANCED */
+  .performance-summary {
+    margin-bottom: 10px;
+    padding: 10px;
+    border-radius: 4px;
+    background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+    border: 2px solid #204080;
+  }
+
+  .summary-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 12px 6px;
+    padding: 6px 0px;
+    border-width: 1px;
+    margin-top: 0 !important;
+  }
+
+  .summary-table td {
+    padding: 4px 10px;
+    font-size: 10px;
+    font-weight: bold;
+  }
+
+  .summary-label {
+    color: #204080;
+    text-transform: uppercase;
+    font-size: 10px;
+  }
+
+  .summary-value {
+    color: #333;
+    border-bottom: 2px solid #204080;
+    min-width: 85px;
+    font-size: 10px;
+  }
+
+  /* Bottom Section */
+  .bottom-section {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  .left-column,
+  .center-column,
+  .right-column {
+    flex: 1;
+  }
+
+  .conduct-section,
+  .grading-scale,
+  .admin-section {
+    padding: 8px;
+    border-radius: 4px;
+    border: 1px solid #204080;
+    background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+    height: 100%;
+  }
+
+  .conduct-section h4,
+  .grading-scale h4,
+  .admin-section h4 {
+    text-align: center;
+    font-weight: bold;
+    font-size: 10px;
+    color: #204080;
+    border-bottom: 1px solid #204080;
+    padding-bottom: 4px;
+    margin-bottom: 8px;
+  }
+
+  .conduct-table,
+  .scale-table,
+  .admin-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 3px;
+  }
+
+  .conduct-table td,
+  .scale-table td,
+  .admin-table td {
+    padding: 2px 4px;
+    font-size: 8.5px;
+  }
+
+  .conduct-table td:first-child,
+  .scale-table td:first-child,
+  .admin-table td:first-child {
+    font-weight: bold;
+    color: #204080;
+  }
+
+  .conduct-table td:last-child,
+  .scale-table td:last-child,
+  .admin-table td:last-child {
+    text-align: right;
+    font-weight: bold;
+    color: #333;
+  }
+
+  /* Signature Section */
+  .signature-section {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  .signature-box {
+    flex: 1;
+    padding: 12px 8px;
+    border-radius: 4px;
+    border: 1px solid #204080;
+    text-align: center;
+    background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+    min-height: 70px;
+  }
+
+  .signature-title {
+    font-weight: bold;
+    text-transform: uppercase;
+    font-size: 9px;
+    margin-bottom: 8px;
+    color: #204080;
+  }
+
+  .signature-line {
+    background-color: #204080;
+    margin: 12px 0;
+    height: 1px;
+    width: 100%;
+  }
+
+  .signature-name {
+    font-weight: bold;
+    font-size: 8.5px;
+    color: #333;
+    margin-bottom: 2px;
+  }
+
+  .signature-date {
+    font-size: 7.5px;
+    font-style: italic;
+    color: #666;
+  }
+
+  .low-score {
+    color: #cc0000;
+  }
+
+  /* Footer */
+  .footer-text {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: none;
+    justify-content: center;
+    font-size: 12px;
+    color: rgb(133, 133, 133);
+    font-style: italic;
+  }
+
+  /* Print Button */
+  .print-button {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 12px 24px;
+    background: #204080;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    z-index: 1000;
+  }
+
+  .print-button:hover {
+    background: #3a5a9a;
+  }
+
+  .report-card::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(-15deg);
+    width: 570px;
+    height: 570px;
+    background: url(${logoUrl}) no-repeat center;
+    background-size: contain;
+    z-index: 10;
+    pointer-events: none;
+    opacity: 0.06;
+  }
+
+  /* ===============================
+PRINT STYLES
 =============================== */
 
-      @media print {
-        :root {
-          --page-width-mm: 100%;
-          --page-height-mm: 297;
-          --page-margin-mm: 8;
-          --print-scale: 1;
-        }
+  @media print {
+    :root {
+      --page-width-mm: 100%;
+      --page-height-mm: 297;
+      --page-margin-mm: 8;
+      --print-scale: 1;
+    }
 
-        @page {
-          size: A4 portrait;
-          margin: 2mm;
-        }
+    @page {
+      size: A4 portrait;
+      margin: 2mm;
+    }
 
-        * {
-          -webkit-print-color-adjust: exact !important;
-          color-adjust: exact !important;
-          print-color-adjust: exact !important;
-        }
+    * {
+      -webkit-print-color-adjust: exact !important;
+      color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      text-shadow: none !important;
+      -webkit-font-smoothing: antialiased !important;
+      -moz-osx-font-smoothing: grayscale !important;
+    }
 
-        html,
-        body {
-          margin: 0 !important;
-          padding: 0 !important;
-          background: #fff !important;
-          overflow: visible !important;
-          display: block !important;
-        }
+    html,
+    body {
+      margin: 0 !important;
+      padding: 0 !important;
+      background: #fff !important;
+      overflow: visible !important;
+      display: block !important;
+    }
 
-        .print-button {
-          display: none !important;
-        }
+    .print-button {
+      display: none !important;
+    }
 
-        .footer-text {
-          display: flex !important;
-          bottom: 1mm;
-          position: fixed;
-        }
+    .footer-text {
+      display: flex !important;
+      bottom: 1mm;
+      position: fixed;
+    }
 
-        .report-card::before {
-          opacity: 0.08;
-        }
+    .report-card::before {
+      opacity: 0.08;
+    }
 
-        .report-card-container {
-          background: white !important;
-          padding: 0 !important;
-          min-height: unset;
-          height: auto !important;
-          visibility: visible !important;
-          box-shadow: none !important;
-          width: 200mm !important;
+    .report-card-container {
+      background: white !important;
+      padding: 0 !important;
+      min-height: unset;
+      height: auto !important;
+      visibility: visible !important;
+      box-shadow: none !important;
+      width: 200mm !important;
+      margin: 0 auto;
+    }
 
-          margin: 0 auto;
-        }
+    .report-card .performance-summary {
+      margin-bottom: 2mm !important;
+      padding: 3mm !important;
+      background: linear-gradient(
+        135deg,
+        #f8f9ff 0%,
+        #ffffff 100%
+      ) !important;
+      border: 2px solid #204080 !important;
+    }
 
-        .report-card .performance-summary .summary-table {
-          margin-top: 0 !important;
-          border-width: 1px !important;
-        }
+    .report-card .performance-summary .summary-table {
+      margin-top: 0 !important;
+      border-width: 0 !important;
+      border-spacing: 2mm 1mm !important;
+    }
 
-        .report-card .performance-summary .summary-table td {
-          font-size: 8.5px !important;
-        }
+    .report-card .performance-summary .summary-table td {
+      font-size: 9pt !important;
+      padding: 0.5mm 1mm !important;
+      text-shadow: none !important;
+    }
 
-        .report-card-container * {
-          visibility: visible !important;
-        }
+    .report-card .performance-summary .summary-label {
+      font-size: 9pt !important;
+      color: #204080 !important;
+      font-weight: bold !important;
+    }
 
-        .report-card {
-          border: none !important;
-          padding: 0 !important;
-          margin: 0 !important;
-          overflow: visible !important;
-          box-shadow: none !important;
-          background: white !important;
-          transform: scale(var(--print-scale)) !important;
-          transform-origin: top center !important;
-          page-break-inside: avoid !important;
-          break-inside: avoid !important;
-          font-size: 9px !important;
-          line-height: 1.1 !important;
-          width: 100% !important;
-        }
+    .report-card .performance-summary .summary-value {
+      font-size: 9pt !important;
+      color: #000 !important;
+      border-bottom: 2px solid #204080 !important;
+      font-weight: bold !important;
+    }
 
-        .document-header {
-          padding: 3mm !important;
-          margin-bottom: 2mm !important;
-          border-bottom: 2px solid #204080 !important;
-          background: linear-gradient(
-            135deg,
-            #f8f9ff 0%,
-            #ffffff 100%
-          ) !important;
-        }
+    .report-card-container * {
+      visibility: visible !important;
+      text-shadow: none !important;
+    }
 
-        .header-content {
-          margin-bottom: 2mm !important;
-          gap: 1.5mm !important;
-        }
+    .report-card {
+      border: none !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      overflow: visible !important;
+      box-shadow: none !important;
+      background: white !important;
+      transform: scale(var(--print-scale)) !important;
+      transform-origin: top center !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+      font-size: 9px !important;
+      line-height: 1.1 !important;
+      width: 100% !important;
+    }
 
-        .left-section,
-        .right-section {
-          font-size: 7.5pt !important;
-          line-height: 1.2 !important;
-        }
+    .document-header {
+      padding: 3mm !important;
+      margin-bottom: 2mm !important;
+      border-bottom: 2px solid #204080 !important;
+      background: linear-gradient(
+        135deg,
+        #f8f9ff 0%,
+        #ffffff 100%
+      ) !important;
+    }
 
-        .center-emblem {
-          flex: 0 0 32mm !important;
-        }
+    .header-content {
+      margin-bottom: 2mm !important;
+      gap: 1.5mm !important;
+    }
 
-        .report-card-logo {
-          width: 16mm !important;
-          height: 16mm !important;
-          margin-bottom: 1.5mm !important;
-        }
+    .left-section,
+    .right-section {
+      font-size: 7.5pt !important;
+      line-height: 1.2 !important;
+    }
 
-        .igniting-text {
-          font-size: 8.5pt !important;
-          margin-bottom: 0.8mm !important;
-        }
+    .center-emblem {
+      flex: 0 0 32mm !important;
+    }
 
-        .center-motto {
-          font-size: 6.5pt !important;
-        }
+    .report-card-logo {
+      width: 16mm !important;
+      height: 16mm !important;
+      margin-bottom: 1.5mm !important;
+    }
 
-        .republic-text {
-          font-size: 7.5pt !important;
-          margin-bottom: 0.3mm !important;
-        }
+    .igniting-text {
+      font-size: 8.5pt !important;
+      margin-bottom: 0.8mm !important;
+    }
 
-        .motto {
-          font-size: 6.5pt !important;
-          margin-bottom: 0.3mm !important;
-        }
+    .center-motto {
+      font-size: 6.5pt !important;
+    }
 
-        .ministry {
-          font-size: 7pt !important;
-          margin-bottom: 0.3mm !important;
-        }
+    .republic-text {
+      font-size: 7.5pt !important;
+      margin-bottom: 0.3mm !important;
+    }
 
-        .department {
-          font-size: 6.5pt !important;
-          margin-bottom: 0.3mm !important;
-        }
+    .motto {
+      font-size: 6.5pt !important;
+      margin-bottom: 0.3mm !important;
+    }
 
-        .school-name-header {
-          font-size: 7.5pt !important;
-          margin-bottom: 0.3mm !important;
-        }
+    .ministry {
+      font-size: 7pt !important;
+      margin-bottom: 0.3mm !important;
+    }
 
-        .location {
-          font-size: 6.5pt !important;
-        }
+    .department {
+      font-size: 6.5pt !important;
+      margin-bottom: 0.3mm !important;
+    }
 
-        .document-title h1 {
-          font-size: 11pt !important;
-          margin-bottom: 1.5mm !important;
-        }
+    .school-name-header {
+      font-size: 7.5pt !important;
+      margin-bottom: 0.3mm !important;
+    }
 
-        .term-info {
-          font-size: 8.5pt !important;
-        }
+    .location {
+      font-size: 6.5pt !important;
+    }
 
-        .student-info {
-          margin-bottom: 2mm !important;
-          padding: 2mm !important;
-          background: linear-gradient(
-            135deg,
-            #f8f9ff 0%,
-            #ffffff 100%
-          ) !important;
-        }
+    .document-title h1 {
+      font-size: 11pt !important;
+      margin-bottom: 1.5mm !important;
+    }
 
-        .info-table {
-          border-spacing: 1.5mm 0.3mm !important;
-        }
+    .term-info {
+      font-size: 8.5pt !important;
+    }
 
-        .info-table td {
-          font-size: 8.5pt !important;
-          padding: 0.2mm 0.8mm !important;
-        }
+    .student-info {
+      margin-bottom: 2mm !important;
+      padding: 2mm !important;
+      background: linear-gradient(
+        135deg,
+        #f8f9ff 0%,
+        #ffffff 100%
+      ) !important;
+    }
 
-        .subjects-section {
-          margin-bottom: 1.5mm !important;
-          page-break-inside: avoid !important;
-        }
+    .info-table {
+      border-spacing: 1.5mm 0.3mm !important;
+    }
 
-        .section-header {
-          padding: 1.2mm !important;
-          background: linear-gradient(
-            135deg,
-            #204080 0%,
-            #3a5a9a 100%
-          ) !important;
-        }
+    .info-table td {
+      font-size: 8.5pt !important;
+      padding: 0.2mm 0.8mm !important;
+    }
 
-        .section-header h3 {
-          font-size: 8.5pt !important;
-        }
+    .subjects-section {
+      margin-bottom: 1.5mm !important;
+      page-break-inside: avoid !important;
+    }
 
-        .subjects-table th,
-        .subjects-table td {
-          font-size: 7.5pt !important;
-          padding: 0.2mm 0.6mm !important;
-          line-height: 1.15 !important;
-        }
+    .section-header {
+      padding: 1.2mm !important;
+      background: linear-gradient(
+        135deg,
+        #204080 0%,
+        #3a5a9a 100%
+      ) !important;
+    }
 
-        .subjects-table th {
-          height: 3mm !important;
-          background: linear-gradient(
-            135deg,
-            #e8eeff 0%,
-            #f0f4ff 100%
-          ) !important;
-          font-size: 7pt !important;
-        }
+    .section-header h3 {
+      font-size: 8.5pt !important;
+    }
 
-        .subject-cell {
-          font-size: 7pt !important;
-        }
+    .subjects-table th,
+    .subjects-table td {
+      font-size: 7.5pt !important;
+      padding: 0.2mm 0.6mm !important;
+      line-height: 1.15 !important;
+    }
 
-        .teacher-cell {
-          font-size: 6pt !important;
-        }
+    .subjects-table th {
+      height: 3mm !important;
+      background: linear-gradient(
+        135deg,
+        #e8eeff 0%,
+        #f0f4ff 100%
+      ) !important;
+      font-size: 7pt !important;
+    }
 
-        .remark-cell span {
-          font-size: 7pt !important;
-        }
+    .subject-cell {
+      font-size: 7pt !important;
+    }
 
-        .subtotal-row {
-          background: linear-gradient(
-            135deg,
-            #e8eeff 0%,
-            #f0f4ff 100%
-          ) !important;
-        }
+    .teacher-cell {
+      font-size: 6pt !important;
+    }
 
-        .performance-summary {
-          margin-bottom: 2mm !important;
-          padding: 2mm !important;
-          background: linear-gradient(
-            135deg,
-            #f8f9ff 0%,
-            #ffffff 100%
-          ) !important;
-        }
+    .remark-cell span {
+      font-size: 7pt !important;
+    }
 
-        .bottom-section {
-          gap: 1.5mm !important;
-          margin-bottom: 2mm !important;
-        }
+    .subtotal-row {
+      background: linear-gradient(
+        135deg,
+        #e8eeff 0%,
+        #f0f4ff 100%
+      ) !important;
+    }
 
-        .conduct-section,
-        .grading-scale,
-        .admin-section {
-          padding: 2mm !important;
-          background: linear-gradient(
-            135deg,
-            #f8f9ff 0%,
-            #ffffff 100%
-          ) !important;
-        }
+    .bottom-section {
+      gap: 1.5mm !important;
+      margin-bottom: 2mm !important;
+    }
 
-        .conduct-section h4,
-        .grading-scale h4,
-        .admin-section h4 {
-          font-size: 8pt !important;
-          margin-bottom: 1.2mm !important;
-          padding-bottom: 0.6mm !important;
-        }
+    .conduct-section,
+    .grading-scale,
+    .admin-section {
+      padding: 2mm !important;
+      background: linear-gradient(
+        135deg,
+        #f8f9ff 0%,
+        #ffffff 100%
+      ) !important;
+    }
 
-        .conduct-table td,
-        .scale-table td,
-        .admin-table td {
-          font-size: 7.5pt !important;
-          padding: 0.2mm 0.6mm !important;
-        }
+    .conduct-section h4,
+    .grading-scale h4,
+    .admin-section h4 {
+      font-size: 8pt !important;
+      margin-bottom: 1.2mm !important;
+      padding-bottom: 0.6mm !important;
+    }
 
-        .signature-section {
-          gap: 1.5mm !important;
-          margin-top: 2mm !important;
-          page-break-inside: avoid !important;
-        }
+    .conduct-table td,
+    .scale-table td,
+    .admin-table td {
+      font-size: 7.5pt !important;
+      padding: 0.2mm 0.6mm !important;
+    }
 
-        .signature-box {
-          padding: 2mm !important;
-          min-height: 16mm !important;
-          background: linear-gradient(
-            135deg,
-            #f8f9ff 0%,
-            #ffffff 100%
-          ) !important;
-          border: 1px solid #204080 !important;
-        }
+    .signature-section {
+      gap: 1.5mm !important;
+      margin-top: 2mm !important;
+      page-break-inside: avoid !important;
+    }
 
-        .signature-title {
-          font-size: 7.5pt !important;
-          margin-bottom: 3mm !important;
-        }
+    .signature-box {
+      padding: 2mm !important;
+      min-height: 16mm !important;
+      background: linear-gradient(
+        135deg,
+        #f8f9ff 0%,
+        #ffffff 100%
+      ) !important;
+      border: 1px solid #204080 !important;
+    }
 
-        .signature-line {
-          margin: 1.2mm 0 !important;
-          background-color: #204080 !important;
-        }
+    .signature-title {
+      font-size: 7.5pt !important;
+      margin-bottom: 3mm !important;
+    }
 
-        .signature-name {
-          font-size: 7pt !important;
-          margin-bottom: 0.6mm !important;
-        }
+    .signature-line {
+      margin: 1.2mm 0 !important;
+      background-color: #204080 !important;
+    }
 
-        .signature-date {
-          font-size: 6.5pt !important;
-        }
+    .signature-name {
+      font-size: 7pt !important;
+      margin-bottom: 0.6mm !important;
+    }
 
-        .document-header,
-        .student-info,
-        .subjects-section,
-        .performance-summary,
-        .bottom-section,
-        .signature-section {
-          page-break-inside: avoid !important;
-          break-inside: avoid !important;
-        }
+    .signature-date {
+      font-size: 6.5pt !important;
+    }
 
-        .low-score {
-          color: #cc0000 !important;
-        }
+    .document-header,
+    .student-info,
+    .subjects-section,
+    .performance-summary,
+    .bottom-section,
+    .signature-section {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
 
-        .no-print {
-          display: none !important;
-        }
-      }
-  `;
+    .low-score {
+      color: #cc0000 !important;
+      text-shadow: none !important;
+    }
+
+    .no-print {
+      display: none !important;
+    }
+  }
+`;
 
   // ============================================================================
   // GENERATE COMPLETE HTML DOCUMENT
@@ -2828,7 +2851,7 @@ const bulkReportCardsHTML = catchAsync(async (req, res, next) => {
  * DO NOT USE IN PRODUCTION
  */
 const bulkReportCardsHTMLTest = catchAsync(async (req, res, next) => {
-  const { term = "annual", studentCount = "100" } = req.query;
+  const { term = "annual", studentCount = "5" } = req.query;
 
   // Parse student count (max 50 for testing)
   const count = Math.min(parseInt(studentCount) || 20, 200);
