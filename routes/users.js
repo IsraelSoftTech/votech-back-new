@@ -177,7 +177,7 @@ router.get("/all", authenticateToken, requireAdmin, async (req, res) => {
 router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, username, role, contact, email } = req.body;
+    const { name, username, role, contact, email, password } = req.body;
 
     if (!name || !username || !role) {
       return res
@@ -223,10 +223,20 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
 
     const beforeState = existingUser.rows[0];
 
-    const result = await pool.query(
-      "UPDATE users SET name = $1, username = $2, role = $3, contact = $4, email = $5 WHERE id = $6 RETURNING *",
-      [name, username, role, contact || null, email || null, id]
-    );
+    // Only update password when a new one is provided (non-empty)
+    let result;
+    if (password && typeof password === "string" && password.trim().length > 0) {
+      const hashedPassword = await bcrypt.hash(password.trim(), 10);
+      result = await pool.query(
+        "UPDATE users SET name = $1, username = $2, role = $3, contact = $4, email = $5, password = $6 WHERE id = $7 RETURNING *",
+        [name, username, role, contact || null, email || null, hashedPassword, id]
+      );
+    } else {
+      result = await pool.query(
+        "UPDATE users SET name = $1, username = $2, role = $3, contact = $4, email = $5 WHERE id = $6 RETURNING *",
+        [name, username, role, contact || null, email || null, id]
+      );
+    }
 
     const updatedUser = result.rows[0];
 
