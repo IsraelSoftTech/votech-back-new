@@ -14,9 +14,10 @@ const pool = new Pool({
   connectionString: db,
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000, // 10 seconds - helps with slow/unreliable networks
+  connectionTimeoutMillis: 30000, // 30 seconds - remote DB may be slow to respond
   maxUses: 7500,
   allowExitOnIdle: true,
+  keepAlive: true, // prevent remote DB from closing idle connections
 });
 
 // Handle pool errors to prevent crashes

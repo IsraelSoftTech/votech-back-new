@@ -262,10 +262,32 @@ router.post("/check-user", async (req, res) => {
   }
 });
 
-// Reset password endpoint
+// Helper: retry pool query on connection timeout/errors (for remote DB)
+async function queryWithRetry(queryFn, maxRetries = 2) {
+  let lastErr;
+  for (let i = 0; i <= maxRetries; i++) {
+    try {
+      return await queryFn();
+    } catch (err) {
+      lastErr = err;
+      const isConnectionError =
+        err?.message?.includes("connection timeout") ||
+        err?.message?.includes("Connection terminated") ||
+        err?.cause?.message?.includes("Connection terminated");
+      if (isConnectionError && i < maxRetries) {
+        await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
+// Reset password endpoint (verifies username+email when email provided)
 router.post("/reset-password", async (req, res) => {
   try {
-    const { username, newPassword } = req.body;
+    const { username, newPassword, email } = req.body;
 
     if (!username || !newPassword) {
       return res
@@ -273,9 +295,8 @@ router.post("/reset-password", async (req, res) => {
         .json({ error: "Username and new password are required" });
     }
 
-    const userResult = await pool.query(
-      "SELECT * FROM users WHERE username = $1",
-      [username]
+    const userResult = await queryWithRetry(() =>
+      pool.query("SELECT * FROM users WHERE username = $1", [username])
     );
 
     if (userResult.rows.length === 0) {
@@ -283,12 +304,26 @@ router.post("/reset-password", async (req, res) => {
     }
 
     const user = userResult.rows[0];
+
+    // If email provided (forgot-password flow), verify it matches
+    if (email !== undefined && email !== null && email !== "") {
+      const userEmail = (user.email || "").trim().toLowerCase();
+      const inputEmail = String(email).trim().toLowerCase();
+      if (!userEmail) {
+        return res.status(400).json({ error: "No email on file for this account" });
+      }
+      if (userEmail !== inputEmail) {
+        return res.status(400).json({ error: "Email does not match this account" });
+      }
+    }
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    await pool.query("UPDATE users SET password = $1 WHERE username = $2", [
-      hashedPassword,
-      username,
-    ]);
+    await queryWithRetry(() =>
+      pool.query("UPDATE users SET password = $1 WHERE username = $2", [
+        hashedPassword,
+        username,
+      ])
+    );
 
     const ipAddress = getIpAddress(req);
     const userAgent = getUserAgent(req);

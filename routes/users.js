@@ -17,7 +17,7 @@ const router = express.Router();
 router.get("/", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT id, name, username, role, contact, email, suspended, created_at FROM users ORDER BY name"
+      "SELECT id, name, username, role, contact, email, gender, suspended, created_at FROM users ORDER BY name"
     );
     res.json(result.rows);
   } catch (error) {
@@ -93,10 +93,10 @@ router.get("/chat-list", authenticateToken, async (req, res) => {
   }
 });
 
-// Check user details
+// Check user details (supports username+email or username+contact for backward compatibility)
 router.post("/check-user-details", async (req, res) => {
   try {
-    const { username, contact } = req.body;
+    const { username, contact, email } = req.body;
 
     if (!username) {
       return res.status(400).json({ error: "Username is required" });
@@ -113,15 +113,23 @@ router.post("/check-user-details", async (req, res) => {
 
     const user = result.rows[0];
 
-    // If contact is provided, verify it matches (normalize phone numbers for comparison)
-    if (contact && user.contact) {
-      const normalizePhone = (phone) => {
-        return phone.replace(/\D/g, ""); // Remove all non-digits
-      };
+    // If email is provided, verify it matches (case-insensitive, trimmed)
+    if (email !== undefined && email !== null && email !== "") {
+      const userEmail = (user.email || "").trim().toLowerCase();
+      const inputEmail = String(email).trim().toLowerCase();
+      if (!userEmail) {
+        return res.status(400).json({ error: "No email on file for this account" });
+      }
+      if (userEmail !== inputEmail) {
+        return res.status(400).json({ error: "Email does not match this account" });
+      }
+    }
 
+    // If contact is provided (legacy), verify it matches
+    if (contact && user.contact) {
+      const normalizePhone = (phone) => (phone || "").replace(/\D/g, "");
       const normalizedUserContact = normalizePhone(user.contact);
       const normalizedInputContact = normalizePhone(contact);
-
       if (normalizedUserContact !== normalizedInputContact) {
         return res.status(400).json({ error: "Phone number does not match" });
       }
@@ -164,7 +172,7 @@ router.get("/admin3-count", async (req, res) => {
 router.get("/all", authenticateToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT id, name, username, role, contact, email, suspended, created_at FROM users ORDER BY created_at DESC"
+      "SELECT id, name, username, role, contact, email, gender, suspended, created_at FROM users ORDER BY created_at DESC"
     );
     res.json(result.rows);
   } catch (error) {
@@ -177,7 +185,7 @@ router.get("/all", authenticateToken, requireAdmin, async (req, res) => {
 router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, username, role, contact, email, password } = req.body;
+    const { name, username, role, contact, email, gender, password } = req.body;
 
     if (!name || !username || !role) {
       return res
@@ -228,13 +236,13 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
     if (password && typeof password === "string" && password.trim().length > 0) {
       const hashedPassword = await bcrypt.hash(password.trim(), 10);
       result = await pool.query(
-        "UPDATE users SET name = $1, username = $2, role = $3, contact = $4, email = $5, password = $6 WHERE id = $7 RETURNING *",
-        [name, username, role, contact || null, email || null, hashedPassword, id]
+        "UPDATE users SET name = $1, username = $2, role = $3, contact = $4, email = $5, gender = $6, password = $7 WHERE id = $8 RETURNING *",
+        [name, username, role, contact || null, email || null, gender || null, hashedPassword, id]
       );
     } else {
       result = await pool.query(
-        "UPDATE users SET name = $1, username = $2, role = $3, contact = $4, email = $5 WHERE id = $6 RETURNING *",
-        [name, username, role, contact || null, email || null, id]
+        "UPDATE users SET name = $1, username = $2, role = $3, contact = $4, email = $5, gender = $6 WHERE id = $7 RETURNING *",
+        [name, username, role, contact || null, email || null, gender || null, id]
       );
     }
 
@@ -261,6 +269,7 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
         role: beforeState.role,
         contact: beforeState.contact,
         email: beforeState.email,
+        gender: beforeState.gender,
       },
       after: {
         name: afterState.name,
@@ -268,6 +277,7 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
         role: afterState.role,
         contact: afterState.contact,
         email: afterState.email,
+        gender: afterState.gender,
       },
     };
 
@@ -282,6 +292,7 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
         role: updatedUser.role,
         contact: updatedUser.contact,
         email: updatedUser.email,
+        gender: updatedUser.gender,
       },
     });
   } catch (error) {
