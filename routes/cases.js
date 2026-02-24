@@ -50,11 +50,17 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
-// Generate unique case number
+// Generate unique case number (uses MAX to avoid duplicates when cases are deleted)
 const generateCaseNumber = async () => {
-  const result = await pool.query("SELECT COUNT(*) FROM cases");
-  const count = parseInt(result.rows[0].count) + 1;
-  return `CASE${new Date().getFullYear()}${count.toString().padStart(4, "0")}`;
+  const year = new Date().getFullYear();
+  const prefix = `CASE${year}`;
+  const result = await pool.query(
+    `SELECT COALESCE(MAX(CAST(SUBSTRING(case_number FROM $1) AS INTEGER)), 0) + 1 AS next_num
+     FROM cases WHERE case_number LIKE $2`,
+    [prefix.length + 1, `${prefix}%`]
+  );
+  const nextNum = parseInt(result.rows[0].next_num, 10);
+  return `${prefix}${nextNum.toString().padStart(4, "0")}`;
 };
 
 // Get all cases
@@ -125,6 +131,9 @@ router.post("/", authenticateToken, async (req, res) => {
       notes,
     } = req.body;
 
+    // Convert empty string to null for optional integer fields (PostgreSQL rejects '' for INTEGER)
+    const classId = class_id === "" || class_id === undefined ? null : class_id;
+
     const caseNumber = await generateCaseNumber();
 
     const query = `
@@ -138,7 +147,7 @@ router.post("/", authenticateToken, async (req, res) => {
     const values = [
       caseNumber,
       student_id,
-      class_id,
+      classId,
       issue_type,
       issue_description,
       priority || "medium",
