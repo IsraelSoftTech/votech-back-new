@@ -54,13 +54,16 @@ const authenticateToken = (req, res, next) => {
 const generateCaseNumber = async () => {
   const year = new Date().getFullYear();
   const prefix = `CASE${year}`;
+  const pattern = `^${prefix}([0-9]+)$`;
   const result = await pool.query(
-    `SELECT COALESCE(MAX(CAST(SUBSTRING(case_number FROM $1) AS INTEGER)), 0) + 1 AS next_num
-     FROM cases WHERE case_number LIKE $2`,
-    [prefix.length + 1, `${prefix}%`]
+    `SELECT COALESCE(MAX(
+      CAST(NULLIF(REGEXP_REPLACE(case_number, $1, '\\1'), '') AS INTEGER)
+    ), 0) + 1 AS next_num
+     FROM cases WHERE case_number ~ $2`,
+    [pattern, `^${prefix}[0-9]+$`]
   );
   const nextNum = parseInt(result.rows[0].next_num, 10);
-  return `${prefix}${nextNum.toString().padStart(4, "0")}`;
+  return `${prefix}${String(nextNum).padStart(4, "0")}`;
 };
 
 // Get all cases
@@ -121,49 +124,77 @@ router.get("/:id", authenticateToken, async (req, res) => {
 
 // Create new case
 router.post("/", authenticateToken, async (req, res) => {
-  try {
-    const {
-      student_id,
-      class_id,
-      issue_type,
-      issue_description,
-      priority,
-      notes,
-    } = req.body;
+  const maxRetries = 3;
+  let lastError;
 
-    // Convert empty string to null for optional integer fields (PostgreSQL rejects '' for INTEGER)
-    const classId = class_id === "" || class_id === undefined ? null : class_id;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const {
+        student_id,
+        class_id,
+        issue_type,
+        issue_description,
+        priority,
+        notes,
+      } = req.body;
 
-    const caseNumber = await generateCaseNumber();
+      // Validate required fields
+      if (!student_id || !issue_type || !issue_description) {
+        return res.status(400).json({
+          error: "Missing required fields",
+          details: "student_id, issue_type, and issue_description are required",
+        });
+      }
 
-    const query = `
-      INSERT INTO cases (
-        case_number, student_id, class_id, issue_type, issue_description, 
-        priority, assigned_to, created_by, started_date, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING *
-    `;
+      // Convert empty string to null for optional integer fields (PostgreSQL rejects '' for INTEGER)
+      const classId = class_id === "" || class_id === undefined ? null : class_id;
 
-    const values = [
-      caseNumber,
-      student_id,
-      classId,
-      issue_type,
-      issue_description,
-      priority || "medium",
-      req.user.id, // assigned_to
-      req.user.id, // created_by
-      new Date().toISOString().split("T")[0], // started_date
-      notes,
-    ];
+      const caseNumber = await generateCaseNumber();
 
-    const result = await pool.query(query, values);
-    await logChanges("cases", result.rows[0].id, ChangeTypes.create, req.user);
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error("Error creating case:", error);
-    res.status(500).json({ error: "Failed to create case" });
+      const query = `
+        INSERT INTO cases (
+          case_number, student_id, class_id, issue_type, issue_description, 
+          priority, assigned_to, created_by, started_date, notes
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING *
+      `;
+
+      const values = [
+        caseNumber,
+        student_id,
+        classId,
+        issue_type,
+        issue_description,
+        priority || "medium",
+        req.user.id, // assigned_to
+        req.user.id, // created_by
+        new Date().toISOString().split("T")[0], // started_date
+        notes || null,
+      ];
+
+      const result = await pool.query(query, values);
+      await logChanges("cases", result.rows[0].id, ChangeTypes.create, req.user);
+      return res.status(201).json(result.rows[0]);
+    } catch (error) {
+      lastError = error;
+      // Retry on duplicate case_number (23505 = unique_violation)
+      if (error.code === "23505" && attempt < maxRetries) {
+        console.warn(`Duplicate case number, retrying (attempt ${attempt + 1}/${maxRetries})...`);
+        continue;
+      }
+      break;
+    }
   }
+
+  console.error("Error creating case:", lastError);
+  const isDev = process.env.NODE_ENV !== "production";
+  res.status(500).json({
+    error: "Failed to create case",
+    ...(isDev && {
+      details: lastError?.message,
+      code: lastError?.code,
+    }),
+  });
 });
 
 // Update case
