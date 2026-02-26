@@ -28,7 +28,7 @@ router.get("/totals/summary", authenticateToken, async (req, res) => {
             COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
             COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
           ), 0) as total_expected,
-          COALESCE((SELECT SUM(amount) FROM fees), 0) as total_paid
+          COALESCE((SELECT SUM(f.amount) FROM fees f JOIN students st ON f.student_id = st.id WHERE st."deletedAt" IS NULL), 0) as total_paid
         FROM students s
         JOIN classes c ON s.class_id = c.id
         WHERE s."deletedAt" IS NULL

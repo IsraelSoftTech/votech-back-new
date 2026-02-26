@@ -1,5 +1,5 @@
 const express = require("express");
-const { pool, authenticateToken } = require("./utils");
+const { pool, authenticateToken, isAdminLike } = require("./utils");
 
 const router = express.Router();
 
@@ -9,6 +9,8 @@ const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
 router.get("/summary", authenticateToken, async (req, res) => {
   try {
     const { start_date, end_date, type } = req.query;
+    const userId = req.user.id;
+    const userRole = req.user.role;
 
     // Get income from fees (student payments)
     let feesIncomeQuery = `
@@ -67,6 +69,43 @@ router.get("/summary", authenticateToken, async (req, res) => {
       ORDER BY total_fees_collected DESC
     `;
 
+    // Fee totals (all-time) - matches Fee component getFeeTotalsSummary logic
+    let feeTotalsQuery;
+    if (isAdminLike(userRole)) {
+      feeTotalsQuery = pool.query(`
+        SELECT 
+          COALESCE(SUM(
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.registration_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.bus_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.internship_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.remedial_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
+          ), 0) as total_expected,
+          COALESCE((SELECT SUM(f.amount) FROM fees f JOIN students st ON f.student_id = st.id WHERE st."deletedAt" IS NULL), 0) as total_paid
+        FROM students s
+        JOIN classes c ON s.class_id = c.id
+        WHERE s."deletedAt" IS NULL
+      `);
+    } else {
+      feeTotalsQuery = pool.query(
+        `SELECT 
+          COALESCE(SUM(
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.registration_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.bus_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.internship_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.remedial_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
+          ), 0) as total_expected,
+          COALESCE((SELECT SUM(amount) FROM fees f JOIN students st ON f.student_id = st.id WHERE st.user_id = $1 AND (st."deletedAt" IS NULL)), 0) as total_paid
+        FROM students s
+        JOIN classes c ON s.class_id = c.id
+        WHERE s.user_id = $1 AND s."deletedAt" IS NULL`,
+        [userId]
+      );
+    }
+
     const params = [];
     let paramCount = 0;
 
@@ -95,6 +134,7 @@ router.get("/summary", authenticateToken, async (req, res) => {
       salaryResult,
       feeBreakdownResult,
       classFeeResult,
+      feeTotalsResult,
     ] = await Promise.all([
       pool.query(feesIncomeQuery, params),
       pool.query(expenditureQuery, params),
@@ -102,6 +142,7 @@ router.get("/summary", authenticateToken, async (req, res) => {
       pool.query(salaryQuery, params),
       pool.query(feeBreakdownQuery, params),
       pool.query(classFeeQuery, params),
+      feeTotalsQuery,
     ]);
 
     const totalIncome = parseFloat(feesIncomeResult.rows[0]?.total_income || 0);
@@ -109,6 +150,11 @@ router.get("/summary", authenticateToken, async (req, res) => {
       expenditureResult.rows[0]?.total_expenditure || 0
     );
     const totalAssets = parseFloat(assetResult.rows[0]?.total_assets || 0);
+
+    // All-time fee totals (matches Fee component)
+    const feeTotalExpected = parseFloat(feeTotalsResult.rows[0]?.total_expected || 0);
+    const feeTotalPaid = parseFloat(feeTotalsResult.rows[0]?.total_paid || 0);
+    const feeTotalOwed = Math.max(0, feeTotalExpected - feeTotalPaid);
     const salaryExpected = parseFloat(
       salaryResult.rows[0]?.total_expected || 0
     );
@@ -132,6 +178,9 @@ router.get("/summary", authenticateToken, async (req, res) => {
       // Fee reports
       fee_reports: {
         total_fees_collected: totalIncome,
+        total_expected_fees: feeTotalExpected,
+        total_paid_fees: feeTotalPaid,
+        total_owed_fees: feeTotalOwed,
         fee_breakdown: feeBreakdownResult.rows.map((row) => ({
           fee_type: row.fee_type,
           amount: parseFloat(row.total_amount),
@@ -172,6 +221,84 @@ router.get("/summary", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Error fetching financial summary:", error);
     res.status(500).json({ error: "Failed to fetch financial summary" });
+  }
+});
+
+// Get fee summary by class (all classes with expected, paid, owed)
+router.get("/fee-summary-by-class", authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const userRole = req.user.role;
+  try {
+    let result;
+    if (isAdminLike(userRole)) {
+      result = await pool.query(`
+        SELECT 
+          c.id as class_id,
+          c.name as class_name,
+          COUNT(s.id) as student_count,
+          COALESCE(SUM(CASE WHEN s.id IS NOT NULL THEN
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.registration_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.bus_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.internship_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.remedial_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
+          ELSE 0 END), 0) as total_expected,
+          COALESCE((
+            SELECT SUM(f.amount) FROM fees f 
+            JOIN students st ON f.student_id = st.id 
+            WHERE st.class_id = c.id AND st."deletedAt" IS NULL
+          ), 0) as total_paid
+        FROM classes c
+        LEFT JOIN students s ON s.class_id = c.id AND s."deletedAt" IS NULL
+        GROUP BY c.id, c.name
+        ORDER BY c.name
+      `);
+    } else {
+      result = await pool.query(
+        `SELECT 
+          c.id as class_id,
+          c.name as class_name,
+          COUNT(s.id) as student_count,
+          COALESCE(SUM(CASE WHEN s.id IS NOT NULL THEN
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.registration_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.bus_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.internship_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.remedial_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
+          ELSE 0 END), 0) as total_expected,
+          COALESCE((
+            SELECT SUM(f.amount) FROM fees f 
+            JOIN students st ON f.student_id = st.id 
+            WHERE st.class_id = c.id AND st.user_id = $1 AND st."deletedAt" IS NULL
+          ), 0) as total_paid
+        FROM classes c
+        LEFT JOIN students s ON s.class_id = c.id AND s.user_id = $1 AND s."deletedAt" IS NULL
+        GROUP BY c.id, c.name
+        ORDER BY c.name`,
+        [userId]
+      );
+    }
+    const rows = result.rows.map((r) => {
+      const expected = parseFloat(r.total_expected || 0);
+      const paid = parseFloat(r.total_paid || 0);
+      const owed = Math.max(0, expected - paid);
+      return {
+        class_id: r.class_id,
+        class_name: r.class_name,
+        student_count: parseInt(r.student_count || 0),
+        total_expected: expected,
+        total_paid: paid,
+        total_owed: owed,
+      };
+    });
+    const totalPaid = rows.reduce((s, r) => s + r.total_paid, 0);
+    const totalOwed = rows.reduce((s, r) => s + r.total_owed, 0);
+    res.json({ classes: rows, total_paid: totalPaid, total_owed: totalOwed });
+  } catch (error) {
+    console.error("Error fetching fee summary by class:", error);
+    res.status(500).json({ error: "Failed to fetch fee summary by class" });
   }
 });
 
