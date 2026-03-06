@@ -49,6 +49,25 @@ async function runMigrations() {
     await pool.query(`
       ALTER TABLE report_inventory ADD COLUMN IF NOT EXISTS item_id VARCHAR(20) UNIQUE
     `);
+    await pool.query(`
+      ALTER TABLE report_inventory ALTER COLUMN quantity DROP NOT NULL
+    `).catch(() => {});
+    await pool.query(`
+      ALTER TABLE report_inventory DROP CONSTRAINT IF EXISTS report_inventory_uom_check
+    `).catch(() => {});
+    await pool.query(`
+      ALTER TABLE report_inventory DROP CONSTRAINT IF EXISTS report_inventory_uom_check
+    `).catch(() => {});
+    await pool.query(`
+      ALTER TABLE report_inventory ADD CONSTRAINT report_inventory_uom_check
+      CHECK (uom IN ('Pieces', 'Kg', 'Liters', 'Cartons', 'Others'))
+    `).catch(() => {});
+    await pool.query(`
+      ALTER TABLE report_inventory ADD COLUMN IF NOT EXISTS amount NUMERIC(12,2)
+    `).catch(() => {});
+    await pool.query(`
+      UPDATE report_inventory SET amount = unit_cost_price * COALESCE(quantity, 1) WHERE amount IS NULL
+    `).catch(() => {});
     // Backfill item_id for existing rows (prefix from item_name + seq)
     const { rows: needBackfill } = await pool.query(
       "SELECT id, item_name FROM report_inventory WHERE item_id IS NULL ORDER BY id"
@@ -70,6 +89,28 @@ async function runMigrations() {
     console.log("✅ report_inventory table ready");
   } catch (err) {
     console.warn("⚠️ Migration (report_inventory):", err.message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS property_equipment (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        cost NUMERIC(12,2) NOT NULL,
+        department_location VARCHAR(50) NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      ALTER TABLE property_equipment DROP CONSTRAINT IF EXISTS property_equipment_department_location_check
+    `).catch(() => {});
+    await pool.query(`
+      ALTER TABLE property_equipment ALTER COLUMN department_location TYPE VARCHAR(50)
+    `).catch(() => {});
+    console.log("✅ property_equipment table ready");
+  } catch (err) {
+    console.warn("⚠️ Migration (property_equipment):", err.message);
   }
 }
 

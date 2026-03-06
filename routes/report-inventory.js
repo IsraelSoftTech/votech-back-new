@@ -81,7 +81,8 @@ router.delete("/heads/:id", authenticateToken, requireAdmin, async (req, res) =>
 router.get("/", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT i.*, h.name as head_name
+      SELECT i.*, h.name as head_name,
+        COALESCE(i.amount, i.unit_cost_price * COALESCE(i.quantity, 1)) as amount
       FROM report_inventory i
       LEFT JOIN report_inventory_heads h ON i.head_id = h.id
       ORDER BY i.created_at DESC
@@ -103,14 +104,15 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
       uom,
       quantity,
       unit_cost_price,
-      depreciation_rate,
+      amount,
       supplier,
       support_doc,
     } = req.body;
 
-    if (!item_name || !category || !uom || unit_cost_price == null) {
+    const amt = amount != null ? parseFloat(amount) : unit_cost_price;
+    if (!item_name || !category || !uom || (amt == null && unit_cost_price == null)) {
       return res.status(400).json({
-        error: "Item name, category, UOM, and unit cost price are required",
+        error: "Item name, category, UOM, and amount are required",
       });
     }
 
@@ -120,11 +122,11 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
         .json({ error: 'Category must be "income" or "expenditure"' });
     }
 
-    const validUom = ["Pieces", "Kg", "Liters", "Cartons"];
+    const validUom = ["Pieces", "Kg", "Liters", "Cartons", "Others"];
     if (!validUom.includes(uom)) {
       return res
         .status(400)
-        .json({ error: "UOM must be one of: Pieces, Kg, Liters, Cartons" });
+        .json({ error: "UOM must be one of: Pieces, Kg, Liters, Cartons, Others" });
     }
 
     // Generate item_id: first 2 letters of item_name + seq (e.g. Bo001)
@@ -141,19 +143,19 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
     }
     const itemId = prefix + String(nextNum).padStart(3, "0");
 
+    const amountVal = parseFloat(amt != null ? amt : unit_cost_price);
     const result = await pool.query(
       `INSERT INTO report_inventory (
         item_name, head_id, category, uom, quantity, unit_cost_price,
-        depreciation_rate, supplier, support_doc, item_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+        supplier, support_doc, item_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
       [
         item_name,
         head_id ? parseInt(head_id, 10) : null,
         category,
         uom,
-        quantity != null ? parseInt(quantity, 10) : 1,
-        parseFloat(unit_cost_price),
-        depreciation_rate ? parseFloat(depreciation_rate) : null,
+        quantity != null && quantity !== '' ? parseInt(quantity, 10) : null,
+        amountVal,
         category === "income" ? (supplier || null) : null,
         support_doc || null,
         itemId,
@@ -181,15 +183,21 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
       uom,
       quantity,
       unit_cost_price,
-      depreciation_rate,
+      amount,
       supplier,
       support_doc,
     } = req.body;
 
-    if (!item_name || !category || !uom || unit_cost_price == null) {
+    const amt = amount != null ? parseFloat(amount) : unit_cost_price;
+    if (!item_name || !category || !uom || (amt == null && unit_cost_price == null)) {
       return res.status(400).json({
-        error: "Item name, category, UOM, and unit cost price are required",
+        error: "Item name, category, UOM, and amount are required",
       });
+    }
+
+    const validUom = ["Pieces", "Kg", "Liters", "Cartons", "Others"];
+    if (!validUom.includes(uom)) {
+      return res.status(400).json({ error: "UOM must be one of: Pieces, Kg, Liters, Cartons, Others" });
     }
 
     const existing = await pool.query(
@@ -201,20 +209,20 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
       return res.status(404).json({ error: "Item not found" });
     }
 
+    const amountVal = parseFloat(amt != null ? amt : unit_cost_price);
     const result = await pool.query(
       `UPDATE report_inventory SET
         item_name = $1, head_id = $2, category = $3, uom = $4, quantity = $5,
-        unit_cost_price = $6, depreciation_rate = $7, supplier = $8, support_doc = $9,
-        updated_at = $10
-      WHERE id = $11 RETURNING *`,
+        unit_cost_price = $6, supplier = $7, support_doc = $8,
+        updated_at = $9
+      WHERE id = $10 RETURNING *`,
       [
         item_name,
         head_id ? parseInt(head_id, 10) : null,
         category,
         uom,
-        quantity != null ? parseInt(quantity, 10) : 1,
-        parseFloat(unit_cost_price),
-        depreciation_rate ? parseFloat(depreciation_rate) : null,
+        quantity != null && quantity !== '' ? parseInt(quantity, 10) : null,
+        amountVal,
         category === "income" ? (supplier || null) : null,
         support_doc || null,
         new Date(),
