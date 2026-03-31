@@ -53,12 +53,7 @@ const sequelize = new Sequelize(dbUrl, {
     acquire: 60000,
     idle: 10000,
   },
-  dialectOptions: isDesktop
-    ? {}
-    : {
-        connectTimeout: 60000,
-        statement_timeout: 120000,
-      },
+  dialectOptions: isDesktop ? {} : {},
 });
 // Test connection
 sequelize

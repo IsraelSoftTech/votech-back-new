@@ -9,11 +9,17 @@ const { sequelize } = require("../db");
 const protect = catchAsync(async (req, res, next) => {
   let token;
 
+  // 1. Check Authorization header (normal API calls from Axios)
   if (
     req.headers.authorization &&
     req.headers.authorization.startsWith("Bearer ")
   ) {
     token = req.headers.authorization.split(" ")[1];
+  }
+
+  // 2. Fallback: check query param (direct browser downloads via window.open/iframe)
+  if (!token && req.query.token) {
+    token = req.query.token;
   }
 
   if (!token) {
@@ -22,8 +28,6 @@ const protect = catchAsync(async (req, res, next) => {
       StatusCodes.UNAUTHORIZED
     );
   }
-
-
 
   const decodedToken = await promisify(jwt.verify)(
     token,
@@ -81,33 +85,32 @@ const restrictTo = (...roles) => {
 };
 
 // ID Card Generation Functionality
-const puppeteer = require('puppeteer');
-const models = require('../models/index.model');
+const puppeteer = require("puppeteer");
+const models = require("../models/index.model");
 
 // Simple image processing for lightweight files
 const processStudentPhoto = (photoData) => {
   if (!photoData) return null;
-  
+
   try {
     // Convert photo to base64 string
     let base64String;
-    
+
     if (Buffer.isBuffer(photoData)) {
-      base64String = photoData.toString('base64');
-    } else if (typeof photoData === 'string') {
-      if (photoData.startsWith('data:image/')) {
+      base64String = photoData.toString("base64");
+    } else if (typeof photoData === "string") {
+      if (photoData.startsWith("data:image/")) {
         return photoData; // Already a data URL
       }
       base64String = photoData;
     } else {
-      base64String = Buffer.from(String(photoData)).toString('base64');
+      base64String = Buffer.from(String(photoData)).toString("base64");
     }
-    
+
     // Create a clean data URL
     return `data:image/jpeg;base64,${base64String}`;
-    
   } catch (error) {
-    console.error('Error processing student photo:', error);
+    console.error("Error processing student photo:", error);
     return null;
   }
 };
@@ -161,21 +164,26 @@ const generateIDCardHTML = (student, schoolInfo) => {
     <div class="card">
       <div class="header">${schoolInfo.name}</div>
       <div class="photo-section">
-        ${student.processedPhoto ? 
-          `<img src="${student.processedPhoto}" class="photo" alt="Student Photo">` : 
-          '<div style="font-size: 4pt; text-align: center; color: #999;">No Photo</div>'
+        ${
+          student.processedPhoto
+            ? `<img src="${student.processedPhoto}" class="photo" alt="Student Photo">`
+            : '<div style="font-size: 4pt; text-align: center; color: #999;">No Photo</div>'
         }
       </div>
       <div class="info-section">
         <p class="student-name">${student.full_name}</p>
         <p class="student-info">ID: ${student.student_id}</p>
-        <p class="student-info">Class: ${student.class?.name || 'N/A'}</p>
-        <p class="student-info">DOB: ${new Date(student.date_of_birth).toLocaleDateString()}</p>
+        <p class="student-info">Class: ${student.class?.name || "N/A"}</p>
+        <p class="student-info">DOB: ${new Date(
+          student.date_of_birth
+        ).toLocaleDateString()}</p>
         <p class="student-info">Sex: ${student.sex}</p>
-        <p class="student-id">CARD: ${student.card_number || 'PENDING'}</p>
+        <p class="student-id">CARD: ${student.card_number || "PENDING"}</p>
       </div>
       <div class="footer">
-        ${schoolInfo.address} | ${schoolInfo.phone} | Valid: ${new Date().getFullYear()}-${new Date().getFullYear() + 1}
+        ${schoolInfo.address} | ${
+    schoolInfo.phone
+  } | Valid: ${new Date().getFullYear()}-${new Date().getFullYear() + 1}
       </div>
     </div>
   </body>
@@ -186,67 +194,77 @@ const generateIDCardHTML = (student, schoolInfo) => {
 // Generate bulk ID cards for a class - optimized for lightweight files
 const generateClassIDCards = catchAsync(async (req, res, next) => {
   const { classId } = req.params;
-  
+
   const students = await models.students.findAll({
     where: { class_id: classId },
-    include: [{ model: models.classes, as: 'class', attributes: ['id', 'name'] }],
-    order: [['full_name', 'ASC']]
+    include: [
+      { model: models.classes, as: "class", attributes: ["id", "name"] },
+    ],
+    order: [["full_name", "ASC"]],
   });
-  
+
   if (students.length === 0) {
-    return next(new AppError('No students found in this class', 404));
+    return next(new AppError("No students found in this class", 404));
   }
-  
+
   const schoolInfo = {
-    name: 'VOTECH ACADEMY',
-    address: 'Cameroon',
-    phone: '+237 XXX XXX XXX'
+    name: "VOTECH ACADEMY",
+    address: "Cameroon",
+    phone: "+237 XXX XXX XXX",
   };
-  
+
   // Process photos with lightweight optimization
-  const processedStudents = students.map(student => ({
+  const processedStudents = students.map((student) => ({
     ...student.toJSON(),
     processedPhoto: student.photo ? processStudentPhoto(student.photo) : null,
-    card_number: `V${student.student_id.slice(-6)}`
+    card_number: `V${student.student_id.slice(-6)}`,
   }));
-  
+
   // Generate HTML
   const allCardsHTML = processedStudents
-    .map(student => generateIDCardHTML(student, schoolInfo))
+    .map((student) => generateIDCardHTML(student, schoolInfo))
     .join('<div style="page-break-after: always;"></div>');
-  
+
   // Memory-efficient Puppeteer settings
   const browser = await puppeteer.launch({
     headless: true,
     args: [
-      '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-      '--disable-gpu', '--disable-extensions', '--disable-default-apps',
-      '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding', '--memory-pressure-off'
-    ]
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-extensions",
+      "--disable-default-apps",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--memory-pressure-off",
+    ],
   });
-  
+
   try {
     const page = await browser.newPage();
-    await page.setContent(allCardsHTML, { waitUntil: 'domcontentloaded' });
-    
+    await page.setContent(allCardsHTML, { waitUntil: "domcontentloaded" });
+
     // Optimized PDF settings for minimal file size
     const pdfBuffer = await page.pdf({
-      format: 'A4',
+      format: "A4",
       printBackground: true,
-      margin: { top: '5mm', right: '5mm', bottom: '5mm', left: '5mm' },
+      margin: { top: "5mm", right: "5mm", bottom: "5mm", left: "5mm" },
       preferCSSPageSize: true,
       scale: 0.8,
-      displayHeaderFooter: false
+      displayHeaderFooter: false,
     });
-    
+
     await browser.close();
-    
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="ID_Cards_Class_${classId}_${Date.now()}.pdf"`);
-    res.setHeader('Content-Length', pdfBuffer.length);
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="ID_Cards_Class_${classId}_${Date.now()}.pdf"`
+    );
+    res.setHeader("Content-Length", pdfBuffer.length);
     res.send(pdfBuffer);
-    
   } catch (error) {
     await browser.close();
     throw error;
