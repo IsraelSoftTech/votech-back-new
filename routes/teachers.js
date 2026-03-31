@@ -1,4 +1,5 @@
 const express = require("express");
+const bcrypt = require("bcryptjs");
 const {
   pool,
   authenticateToken,
@@ -31,12 +32,14 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Name and contact are required" });
     }
 
+    // Default password for new teachers (username = contact for login)
+    const defaultPassword = await bcrypt.hash("Teacher123", 10);
     const result = await pool.query(
       `INSERT INTO users (
-        name, contact, email, role, username
-      ) VALUES ($1, $2, $3, $4, $5) 
+        name, contact, email, role, username, password
+      ) VALUES ($1, $2, $3, $4, $5, $6) 
       RETURNING *`,
-      [name, contact, email || null, "Teacher", contact]
+      [name, contact, email || null, "Teacher", contact, defaultPassword]
     );
 
     const newTeacher = result.rows[0];
@@ -117,11 +120,12 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
 
     const beforeState = existingTeacher.rows[0];
 
+    // Preserve existing username - do NOT overwrite with contact (keeps login credentials working)
     const result = await pool.query(
       `UPDATE users SET 
-        name = $1, contact = $2, email = $3, username = $4
-      WHERE id = $5 AND role = $6 RETURNING *`,
-      [name, contact, email || null, contact, id, "Teacher"]
+        name = $1, contact = $2, email = $3
+      WHERE id = $4 AND role = $5 RETURNING *`,
+      [name, contact, email || null, id, "Teacher"]
     );
 
     const updatedTeacher = result.rows[0];

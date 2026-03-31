@@ -3,18 +3,21 @@ const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
 const isDesktop = process.env.NODE_ENV === "desktop";
-const db = isDesktop
-  ? process.env.DATABASE_URL_LOCAL
-  : process.env.DATABASE_URL;
+const isDevelopment = process.env.NODE_ENV === "development";
+// Use local DB for desktop and development; remote for production
+const db =
+  isDesktop || isDevelopment
+    ? process.env.DATABASE_URL_LOCAL || process.env.DATABASE_URL
+    : process.env.DATABASE_URL;
 
 const pool = new Pool({
   connectionString: db,
-  // Optimize connection pool to prevent resource exhaustion
-  max: 20, // Maximum number of clients in the pool
-  idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-  connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection could not be established
-  maxUses: 7500, // Close (and replace) a connection after it has been used 7500 times
-  allowExitOnIdle: true, // Allow the pool to exit if all connections are idle
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 30000, // 30 seconds - remote DB may be slow to respond
+  maxUses: 7500,
+  allowExitOnIdle: true,
+  keepAlive: true, // prevent remote DB from closing idle connections
 });
 
 // Handle pool errors to prevent crashes
