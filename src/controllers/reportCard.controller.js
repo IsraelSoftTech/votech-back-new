@@ -3587,4 +3587,5 @@ module.exports = {
   bulkReportCardsPdf,
   bulkReportCardsHTML,
   bulkReportCardsHTMLTest, // Add this export
+  buildReportCardsFromMarks,
 };

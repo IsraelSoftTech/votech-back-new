@@ -48,19 +48,18 @@ const sequelize = new Sequelize(dbUrl, {
   logging: process.env.NODE_ENV === "production" ? false : console.log,
   dialect: "postgres",
   pool: {
-    max: 5,
-    min: 0,
-    acquire: 30000,
+    max: 20,
+    min: 2,
+    acquire: 60000,
     idle: 10000,
   },
   dialectOptions: isDesktop
     ? {}
     : {
-        // Production settings
         connectTimeout: 60000,
+        statement_timeout: 120000,
       },
 });
-
 // Test connection
 sequelize
   .authenticate()
