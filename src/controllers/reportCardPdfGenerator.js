@@ -1312,20 +1312,21 @@ const bulkPdfDirect = catchAsync(async (req, res, next) => {
   // Note: No Content-Length — we're streaming, so chunked transfer encoding
   // is used automatically. This is fine for blob downloads on the frontend.
 
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
   try {
-    const pdfBuffer = await generatePdfBuffer(docDef);
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.setHeader("Content-Length", pdfBuffer.length);
-    res.status(200).end(pdfBuffer);
+    await streamPdfToResponse(docDef, res);
   } catch (err) {
     console.error("PDF generation error:", err);
-    return next(
-      new AppError(
-        "PDF generation failed: " + (err.message || "Unknown error"),
-        StatusCodes.INTERNAL_SERVER_ERROR
-      )
-    );
+    if (!res.headersSent) {
+      return next(
+        new AppError(
+          "PDF generation failed: " + (err.message || "Unknown error"),
+          StatusCodes.INTERNAL_SERVER_ERROR
+        )
+      );
+    }
   }
 });
 

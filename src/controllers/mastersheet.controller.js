@@ -1915,10 +1915,35 @@ const classMasterSheet = catchAsync(async (req, res, next) => {
 
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-  res.setHeader("Content-Length", pdfBuffer.length);
-  res.status(200).end(pdfBuffer);
+
+  try {
+    await streamPdfToResponse(docDef, res);
+  } catch (err) {
+    console.error("Master sheet PDF error:", err);
+    if (!res.headersSent) {
+      return next(
+        new AppError(
+          "PDF generation failed: " + (err.message || "Unknown error"),
+          StatusCodes.INTERNAL_SERVER_ERROR
+        )
+      );
+    }
+  }
 });
 
+function streamPdfToResponse(docDefinition, res) {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = printer.createPdfKitDocument(docDefinition);
+      doc.on("error", reject);
+      doc.on("end", resolve);
+      doc.pipe(res);
+      doc.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
 /* ═══════════════════════════════════════════════════════════════════
    EXPORTS
    ═══════════════════════════════════════════════════════════════════ */
