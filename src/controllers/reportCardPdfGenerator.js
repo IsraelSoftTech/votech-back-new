@@ -19,7 +19,7 @@
  * Font files:   ./fonts/Roboto-*.ttf  (shipped with pdfmake)
  */
 
-const PdfPrinter = require("pdfmake/src/Printer");
+const PdfPrinter = require("pdfmake/src/printer");
 const path = require("path");
 const fs = require("fs");
 const { StatusCodes } = require("http-status-codes");
