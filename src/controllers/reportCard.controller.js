@@ -26,7 +26,11 @@ const administrationFormat = {
   parents: "John Snwo",
 };
 
-const round = (n, d = 1) => Number(n.toFixed(d));
+// AFTER — proper mathematical rounding:
+const round = (n, d = 1) => {
+  const factor = Math.pow(10, d);
+  return Math.round((Number(n) + Number.EPSILON) * factor) / factor;
+};
 
 // FIXED: Shared builder with corrected calculations
 function buildReportCardsFromMarks(marks, classMaster, termKey = "term3") {
@@ -1035,7 +1039,7 @@ function buildHTML(students, options = {}) {
         }
 
         const num = Number(value);
-        const formatted = isAvg ? num.toFixed(1) : num;
+        const formatted = num.toFixed(isAvg ? 1 : 1);
         const baseClass = isAvg ? "avg-cell" : "score-cell";
         const lowClass = num < 10 ? " low-score" : "";
 

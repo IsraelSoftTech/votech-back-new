@@ -117,7 +117,7 @@ const round = (n, d = 1) => Number(Number(n).toFixed(d));
 
 function fmtScore(n) {
   if (n == null || isNaN(Number(n))) return "-";
-  return String(Math.round(Number(n)));
+  return Number(n).toFixed(1); // 17.4 → "17.4"
 }
 
 function fmtAvg(n) {
@@ -128,6 +128,38 @@ function fmtAvg(n) {
 function fmtRange(min, max) {
   const fmt = (v) => (Number.isInteger(v) ? String(v) : Number(v).toFixed(1));
   return `${fmt(min)}-${fmt(max)}`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   4b. TEACHER NAME FORMATTING
+   ═══════════════════════════════════════════════════════════════════
+   Rules:
+     - Title case: first letter uppercase, rest lowercase
+     - If 3+ names, abbreviate the last name to its initial
+     - Result must always fit on one line in the teacher column
+   Examples:
+     "DJIMO DJIMO BEN OKAFOR"  → "Djimo Djimo Ben O."
+     "MANKAA CARINE AWAH"      → "Mankaa Carine A."
+     "NGAH DIVINE"             → "Ngah Divine"
+     "MR. THOMAS AMBE"         → "Mr. Thomas Ambe"
+   ═══════════════════════════════════════════════════════════════════ */
+
+function formatTeacherName(raw) {
+  if (!raw || typeof raw !== "string") return "N/A";
+  const parts = raw.trim().split(/\s+/);
+  if (parts.length === 0) return "N/A";
+
+  // Title-case each part
+  const titled = parts.map(
+    (p) => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()
+  );
+
+  // If 3+ names, abbreviate the last one
+  if (titled.length >= 3) {
+    titled[titled.length - 1] = titled[titled.length - 1].charAt(0) + ".";
+  }
+
+  return titled.join(" ");
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -585,7 +617,7 @@ function buildSubjectSection(
         color: rColor,
       },
       {
-        text: subj.teacher || "N/A",
+        text: formatTeacherName(subj.teacher),
         fontSize: fs_.teacher,
         color: C.light,
         alignment: "left",
@@ -656,7 +688,7 @@ function buildSubjectSection(
                 color: C.white,
                 alignment: "center",
                 fillColor: C.primary,
-                margin: [0, 2, 0, 2],
+                margin: [0, 1.5, 0, 1.5],
               },
             ],
           ],
@@ -687,7 +719,7 @@ function buildSubjectSection(
         },
       },
     ],
-    margin: [0, 0, 0, 3],
+    margin: [0, 0, 0, 2],
   };
 }
 
@@ -709,10 +741,10 @@ function buildPerformanceSummary(data, termCfg) {
   const cumAvg = termCfg.getCumulative(data.termTotals);
   const cs = data.classStatistics || {};
 
-  const lbl = (text) => ({ text, fontSize: 8, bold: true, color: C.primary });
+  const lbl = (text) => ({ text, fontSize: 7.5, bold: true, color: C.primary });
   const val = (text) => ({
     text: String(text ?? "—"),
-    fontSize: 8,
+    fontSize: 7.5,
     bold: true,
     color: C.dark,
     decoration: "underline",
@@ -722,22 +754,20 @@ function buildPerformanceSummary(data, termCfg) {
   return {
     unbreakable: true,
     table: {
-      widths: [110, "*", 90, "*"],
+      widths: [100, "*", 84, "*", 90, "*"],
       body: [
         [
           lbl("GRAND TOTAL:"),
           val(tt.total != null ? Math.round(tt.total) : "—"),
-          lbl("STUDENT AVERAGE:"),
+          lbl("STUDENT AVG:"),
           val(tt.average != null ? `${fmtAvg(tt.average)}/20` : "—"),
-        ],
-        [
-          lbl("CLASS AVERAGE:"),
-          val(cs.classAverage != null ? `${fmtAvg(cs.classAverage)}/20` : "—"),
           lbl("CLASS RANK:"),
           val(tt.rank != null ? `${tt.rank}° of ${tt.outOf}` : "—"),
         ],
         [
-          lbl(`CUMUL. AVG (${termCfg.cumulativeLabel}):`),
+          lbl("CLASS AVERAGE:"),
+          val(cs.classAverage != null ? `${fmtAvg(cs.classAverage)}/20` : "—"),
+          lbl(`CUMUL. (${termCfg.cumulativeLabel}):`),
           val(cumAvg != null ? `${fmtAvg(cumAvg)}/20` : "N/A"),
           { text: "" },
           { text: "" },
@@ -751,113 +781,287 @@ function buildPerformanceSummary(data, termCfg) {
         i === 0 || i === node.table.widths.length ? 1 : 0,
       hLineColor: () => C.primary,
       vLineColor: () => C.primary,
-      paddingLeft: () => 6,
-      paddingRight: () => 6,
+      paddingLeft: () => 5,
+      paddingRight: () => 5,
       paddingTop: () => 2,
       paddingBottom: () => 2,
       fillColor: () => C.cardBg,
     },
-    margin: [0, 1, 0, 3],
+    margin: [0, 1, 0, 2],
   };
 }
 
-// ── 9e. BOTTOM SECTION ──────────────────────────────────────────
+// ── 9e. BOTTOM SECTION (compact single-row layout) ──────────────
+//
+// Redesigned: conduct, grading scale, and admin are rendered as a
+// single compact table row. The grading scale uses an inline layout
+// instead of stacked key-value pairs, saving ~30pt of height.
 
 function buildBottomSection(data, gradingScale) {
   const cond = data.conduct || {};
   const admin = data.administration || {};
 
-  function cellTitle(text) {
-    return {
-      table: {
-        widths: ["*"],
-        body: [
-          [
-            {
-              text,
-              fontSize: 7.5,
-              bold: true,
-              color: C.primary,
-              alignment: "center",
-            },
-          ],
+  // ── Conduct column (compact key-value) ──
+  const conductContent = {
+    stack: [
+      {
+        text: "CONDUCT & ATTENDANCE",
+        fontSize: 7,
+        bold: true,
+        color: C.primary,
+        alignment: "center",
+        margin: [0, 0, 0, 2],
+      },
+      {
+        canvas: [
+          {
+            type: "line",
+            x1: 0,
+            y1: 0,
+            x2: 150,
+            y2: 0,
+            lineWidth: 0.4,
+            lineColor: C.primary,
+          },
+        ],
+        margin: [0, 0, 0, 2],
+      },
+      {
+        columns: [
+          {
+            text: "Days Present:",
+            fontSize: 6.5,
+            bold: true,
+            color: C.primary,
+            width: "auto",
+          },
+          {
+            text: `${cond.attendanceDays || "-"}/${cond.totalDays || "-"}`,
+            fontSize: 6.5,
+            bold: true,
+            color: C.dark,
+            alignment: "right",
+            width: "*",
+          },
+        ],
+        margin: [0, 0, 0, 1],
+      },
+      {
+        columns: [
+          {
+            text: "Times Late:",
+            fontSize: 6.5,
+            bold: true,
+            color: C.primary,
+            width: "auto",
+          },
+          {
+            text: String(cond.timesLate ?? "-"),
+            fontSize: 6.5,
+            bold: true,
+            color: C.dark,
+            alignment: "right",
+            width: "*",
+          },
+        ],
+        margin: [0, 0, 0, 1],
+      },
+      {
+        columns: [
+          {
+            text: "Disciplinary:",
+            fontSize: 6.5,
+            bold: true,
+            color: C.primary,
+            width: "auto",
+          },
+          {
+            text: String(cond.disciplinaryActions ?? "-"),
+            fontSize: 6.5,
+            bold: true,
+            color: C.dark,
+            alignment: "right",
+            width: "*",
+          },
         ],
       },
-      layout: {
-        hLineWidth: (i) => (i === 1 ? 0.5 : 0),
-        vLineWidth: () => 0,
-        hLineColor: () => C.primary,
-        paddingLeft: () => 0,
-        paddingRight: () => 0,
-        paddingTop: () => 0,
-        paddingBottom: () => 1,
-      },
-      margin: [0, 0, 0, 2],
-    };
-  }
+    ],
+    fillColor: C.cardBg,
+  };
 
-  function kvRow(label, value, valueColor) {
-    return {
+  // ── Grading scale column (compact two-column grid) ──
+  //    Renders as:  18-20: Excellent   14-15.9: Good
+  //                 16-17.9: V.Good    12-13.9: F.Good  ...
+  const gradingPairs = [];
+  for (let i = 0; i < gradingScale.length; i += 2) {
+    const left = gradingScale[i];
+    const right = gradingScale[i + 1];
+    const row = {
       columns: [
         {
-          text: label,
-          fontSize: 7,
-          bold: true,
-          color: C.primary,
-          width: "auto",
+          text: [
+            {
+              text: `${fmtRange(left.band_min, left.band_max)}: `,
+              fontSize: 6,
+              bold: true,
+              color: C.primary,
+            },
+            {
+              text: left.comment,
+              fontSize: 6,
+              bold: true,
+              color: remarkColor(left.comment),
+            },
+          ],
+          width: "50%",
         },
-        {
-          text: String(value ?? "-"),
-          fontSize: 7,
-          bold: true,
-          color: valueColor || C.dark,
-          alignment: "right",
-          width: "*",
-        },
+        right
+          ? {
+              text: [
+                {
+                  text: `${fmtRange(right.band_min, right.band_max)}: `,
+                  fontSize: 6,
+                  bold: true,
+                  color: C.primary,
+                },
+                {
+                  text: right.comment,
+                  fontSize: 6,
+                  bold: true,
+                  color: remarkColor(right.comment),
+                },
+              ],
+              width: "50%",
+            }
+          : { text: "", width: "50%" },
       ],
-      margin: [0, 0, 0, 1.5],
+      margin: [0, 0, 0, 1],
     };
+    gradingPairs.push(row);
   }
 
-  const conductStack = [
-    cellTitle("CONDUCT & ATTENDANCE"),
-    kvRow(
-      "Days Present:",
-      `${cond.attendanceDays || "-"}/${cond.totalDays || "-"}`
-    ),
-    kvRow("Times Late:", cond.timesLate),
-    kvRow("Disciplinary Actions:", cond.disciplinaryActions),
-  ];
+  const gradingContent = {
+    stack: [
+      {
+        text: "GRADING SCALE",
+        fontSize: 7,
+        bold: true,
+        color: C.primary,
+        alignment: "center",
+        margin: [0, 0, 0, 2],
+      },
+      {
+        canvas: [
+          {
+            type: "line",
+            x1: 0,
+            y1: 0,
+            x2: 150,
+            y2: 0,
+            lineWidth: 0.4,
+            lineColor: C.primary,
+          },
+        ],
+        margin: [0, 0, 0, 2],
+      },
+      ...gradingPairs,
+    ],
+    fillColor: C.cardBg,
+  };
 
-  const gradingStack = [
-    cellTitle("GRADING SCALE"),
-    ...gradingScale.map((g) =>
-      kvRow(
-        `${fmtRange(g.band_min, g.band_max)}:`,
-        g.comment,
-        remarkColor(g.comment)
-      )
-    ),
-  ];
-
-  const adminStack = [
-    cellTitle("ADMINISTRATION"),
-    kvRow("Class Master:", (admin.classMaster || "").toUpperCase()),
-    kvRow("Decision:", admin.decision || "", C.good),
-    kvRow("Next Term:", admin.nextTermStarts || ""),
-  ];
+  // ── Admin column ──
+  const adminContent = {
+    stack: [
+      {
+        text: "ADMINISTRATION",
+        fontSize: 7,
+        bold: true,
+        color: C.primary,
+        alignment: "center",
+        margin: [0, 0, 0, 2],
+      },
+      {
+        canvas: [
+          {
+            type: "line",
+            x1: 0,
+            y1: 0,
+            x2: 150,
+            y2: 0,
+            lineWidth: 0.4,
+            lineColor: C.primary,
+          },
+        ],
+        margin: [0, 0, 0, 2],
+      },
+      {
+        columns: [
+          {
+            text: "Class Master:",
+            fontSize: 6.5,
+            bold: true,
+            color: C.primary,
+            width: "auto",
+          },
+          {
+            text: (admin.classMaster || "").toUpperCase(),
+            fontSize: 6.5,
+            bold: true,
+            color: C.dark,
+            alignment: "right",
+            width: "*",
+          },
+        ],
+        margin: [0, 0, 0, 1],
+      },
+      {
+        columns: [
+          {
+            text: "Decision:",
+            fontSize: 6.5,
+            bold: true,
+            color: C.primary,
+            width: "auto",
+          },
+          {
+            text: admin.decision || "",
+            fontSize: 6.5,
+            bold: true,
+            color: C.good,
+            alignment: "right",
+            width: "*",
+          },
+        ],
+        margin: [0, 0, 0, 1],
+      },
+      {
+        columns: [
+          {
+            text: "Next Term:",
+            fontSize: 6.5,
+            bold: true,
+            color: C.primary,
+            width: "auto",
+          },
+          {
+            text: admin.nextTermStarts || "",
+            fontSize: 6.5,
+            bold: true,
+            color: C.dark,
+            alignment: "right",
+            width: "*",
+          },
+        ],
+      },
+    ],
+    fillColor: C.cardBg,
+  };
 
   return {
     unbreakable: true,
     table: {
       widths: ["*", "*", "*"],
-      body: [
-        [
-          { stack: conductStack, fillColor: C.cardBg },
-          { stack: gradingStack, fillColor: C.cardBg },
-          { stack: adminStack, fillColor: C.cardBg },
-        ],
-      ],
+      body: [[conductContent, gradingContent, adminContent]],
     },
     layout: {
       hLineWidth: () => 1,
@@ -869,96 +1073,82 @@ function buildBottomSection(data, gradingScale) {
       paddingTop: () => 3,
       paddingBottom: () => 3,
     },
-    margin: [0, 0, 0, 3],
+    margin: [0, 0, 0, 2],
   };
 }
 
-// ── 9f. SIGNATURE BOXES ─────────────────────────────────────────
+// ── 9f. SIGNATURE BOXES (compact — single row, minimal height) ──
 
 function buildSignatures(data) {
   const admin = data.administration || {};
 
-  function sigBox(title, name, dateLabel) {
+  function sigBox(title, name) {
     return {
-      table: {
-        widths: ["*"],
-        body: [
-          [
+      stack: [
+        {
+          text: title,
+          fontSize: 6.5,
+          bold: true,
+          color: C.primary,
+          alignment: "center",
+          margin: [0, 0, 0, 8],
+        },
+        {
+          canvas: [
             {
-              stack: [
-                {
-                  text: title,
-                  fontSize: 7,
-                  bold: true,
-                  color: C.primary,
-                  alignment: "center",
-                  margin: [0, 0, 0, 12],
-                },
-                {
-                  canvas: [
-                    {
-                      type: "line",
-                      x1: 10,
-                      y1: 0,
-                      x2: 130,
-                      y2: 0,
-                      lineWidth: 0.8,
-                      lineColor: C.primary,
-                    },
-                  ],
-                  margin: [0, 0, 0, 2],
-                },
-                {
-                  text: (name || "").toUpperCase(),
-                  fontSize: 6.5,
-                  bold: true,
-                  color: C.dark,
-                  alignment: "center",
-                  margin: [0, 0, 0, 1],
-                },
-                {
-                  text: dateLabel || "Date & Signature",
-                  fontSize: 6,
-                  italics: true,
-                  color: C.light,
-                  alignment: "center",
-                },
-              ],
-              fillColor: C.cardBg,
+              type: "line",
+              x1: 10,
+              y1: 0,
+              x2: 130,
+              y2: 0,
+              lineWidth: 0.8,
+              lineColor: C.primary,
             },
           ],
-        ],
-      },
-      layout: {
-        hLineWidth: () => 1,
-        vLineWidth: () => 1,
-        hLineColor: () => C.primary,
-        vLineColor: () => C.primary,
-        paddingLeft: () => 5,
-        paddingRight: () => 5,
-        paddingTop: () => 4,
-        paddingBottom: () => 4,
-      },
+          margin: [0, 0, 0, 1.5],
+        },
+        {
+          text: (name || "").toUpperCase(),
+          fontSize: 6,
+          bold: true,
+          color: C.dark,
+          alignment: "center",
+          margin: [0, 0, 0, 0.5],
+        },
+        {
+          text: "Date & Signature",
+          fontSize: 5.5,
+          italics: true,
+          color: C.light,
+          alignment: "center",
+        },
+      ],
+      fillColor: C.cardBg,
     };
   }
 
   return {
     unbreakable: true,
-    columns: [
-      {
-        width: "*",
-        ...sigBox("CLASS MASTER", admin.classMaster, "Date & Signature"),
-      },
-      {
-        width: "*",
-        ...sigBox("PRINCIPAL", admin.principal, "Date, Signature & Seal"),
-      },
-      {
-        width: "*",
-        ...sigBox("PARENT/GUARDIAN", admin.parents, "Date & Signature"),
-      },
-    ],
-    columnGap: 8,
+    table: {
+      widths: ["*", "*", "*"],
+      body: [
+        [
+          sigBox("CLASS MASTER", admin.classMaster),
+          sigBox("PRINCIPAL", admin.principal),
+          sigBox("PARENT/GUARDIAN", admin.parents),
+        ],
+      ],
+    },
+    layout: {
+      hLineWidth: () => 1,
+      vLineWidth: () => 1,
+      hLineColor: () => C.primary,
+      vLineColor: () => C.primary,
+      paddingLeft: () => 4,
+      paddingRight: () => 4,
+      paddingTop: () => 3,
+      paddingBottom: () => 3,
+    },
     margin: [0, 0, 0, 2],
   };
 }
@@ -972,7 +1162,7 @@ function buildFooter() {
     italics: true,
     color: C.light,
     alignment: "center",
-    margin: [0, 2, 0, 0],
+    margin: [0, 1, 0, 0],
   };
 }
 
@@ -1306,27 +1496,20 @@ const bulkPdfDirect = catchAsync(async (req, res, next) => {
     department.name
   )}-${sanitize(studentClass.name)}-${sanitize(termLabel)}-report-cards.pdf`;
 
-  // ── Stream directly to response (no buffering) ──
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-  // Note: No Content-Length — we're streaming, so chunked transfer encoding
-  // is used automatically. This is fine for blob downloads on the frontend.
-
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-
   try {
-    await streamPdfToResponse(docDef, res);
+    const pdfBuffer = await generatePdfBuffer(docDef);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", pdfBuffer.length);
+    res.status(200).end(pdfBuffer);
   } catch (err) {
     console.error("PDF generation error:", err);
-    if (!res.headersSent) {
-      return next(
-        new AppError(
-          "PDF generation failed: " + (err.message || "Unknown error"),
-          StatusCodes.INTERNAL_SERVER_ERROR
-        )
-      );
-    }
+    return next(
+      new AppError(
+        "PDF generation failed: " + (err.message || "Unknown error"),
+        StatusCodes.INTERNAL_SERVER_ERROR
+      )
+    );
   }
 });
 
