@@ -6,9 +6,9 @@ const syncController = require("./controllers/sync.controller");
 const desktopRouter = express.Router();
 
 desktopRouter.route("/auth/login").post(desktopAuthController.desktopLogin);
-
-desktopRouter.route("/auth/refresh").post(desktopAuthController.desktopLogin);
-
-desktopRouter.route("/sync/init").post(protect, syncController.initSync);
+desktopRouter
+  .route("/auth/refresh")
+  .post(desktopAuthController.refreshDesktopSession);
+desktopRouter.route("/sync/init/start").post(protect, syncController.initSync);
 
 module.exports = desktopRouter;

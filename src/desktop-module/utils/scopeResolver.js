@@ -596,6 +596,213 @@ class ScopeResolver {
         return null;
     }
   }
+
+  async resolveSlice(userId, role, tableKey, offset, limit) {
+    const {
+      SCOPE_CONFIG,
+      STRATEGY,
+      FILTER_TYPE,
+      ROLES,
+      ADMIN_ROLES,
+      FULL_ADMIN_ROLES,
+    } = require("./scopeConfig");
+    const { Op } = require("sequelize");
+
+    const config = SCOPE_CONFIG[tableKey];
+    if (!config || config.strategy === STRATEGY.NEVER) return [];
+
+    let classIds = [];
+    let subjectIds = [];
+
+    if (!FULL_ADMIN_ROLES.includes(role)) {
+      ({ classIds, subjectIds } = await this._resolveClassScope(userId));
+    }
+
+    const isFullAdmin = FULL_ADMIN_ROLES.includes(role);
+    const isAdminRole = ADMIN_ROLES.includes(role);
+
+    const paginate = { offset, limit };
+
+    // PUBLIC
+    if (config.strategy === STRATEGY.PUBLIC) {
+      return sequelize.models[config.model].findAll({ ...paginate, raw: true });
+    }
+
+    // FULL FOR ROLES
+    if (config.strategy === STRATEGY.FULL_FOR_ROLES) {
+      if (!config.allowedRoles.includes(role)) return [];
+      return sequelize.models[config.model].findAll({ ...paginate, raw: true });
+    }
+
+    // OWNED — special cases
+    const m = (name) => sequelize.models[name];
+
+    if (tableKey === "User") {
+      const rows = await m("User").findAll({
+        ...paginate,
+        attributes: { exclude: ["password"] },
+        raw: true,
+      });
+      return rows;
+    }
+
+    if (tableKey === "DisciplineCase") {
+      const fullRoles = [...ADMIN_ROLES, ROLES.DISCIPLINE, ROLES.PSYCHOSOCIAL];
+      const where = fullRoles.includes(role)
+        ? {}
+        : { [Op.or]: [{ recordedBy: userId }, { teacherId: userId }] };
+      return m("DisciplineCase").findAll({ where, ...paginate, raw: true });
+    }
+
+    if (tableKey === "Specialty") {
+      if (isFullAdmin)
+        return m("Specialty").findAll({ ...paginate, raw: true });
+      if (!classIds.length) return [];
+      return m("Specialty").findAll({
+        include: [
+          {
+            model: m("SpecialtyClass"),
+            where: { classId: { [Op.in]: classIds } },
+            required: true,
+          },
+        ],
+        ...paginate,
+        distinct: true,
+        raw: true,
+      });
+    }
+
+    if (tableKey === "Group") {
+      return m("Group").findAll({
+        include: [
+          { model: m("GroupParticipant"), where: { userId }, required: true },
+        ],
+        ...paginate,
+        distinct: true,
+        raw: true,
+      });
+    }
+
+    if (tableKey === "GroupParticipant") {
+      const userGroups = await m("GroupParticipant").findAll({
+        attributes: ["groupId"],
+        where: { userId },
+      });
+      const groupIds = userGroups.map((r) => r.groupId);
+      if (!groupIds.length) return [];
+      return m("GroupParticipant").findAll({
+        where: { groupId: { [Op.in]: groupIds } },
+        ...paginate,
+        raw: true,
+      });
+    }
+
+    if (tableKey === "Message") {
+      const userGroups = await m("GroupParticipant").findAll({
+        attributes: ["groupId"],
+        where: { userId },
+      });
+      const groupIds = userGroups.map((r) => r.groupId);
+      return m("Message").findAll({
+        where: {
+          [Op.or]: [
+            { senderId: userId },
+            { receiverId: userId },
+            ...(groupIds.length ? [{ groupId: { [Op.in]: groupIds } }] : []),
+          ],
+        },
+        ...paginate,
+        raw: true,
+      });
+    }
+
+    if (tableKey === "AttendanceRecord") {
+      if (isFullAdmin)
+        return m("AttendanceRecord").findAll({ ...paginate, raw: true });
+      if (!classIds.length) return [];
+      return m("AttendanceRecord").findAll({
+        include: [
+          {
+            model: m("AttendanceSession"),
+            where: { classId: { [Op.in]: classIds } },
+            required: true,
+          },
+        ],
+        ...paginate,
+        raw: true,
+      });
+    }
+
+    if (tableKey === "Fee") {
+      if (isAdminRole) return m("Fee").findAll({ ...paginate, raw: true });
+      if (!classIds.length) return [];
+      return m("Fee").findAll({
+        include: [
+          {
+            model: m("Student"),
+            where: { classId: { [Op.in]: classIds } },
+            required: true,
+          },
+        ],
+        ...paginate,
+        raw: true,
+      });
+    }
+
+    // Generic filterType
+    const model = m(config.model);
+    const filterKey = config.filterKey || "classId";
+
+    switch (config.filterType) {
+      case FILTER_TYPE.BY_CLASS_IDS:
+        if (isFullAdmin) return model.findAll({ ...paginate, raw: true });
+        if (!classIds.length) return [];
+        return model.findAll({
+          where: { [filterKey]: { [Op.in]: classIds } },
+          ...paginate,
+          raw: true,
+        });
+
+      case FILTER_TYPE.BY_SUBJECT_IDS:
+        if (isFullAdmin) return model.findAll({ ...paginate, raw: true });
+        if (!subjectIds.length) return [];
+        return model.findAll({
+          where: { id: { [Op.in]: subjectIds } },
+          ...paginate,
+          raw: true,
+        });
+
+      case FILTER_TYPE.BY_CLASS_AND_SUBJECT:
+        if (isFullAdmin) return model.findAll({ ...paginate, raw: true });
+        if (!classIds.length || !subjectIds.length) return [];
+        return model.findAll({
+          where: {
+            classId: { [Op.in]: classIds },
+            subjectId: { [Op.in]: subjectIds },
+          },
+          ...paginate,
+          raw: true,
+        });
+
+      case FILTER_TYPE.BY_USER_ID:
+        if (isAdminRole) return model.findAll({ ...paginate, raw: true });
+        return model.findAll({
+          where: { [config.filterKey || "userId"]: userId },
+          ...paginate,
+          raw: true,
+        });
+
+      case FILTER_TYPE.BY_USER_ID_ONLY:
+        return model.findAll({
+          where: { [config.filterKey || "userId"]: userId },
+          ...paginate,
+          raw: true,
+        });
+
+      default:
+        return [];
+    }
+  }
 }
 
 module.exports = ScopeResolver;
