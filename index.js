@@ -7,6 +7,8 @@ process.on("unhandledRejection", (reason) => {
 
 require("dotenv").config();
 const { pool } = require("./routes/utils");
+const { createServer } = require("http");
+const { initSockets } = require("./src/desktop-module/socket/index");
 const app = require("./app");
 
 const basePort = parseInt(process.env.PORT || "5000", 10);
@@ -92,7 +94,6 @@ async function runMigrations() {
     `
       )
       .catch(() => {});
-    // Backfill item_id for existing rows (prefix from item_name + seq)
     const { rows: needBackfill } = await pool.query(
       "SELECT id, item_name FROM report_inventory WHERE item_id IS NULL ORDER BY id"
     );
@@ -170,7 +171,11 @@ function killPort(port) {
 async function startOnce(port) {
   await runMigrations();
   await killPort(port);
-  const server = app.listen(port, "0.0.0.0", () => {
+
+  const server = createServer(app);
+  initSockets(server);
+
+  server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on port ${port}`);
   });
   server.on("error", (err) => {
