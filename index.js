@@ -49,31 +49,59 @@ async function runMigrations() {
     await pool.query(`
       ALTER TABLE report_inventory ADD COLUMN IF NOT EXISTS item_id VARCHAR(20) UNIQUE
     `);
-    await pool.query(`
+    await pool
+      .query(
+        `
       ALTER TABLE report_inventory ALTER COLUMN quantity DROP NOT NULL
-    `).catch(() => {});
-    await pool.query(`
+    `
+      )
+      .catch(() => {});
+    await pool
+      .query(
+        `
       ALTER TABLE report_inventory DROP CONSTRAINT IF EXISTS report_inventory_uom_check
-    `).catch(() => {});
-    await pool.query(`
+    `
+      )
+      .catch(() => {});
+    await pool
+      .query(
+        `
       ALTER TABLE report_inventory DROP CONSTRAINT IF EXISTS report_inventory_uom_check
-    `).catch(() => {});
-    await pool.query(`
+    `
+      )
+      .catch(() => {});
+    await pool
+      .query(
+        `
       ALTER TABLE report_inventory ADD CONSTRAINT report_inventory_uom_check
       CHECK (uom IN ('Pieces', 'Kg', 'Liters', 'Cartons', 'Others'))
-    `).catch(() => {});
-    await pool.query(`
+    `
+      )
+      .catch(() => {});
+    await pool
+      .query(
+        `
       ALTER TABLE report_inventory ADD COLUMN IF NOT EXISTS amount NUMERIC(12,2)
-    `).catch(() => {});
-    await pool.query(`
+    `
+      )
+      .catch(() => {});
+    await pool
+      .query(
+        `
       UPDATE report_inventory SET amount = unit_cost_price * COALESCE(quantity, 1) WHERE amount IS NULL
-    `).catch(() => {});
+    `
+      )
+      .catch(() => {});
     // Backfill item_id for existing rows (prefix from item_name + seq)
     const { rows: needBackfill } = await pool.query(
       "SELECT id, item_name FROM report_inventory WHERE item_id IS NULL ORDER BY id"
     );
     for (const row of needBackfill) {
-      const prefix = ((row.item_name || "XX").slice(0, 2).toUpperCase().replace(/[^A-Z]/g, "X") || "XX");
+      const prefix =
+        (row.item_name || "XX")
+          .slice(0, 2)
+          .toUpperCase()
+          .replace(/[^A-Z]/g, "X") || "XX";
       const { rows: existing } = await pool.query(
         "SELECT item_id FROM report_inventory WHERE item_id LIKE $1 ORDER BY item_id DESC LIMIT 1",
         [prefix + "%"]
@@ -84,7 +112,10 @@ async function runMigrations() {
         if (m) nextNum = parseInt(m[1], 10) + 1;
       }
       const itemId = prefix + String(nextNum).padStart(3, "0");
-      await pool.query("UPDATE report_inventory SET item_id = $1 WHERE id = $2", [itemId, row.id]);
+      await pool.query(
+        "UPDATE report_inventory SET item_id = $1 WHERE id = $2",
+        [itemId, row.id]
+      );
     }
     console.log("✅ report_inventory table ready");
   } catch (err) {
@@ -102,12 +133,20 @@ async function runMigrations() {
         updated_at TIMESTAMP DEFAULT NOW()
       )
     `);
-    await pool.query(`
+    await pool
+      .query(
+        `
       ALTER TABLE property_equipment DROP CONSTRAINT IF EXISTS property_equipment_department_location_check
-    `).catch(() => {});
-    await pool.query(`
+    `
+      )
+      .catch(() => {});
+    await pool
+      .query(
+        `
       ALTER TABLE property_equipment ALTER COLUMN department_location TYPE VARCHAR(50)
-    `).catch(() => {});
+    `
+      )
+      .catch(() => {});
     console.log("✅ property_equipment table ready");
   } catch (err) {
     console.warn("⚠️ Migration (property_equipment):", err.message);
