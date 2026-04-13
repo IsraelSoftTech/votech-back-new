@@ -2,14 +2,14 @@
 
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const db = require("../models");
+const db = require("../../models/index.model");
 const {
   logUserActivity,
   createUserSession,
   getIpAddress,
   getUserAgent,
   JWT_SECRET,
-} = require("./utils");
+} = require("../../../routes/utils");
 
 const desktopLogin = async (req, res) => {
   try {
@@ -26,10 +26,11 @@ const desktopLogin = async (req, res) => {
         error: "username, password and deviceToken are required",
       });
     }
-
     const user = await db.users.findOne({
       where: { username },
     });
+
+    // console.log(user);
 
     if (!user) {
       return res.status(401).json({ error: "Invalid credentials" });
@@ -234,4 +235,6 @@ const refreshDesktopSession = async (req, res) => {
   }
 };
 
-module.exports = { desktopLogin, refreshDesktopSession };
+const desktopAuthController = { desktopLogin, refreshDesktopSession };
+
+module.exports = desktopAuthController;

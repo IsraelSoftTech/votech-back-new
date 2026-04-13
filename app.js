@@ -144,6 +144,7 @@ const contentRouter = require("./src/routes/content.route");
 const globalErrorController = require("./src/controllers/error.controller");
 const departmentRouter = require("./src/routes/department.route");
 const { readOnlyGate } = require("./src/controllers/contextSwitch.controller");
+const desktopRouter = require("./src/desktop-module/desktop.routes");
 
 app.get("/api/test", (req, res) => {
   res.json({
@@ -219,6 +220,7 @@ app.use("/api/v1/students", studentRouterV1);
 app.use("/api/v1/report-cards", reportCardRouter);
 app.use("/api/v1/content", contentRouter);
 app.use("/api/v1/departments", departmentRouter);
+app.use("/api/v1/desktop", desktopRouter);
 
 console.log("✅ Server routes mounted successfully");
 console.log("📡 API endpoints available at /api/*");

@@ -22,6 +22,7 @@ const change_logs = require("./changeLog.model")(sequelize, DataTypes);
 const system_mode = require("./SystemMode.model")(sequelize, DataTypes);
 const db_swap_logs = require("./dbSwapLog.model")(sequelize, DataTypes);
 const swap_audit = require("./SwapAudit.model")(sequelize, DataTypes);
+const UserDevice = require("./UserDevice.model")(sequelize, DataTypes);
 
 console.log({
   Subject,
@@ -43,6 +44,7 @@ console.log({
   system_mode,
   db_swap_logs,
   swap_audit,
+  UserDevice,
 });
 
 const models = {
@@ -65,6 +67,7 @@ const models = {
   system_mode,
   db_swap_logs,
   swap_audit,
+  UserDevice,
 };
 
 // Call associate after all models are initialized
