@@ -13,6 +13,9 @@ const app = require("./app");
 
 const basePort = parseInt(process.env.PORT || "5000", 10);
 const { exec } = require("child_process");
+const {
+  cleanStaleSessions,
+} = require("./src/desktop-module/utils/sync.cleanup");
 
 async function runMigrations() {
   try {
@@ -197,3 +200,4 @@ console.log("🚀 Starting Votech Backend Server...");
 console.log("📊 Database: PostgreSQL");
 console.log("🔐 Authentication: JWT");
 console.log("📁 File Storage: FTP + Local");
+setInterval(cleanStaleSessions, 90 * 1000);

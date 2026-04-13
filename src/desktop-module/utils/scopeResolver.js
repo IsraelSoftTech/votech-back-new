@@ -1,7 +1,7 @@
 "use strict";
 
 const { QueryTypes } = require("sequelize");
-const { sequelize } = require("../models");
+const { sequelize } = require("../../models/index.model");
 const {
   ROLES,
   ADMIN_ROLES,
@@ -396,17 +396,206 @@ class ScopeResolver {
     }
     return this._execute(userId, role, since);
   }
+
+  async resolveManifest(userId, role) {
+    let classIds = [];
+    let subjectIds = [];
+
+    if (!FULL_ADMIN_ROLES.includes(role)) {
+      ({ classIds, subjectIds } = await this._resolveClassScope(userId));
+    }
+
+    const isFullAdmin = FULL_ADMIN_ROLES.includes(role);
+    const isAdminRole = ADMIN_ROLES.includes(role);
+    const manifest = {};
+
+    for (const [key, config] of Object.entries(SCOPE_CONFIG)) {
+      try {
+        if (config.strategy === STRATEGY.NEVER) continue;
+
+        if (config.strategy === STRATEGY.PUBLIC) {
+          manifest[key] = await sequelize.models[config.model].count();
+          continue;
+        }
+
+        if (config.strategy === STRATEGY.FULL_FOR_ROLES) {
+          if (!config.allowedRoles.includes(role)) continue;
+          manifest[key] = await sequelize.models[config.model].count();
+          continue;
+        }
+
+        if (config.strategy === STRATEGY.OWNED) {
+          const count = await this._countOwned(
+            key,
+            config,
+            userId,
+            role,
+            classIds,
+            subjectIds,
+            isFullAdmin,
+            isAdminRole
+          );
+          if (count !== null) manifest[key] = count;
+        }
+      } catch (err) {
+        console.error(
+          `[ScopeResolver] Manifest count failed for "${key}":`,
+          err.message
+        );
+        manifest[key] = 0;
+      }
+    }
+
+    return manifest;
+  }
+
+  async _countOwned(
+    key,
+    config,
+    userId,
+    role,
+    classIds,
+    subjectIds,
+    isFullAdmin,
+    isAdminRole
+  ) {
+    const { Op } = require("sequelize");
+    const m = (name) => sequelize.models[name];
+
+    if (key === "User") {
+      return m("User").count();
+    }
+
+    if (key === "DisciplineCase") {
+      const fullRoles = [...ADMIN_ROLES, ROLES.DISCIPLINE, ROLES.PSYCHOSOCIAL];
+      if (fullRoles.includes(role)) return m("DisciplineCase").count();
+      return m("DisciplineCase").count({
+        where: { [Op.or]: [{ recordedBy: userId }, { teacherId: userId }] },
+      });
+    }
+
+    if (key === "Specialty") {
+      if (isFullAdmin) return m("Specialty").count();
+      if (!classIds.length) return 0;
+      return m("Specialty").count({
+        include: [
+          {
+            model: m("SpecialtyClass"),
+            where: { classId: { [Op.in]: classIds } },
+            required: true,
+          },
+        ],
+        distinct: true,
+      });
+    }
+
+    if (key === "Group") {
+      return m("Group").count({
+        include: [
+          { model: m("GroupParticipant"), where: { userId }, required: true },
+        ],
+        distinct: true,
+      });
+    }
+
+    if (key === "GroupParticipant") {
+      const userGroups = await m("GroupParticipant").findAll({
+        attributes: ["groupId"],
+        where: { userId },
+      });
+      const groupIds = userGroups.map((r) => r.groupId);
+      if (!groupIds.length) return 0;
+      return m("GroupParticipant").count({
+        where: { groupId: { [Op.in]: groupIds } },
+      });
+    }
+
+    if (key === "Message") {
+      const userGroups = await m("GroupParticipant").findAll({
+        attributes: ["groupId"],
+        where: { userId },
+      });
+      const groupIds = userGroups.map((r) => r.groupId);
+      return m("Message").count({
+        where: {
+          [Op.or]: [
+            { senderId: userId },
+            { receiverId: userId },
+            ...(groupIds.length ? [{ groupId: { [Op.in]: groupIds } }] : []),
+          ],
+        },
+      });
+    }
+
+    if (key === "AttendanceRecord") {
+      if (isFullAdmin) return m("AttendanceRecord").count();
+      if (!classIds.length) return 0;
+      return m("AttendanceRecord").count({
+        include: [
+          {
+            model: m("AttendanceSession"),
+            where: { classId: { [Op.in]: classIds } },
+            required: true,
+          },
+        ],
+      });
+    }
+
+    if (key === "Fee") {
+      if (isAdminRole) return m("Fee").count();
+      if (!classIds.length) return 0;
+      return m("Fee").count({
+        include: [
+          {
+            model: m("Student"),
+            where: { classId: { [Op.in]: classIds } },
+            required: true,
+          },
+        ],
+      });
+    }
+
+    // ── Generic filterType ───────────────────────────────────────────────────
+    const { Op: O } = require("sequelize");
+    const model = m(config.model);
+    const filterKey = config.filterKey || "classId";
+
+    switch (config.filterType) {
+      case FILTER_TYPE.BY_CLASS_IDS:
+        if (isFullAdmin) return model.count();
+        if (!classIds.length) return 0;
+        return model.count({ where: { [filterKey]: { [O.in]: classIds } } });
+
+      case FILTER_TYPE.BY_SUBJECT_IDS:
+        if (isFullAdmin) return model.count();
+        if (!subjectIds.length) return 0;
+        return model.count({ where: { id: { [O.in]: subjectIds } } });
+
+      case FILTER_TYPE.BY_CLASS_AND_SUBJECT:
+        if (isFullAdmin) return model.count();
+        if (!classIds.length || !subjectIds.length) return 0;
+        return model.count({
+          where: {
+            classId: { [O.in]: classIds },
+            subjectId: { [O.in]: subjectIds },
+          },
+        });
+
+      case FILTER_TYPE.BY_USER_ID:
+        if (isAdminRole) return model.count();
+        return model.count({
+          where: { [config.filterKey || "userId"]: userId },
+        });
+
+      case FILTER_TYPE.BY_USER_ID_ONLY:
+        return model.count({
+          where: { [config.filterKey || "userId"]: userId },
+        });
+
+      default:
+        return null;
+    }
+  }
 }
 
 module.exports = ScopeResolver;
-
-const ScopeResolver = require("./scopeResolver");
-
-//How to use na:
-// const resolver = new ScopeResolver();
-
-// // initial sync
-// const payload = await resolver.resolve(userId, role);
-
-// // delta sync
-// const delta = await resolver.resolveDelta(userId, role, new Date(lastSyncAt));
