@@ -4,7 +4,7 @@ const { StatusCodes } = require("http-status-codes");
 const models = require("../models/index.model");
 const AppError = require("../utils/AppError");
 
-const ChangeLogModel = models.change_logs;
+const ChangeLogModel = models.ChangeLog;
 
 async function initChangeLogs() {
   try {

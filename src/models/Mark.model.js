@@ -1,4 +1,3 @@
-
 "use strict";
 
 const { DataTypes } = require("sequelize");
@@ -105,7 +104,7 @@ module.exports = (sequelizeInstance = sequelize) => {
 
   // ----- Associations -----
   Marks.associate = (models) => {
-    Marks.belongsTo(models.students, {
+    Marks.belongsTo(models.Student, {
       foreignKey: "student_id",
       as: "student",
       onDelete: "CASCADE",
@@ -135,7 +134,7 @@ module.exports = (sequelizeInstance = sequelize) => {
       as: "sequence",
       onDelete: "CASCADE",
     });
-    Marks.belongsTo(models.users, {
+    Marks.belongsTo(models.User, {
       foreignKey: "uploaded_by",
       as: "uploader",
       onDelete: "CASCADE",

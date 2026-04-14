@@ -2,7 +2,6 @@
 
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const db = require("../../models/index.model");
 const {
   logUserActivity,
   createUserSession,
@@ -10,6 +9,8 @@ const {
   getUserAgent,
   JWT_SECRET,
 } = require("../../../routes/utils");
+const models = require("../../models/index.model");
+const db = models;
 
 const desktopLogin = async (req, res) => {
   try {
@@ -26,7 +27,7 @@ const desktopLogin = async (req, res) => {
         error: "username, password and deviceToken are required",
       });
     }
-    const user = await db.users.findOne({
+    const user = await db.User.findOne({
       where: { username },
     });
 
@@ -46,7 +47,7 @@ const desktopLogin = async (req, res) => {
     }
 
     if (user.forceOnlineLogin) {
-      await db.users.update(
+      await db.User.update(
         { forceOnlineLogin: false },
         { where: { id: user.id } }
       );

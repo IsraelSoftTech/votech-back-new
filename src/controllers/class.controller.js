@@ -8,9 +8,9 @@ const { sequelize } = require("../db");
 const { Op } = require("sequelize");
 
 const ClassModel = models.Class;
-const TeacherModel = models.users;
-const DepartmentModel = models.specialties;
-const ClassMasterModel = models.users;
+const TeacherModel = models.User;
+const DepartmentModel = models.Specialty;
+const ClassMasterModel = models.User;
 
 const tableName = ClassModel.getTableName();
 let CRUDClass = new CRUD(ClassModel);
@@ -151,8 +151,8 @@ function validateClassData(data, partial = false) {
 // Associations for population
 const include = [
   { model: models.ClassSubject, as: "classSubjects" },
-  { model: models.specialties, as: "department" },
-  { model: models.users, as: "classMaster" },
+  { model: models.Specialty, as: "department" },
+  { model: models.User, as: "classMaster" },
 ];
 
 // Controller methods

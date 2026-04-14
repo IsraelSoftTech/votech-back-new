@@ -4,7 +4,7 @@ const { Model, DataTypes } = require("sequelize");
 module.exports = (sequelize) => {
   class SyncSession extends Model {
     static associate(models) {
-      SyncSession.belongsTo(models.users, { foreignKey: "user_id" });
+      SyncSession.belongsTo(models.User, { foreignKey: "user_id" });
     }
   }
 
@@ -82,6 +82,8 @@ module.exports = (sequelize) => {
       tableName: "sync_sessions",
       freezeTableName: true,
       timestamps: true,
+      createdAt: "created_at",
+      updatedAt: "updated_at",
     }
   );
 

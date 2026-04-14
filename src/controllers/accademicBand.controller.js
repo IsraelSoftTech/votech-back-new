@@ -6,10 +6,10 @@ const CRUD = require("../utils/Crud");
 const appResponder = require("../utils/appResponder");
 const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
 
-const AcademicBandModel = models.academic_bands;
+const AcademicBandModel = models.AcademicBand;
 const tableName = AcademicBandModel.getTableName();
 
-let CRUDAcademicBand = new CRUD(models.academic_bands);
+let CRUDAcademicBand = new CRUD(models.AcademicBand);
 
 async function initAcademicBand() {
   try {
@@ -19,7 +19,7 @@ async function initAcademicBand() {
     if (!tables.includes(tableName)) {
       await AcademicBandModel.sync({ force: false });
     }
-    CRUDAcademicBand = new CRUD(models.academic_bands);
+    CRUDAcademicBand = new CRUD(models.AcademicBand);
   } catch (err) {
     throw err;
   }

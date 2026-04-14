@@ -1,6 +1,7 @@
 "use strict";
 
-const db = require("../../models/index.model");
+const models = require("../../models/index.model");
+const db = models;
 const ScopeResolver = require("../utils/scopeResolver");
 
 const SYNC_CONCURRENCY_CAP = parseInt(
@@ -30,6 +31,8 @@ const initSync = async (req, res) => {
     const activeCount = await db.SyncSession.count({
       where: { status: "in_progress" },
     });
+
+    console.log("here");
 
     const resolver = new ScopeResolver();
     const manifest = await resolver.resolveManifest(userId, role);

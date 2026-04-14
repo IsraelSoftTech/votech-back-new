@@ -3,17 +3,17 @@ const CRUD = require("../utils/Crud");
 const catchAsync = require("../utils/catchAsync");
 const { sequelize, DataTypes } = require("../db");
 
-const tableName = models.specialties.getTableName();
+const tableName = models.Specialty.getTableName();
 
-let CRUDDepartmentClassesModel = new CRUD(models.specialties);
+let CRUDDepartmentClassesModel = new CRUD(models.Specialty);
 
 async function initDepartmentClasses() {
   try {
     const tables = await sequelize.getQueryInterface().showAllTables();
     if (!tables.includes(tableName)) {
-      await models.specialties.sync({ force: false });
+      await models.Specialty.sync({ force: false });
     }
-    CRUDDepartmentClassesModel = new CRUD(models.specialties);
+    CRUDDepartmentClassesModel = new CRUD(models.Specialty);
   } catch (err) {
     throw err;
   }

@@ -1,5 +1,5 @@
 "use strict";
-const { Model } = require("sequelize");
+const { Model, Sequelize } = require("sequelize");
 
 module.exports = (sequelize, DataTypes) => {
   class ClassSubject extends Model {
@@ -13,11 +13,11 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "subject_id",
         as: "subject",
       });
-      ClassSubject.belongsTo(models.users, {
+      ClassSubject.belongsTo(models.User, {
         foreignKey: "teacher_id",
         as: "teacher",
       });
-      ClassSubject.belongsTo(models.specialties, {
+      ClassSubject.belongsTo(models.Specialty, {
         foreignKey: "department_id",
         as: "department",
       });
@@ -27,19 +27,19 @@ module.exports = (sequelize, DataTypes) => {
   ClassSubject.init(
     {
       class_id: {
-        type: DataTypes.INTEGER,
+        type: Sequelize.DataTypes.INTEGER,
         allowNull: false,
       },
       subject_id: {
-        type: DataTypes.INTEGER,
+        type: Sequelize.DataTypes.INTEGER,
         allowNull: false,
       },
       teacher_id: {
-        type: DataTypes.INTEGER,
+        type: Sequelize.DataTypes.INTEGER,
         allowNull: false,
       },
       department_id: {
-        type: DataTypes.INTEGER,
+        type: Sequelize.DataTypes.INTEGER,
         allowNull: false,
       },
     },

@@ -2,7 +2,7 @@
 
 const { Op } = require("sequelize");
 const db = require("../../models/index.model");
-const ScopeResolver = require("../scope/scopeResolver");
+const ScopeResolver = require("../utils/scopeResolver");
 
 const BATCH_SIZE = 500;
 
@@ -44,6 +44,7 @@ module.exports = (socket, namespace) => {
 
       await streamSync(socket, session);
     } catch (err) {
+      console.log(err);
       console.error("[SyncHandler] sync:join error:", err.message);
       socket.emit("sync:error", { code: "SERVER_ERROR", message: err.message });
     }
@@ -74,10 +75,10 @@ module.exports = (socket, namespace) => {
 
 async function streamSync(socket, session) {
   const resolver = new ScopeResolver();
-  const { SCOPE_CONFIG, STRATEGY } = require("../scope/scopeConfig");
+  const { SCOPE_CONFIG, STRATEGY } = require("../utils/scopeConfig");
 
   const userId = session.user_id;
-  const user = await db.users.findOne({
+  const user = await db.User.findOne({
     where: { id: userId },
     attributes: ["role"],
   });

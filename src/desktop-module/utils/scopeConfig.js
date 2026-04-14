@@ -85,11 +85,6 @@ const SCOPE_CONFIG = {
     model: "AcademicYear",
     notes: "All roles need academic year context.",
   },
-  AcademicYearRaw: {
-    strategy: STRATEGY.PUBLIC,
-    model: "AcademicYearRaw",
-    notes: "Raw academic years table (non-Sequelize origin). All roles.",
-  },
   AcademicBand: {
     strategy: STRATEGY.PUBLIC,
     model: "AcademicBand",

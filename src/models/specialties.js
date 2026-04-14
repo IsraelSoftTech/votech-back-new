@@ -6,16 +6,16 @@ module.exports = function (sequelize, DataTypes) {
     {
       id: {
         autoIncrement: true,
-        type: DataTypes.INTEGER,
+        type: Sequelize.DataTypes.INTEGER,
         allowNull: false,
         primaryKey: true,
       },
       name: {
-        type: DataTypes.STRING(100),
+        type: Sequelize.DataTypes.STRING(100),
         allowNull: false,
       },
       abbreviation: {
-        type: DataTypes.STRING(20),
+        type: Sequelize.DataTypes.STRING(20),
         allowNull: true,
       },
     },
@@ -36,7 +36,7 @@ module.exports = function (sequelize, DataTypes) {
 
   specialties.associate = function (models) {
     specialties.belongsToMany(models.Class, {
-      through: models.specialty_classes,
+      through: models.SpecialtyClass,
       foreignKey: "specialty_id",
       otherKey: "class_id",
       as: "classes",

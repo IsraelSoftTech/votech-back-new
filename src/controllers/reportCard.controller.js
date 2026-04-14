@@ -295,7 +295,7 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
     return next(new AppError("Academic year not found", StatusCodes.NOT_FOUND));
   }
 
-  const department = await models.specialties.findByPk(departmentId);
+  const department = await models.Specialty.findByPk(departmentId);
   if (!department) {
     return next(new AppError("Department not found", StatusCodes.NOT_FOUND));
   }
@@ -308,7 +308,7 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
   const reportCardClass = await models.Class.findByPk(classId, {
     include: [
       {
-        model: models.users,
+        model: models.User,
         as: "classMaster",
         attributes: ["name", "username"],
       },
@@ -320,14 +320,14 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
     reportCardClass?.classMaster?.username ||
     "";
 
-  const marks = await models.marks.findAll({
+  const marks = await models.Mark.findAll({
     where: {
       academic_year_id: academicYearId,
       class_id: classId,
     },
     include: [
       {
-        model: models.students,
+        model: models.Student,
         as: "student",
         attributes: [
           "id",
@@ -380,7 +380,7 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
       { model: models.AcademicYear, as: "academic_year", attributes: ["name"] },
     ],
     order: [
-      [{ model: models.students, as: "student" }, "full_name", "ASC"],
+      [{ model: models.Student, as: "student" }, "full_name", "ASC"],
       [{ model: models.Subject, as: "subject" }, "code", "ASC"],
       [{ model: models.Term, as: "term" }, "order_number", "ASC"],
       [{ model: models.Sequence, as: "sequence" }, "order_number", "ASC"],
@@ -421,14 +421,14 @@ const singleReportCard = catchAsync(async (req, res, next) => {
   }
 
   // Build the full class report using the exact same query and logic as bulk
-  const marks = await models.marks.findAll({
+  const marks = await models.Mark.findAll({
     where: {
       academic_year_id: academicYearId,
       class_id: classId,
     },
     include: [
       {
-        model: models.students,
+        model: models.Student,
         as: "student",
         attributes: [
           "id",
@@ -481,7 +481,7 @@ const singleReportCard = catchAsync(async (req, res, next) => {
       { model: models.AcademicYear, as: "academic_year", attributes: ["name"] },
     ],
     order: [
-      [{ model: models.students, as: "student" }, "full_name", "ASC"],
+      [{ model: models.Student, as: "student" }, "full_name", "ASC"],
       [{ model: models.Subject, as: "subject" }, "code", "ASC"],
       [{ model: models.Term, as: "term" }, "order_number", "ASC"],
       [{ model: models.Sequence, as: "sequence" }, "order_number", "ASC"],
@@ -2503,11 +2503,11 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
 
   const termKey = await resolveTermKey(term);
 
-  const marks = await models.marks.findAll({
+  const marks = await models.Mark.findAll({
     where: { academic_year_id: academicYearId, class_id: classId },
     include: [
       {
-        model: models.students,
+        model: models.Student,
         as: "student",
         attributes: [
           "id",
@@ -2560,7 +2560,7 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
       { model: models.AcademicYear, as: "academic_year", attributes: ["name"] },
     ],
     order: [
-      [{ model: models.students, as: "student" }, "full_name", "ASC"],
+      [{ model: models.Student, as: "student" }, "full_name", "ASC"],
       [{ model: models.Subject, as: "subject" }, "code", "ASC"],
       [{ model: models.Term, as: "term" }, "order_number", "ASC"],
       [{ model: models.Sequence, as: "sequence" }, "order_number", "ASC"],
@@ -2736,11 +2736,11 @@ const bulkReportCardsHTML = catchAsync(async (req, res, next) => {
   const termKey = await resolveTermKey(term);
 
   // Fetch marks with all necessary includes
-  const marks = await models.marks.findAll({
+  const marks = await models.Mark.findAll({
     where: { academic_year_id: academicYearId, class_id: classId },
     include: [
       {
-        model: models.students,
+        model: models.Student,
         as: "student",
         attributes: [
           "id",
@@ -2793,7 +2793,7 @@ const bulkReportCardsHTML = catchAsync(async (req, res, next) => {
       { model: models.AcademicYear, as: "academic_year", attributes: ["name"] },
     ],
     order: [
-      [{ model: models.students, as: "student" }, "full_name", "ASC"],
+      [{ model: models.Student, as: "student" }, "full_name", "ASC"],
       [{ model: models.Subject, as: "subject" }, "code", "ASC"],
       [{ model: models.Term, as: "term" }, "order_number", "ASC"],
       [{ model: models.Sequence, as: "sequence" }, "order_number", "ASC"],

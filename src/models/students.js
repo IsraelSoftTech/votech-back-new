@@ -112,7 +112,7 @@ module.exports = function (sequelize, DataTypes) {
       as: "AcademicYear",
     });
 
-    Student.belongsTo(models.specialties, {
+    Student.belongsTo(models.Specialty, {
       foreignKey: "specialty_id",
       as: "specialties",
     });

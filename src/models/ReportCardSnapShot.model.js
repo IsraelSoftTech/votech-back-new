@@ -4,7 +4,7 @@ const { Model, DataTypes } = require("sequelize");
 module.exports = (sequelize) => {
   class ReportCardSnapshot extends Model {
     static associate(models) {
-      ReportCardSnapshot.belongsTo(models.students, {
+      ReportCardSnapshot.belongsTo(models.Student, {
         foreignKey: "student_id",
       });
       ReportCardSnapshot.belongsTo(models.AcademicYear, {
@@ -13,7 +13,7 @@ module.exports = (sequelize) => {
       ReportCardSnapshot.belongsTo(models.Sequence, {
         foreignKey: "sequence_id",
       });
-      ReportCardSnapshot.belongsTo(models.users, {
+      ReportCardSnapshot.belongsTo(models.User, {
         foreignKey: "generated_by",
       });
     }

@@ -1,7 +1,6 @@
 "use strict";
 
 const { QueryTypes } = require("sequelize");
-const { sequelize } = require("../../models/index.model");
 const {
   ROLES,
   ADMIN_ROLES,
@@ -10,6 +9,9 @@ const {
   FILTER_TYPE,
   SCOPE_CONFIG,
 } = require("./scopeConfig");
+
+const models = require("../../models/index.model");
+const { sequelize } = require("../../models/index");
 
 class ScopeResolver {
   async _resolveClassScope(userId) {
@@ -407,40 +409,55 @@ class ScopeResolver {
 
     const isFullAdmin = FULL_ADMIN_ROLES.includes(role);
     const isAdminRole = ADMIN_ROLES.includes(role);
-    const manifest = {};
 
-    for (const [key, config] of Object.entries(SCOPE_CONFIG)) {
-      try {
-        if (config.strategy === STRATEGY.NEVER) continue;
+    const entries = Object.entries(SCOPE_CONFIG).filter(([, config]) => {
+      if (config.strategy === STRATEGY.NEVER) return false;
+      if (config.model && !models[config.model]) return false;
+      if (
+        config.strategy === STRATEGY.FULL_FOR_ROLES &&
+        !config.allowedRoles.includes(role)
+      )
+        return false;
+      return true;
+    });
+
+    const results = await Promise.allSettled(
+      entries.map(async ([key, config]) => {
+        let count = 0;
 
         if (config.strategy === STRATEGY.PUBLIC) {
-          manifest[key] = await sequelize.models[config.model].count();
-          continue;
+          count = await models[config.model].count();
+        } else if (config.strategy === STRATEGY.FULL_FOR_ROLES) {
+          count = await models[config.model].count();
+        } else if (config.strategy === STRATEGY.OWNED) {
+          count =
+            (await this._countOwned(
+              key,
+              config,
+              userId,
+              role,
+              classIds,
+              subjectIds,
+              isFullAdmin,
+              isAdminRole
+            )) || 0;
         }
 
-        if (config.strategy === STRATEGY.FULL_FOR_ROLES) {
-          if (!config.allowedRoles.includes(role)) continue;
-          manifest[key] = await sequelize.models[config.model].count();
-          continue;
-        }
+        return { key, count };
+      })
+    );
 
-        if (config.strategy === STRATEGY.OWNED) {
-          const count = await this._countOwned(
-            key,
-            config,
-            userId,
-            role,
-            classIds,
-            subjectIds,
-            isFullAdmin,
-            isAdminRole
-          );
-          if (count !== null) manifest[key] = count;
-        }
-      } catch (err) {
+    const manifest = {};
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        manifest[result.value.key] = result.value.count;
+      } else {
+        // Find which key failed
+        const idx = results.indexOf(result);
+        const key = entries[idx][0];
         console.error(
-          `[ScopeResolver] Manifest count failed for "${key}":`,
-          err.message
+          `[ScopeResolver] Manifest failed for "${key}":`,
+          result.reason?.message
         );
         manifest[key] = 0;
       }
@@ -460,7 +477,7 @@ class ScopeResolver {
     isAdminRole
   ) {
     const { Op } = require("sequelize");
-    const m = (name) => sequelize.models[name];
+    const m = (name) => models[name];
 
     if (key === "User") {
       return m("User").count();
@@ -481,6 +498,7 @@ class ScopeResolver {
         include: [
           {
             model: m("SpecialtyClass"),
+            as: "specialtyClasses",
             where: { classId: { [Op.in]: classIds } },
             required: true,
           },
@@ -492,7 +510,12 @@ class ScopeResolver {
     if (key === "Group") {
       return m("Group").count({
         include: [
-          { model: m("GroupParticipant"), where: { userId }, required: true },
+          {
+            model: m("GroupParticipant"),
+            as: "participants",
+            where: { userId },
+            required: true,
+          },
         ],
         distinct: true,
       });
@@ -534,6 +557,7 @@ class ScopeResolver {
         include: [
           {
             model: m("AttendanceSession"),
+            as: "session",
             where: { classId: { [Op.in]: classIds } },
             required: true,
           },
@@ -548,6 +572,7 @@ class ScopeResolver {
         include: [
           {
             model: m("Student"),
+            as: "student",
             where: { classId: { [Op.in]: classIds } },
             required: true,
           },
@@ -625,17 +650,17 @@ class ScopeResolver {
 
     // PUBLIC
     if (config.strategy === STRATEGY.PUBLIC) {
-      return sequelize.models[config.model].findAll({ ...paginate, raw: true });
+      return models[config.model].findAll({ ...paginate, raw: true });
     }
 
     // FULL FOR ROLES
     if (config.strategy === STRATEGY.FULL_FOR_ROLES) {
       if (!config.allowedRoles.includes(role)) return [];
-      return sequelize.models[config.model].findAll({ ...paginate, raw: true });
+      return models[config.model].findAll({ ...paginate, raw: true });
     }
 
     // OWNED — special cases
-    const m = (name) => sequelize.models[name];
+    const m = (name) => models[name];
 
     if (tableKey === "User") {
       const rows = await m("User").findAll({
@@ -662,6 +687,7 @@ class ScopeResolver {
         include: [
           {
             model: m("SpecialtyClass"),
+            as: "specialtyClasses",
             where: { classId: { [Op.in]: classIds } },
             required: true,
           },
@@ -675,7 +701,12 @@ class ScopeResolver {
     if (tableKey === "Group") {
       return m("Group").findAll({
         include: [
-          { model: m("GroupParticipant"), where: { userId }, required: true },
+          {
+            model: m("GroupParticipant"),
+            as: "participants",
+            where: { userId },
+            required: true,
+          },
         ],
         ...paginate,
         distinct: true,
@@ -724,6 +755,7 @@ class ScopeResolver {
         include: [
           {
             model: m("AttendanceSession"),
+            as: "session",
             where: { classId: { [Op.in]: classIds } },
             required: true,
           },
@@ -740,6 +772,7 @@ class ScopeResolver {
         include: [
           {
             model: m("Student"),
+            as: "student",
             where: { classId: { [Op.in]: classIds } },
             required: true,
           },

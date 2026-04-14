@@ -195,11 +195,9 @@ const generateIDCardHTML = (student, schoolInfo) => {
 const generateClassIDCards = catchAsync(async (req, res, next) => {
   const { classId } = req.params;
 
-  const students = await models.students.findAll({
+  const students = await models.Student.findAll({
     where: { class_id: classId },
-    include: [
-      { model: models.classes, as: "class", attributes: ["id", "name"] },
-    ],
+    include: [{ model: models.Class, as: "class", attributes: ["id", "name"] }],
     order: [["full_name", "ASC"]],
   });
 

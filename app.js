@@ -19,6 +19,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://192.168.0.100:3000",
   "http://192.168.56.1:3000",
+  "http://localhost:5173",
 ];
 
 const corsOptions = {
@@ -65,6 +66,7 @@ const corsOptions = {
     "Accept",
     "Origin",
     "sync-key",
+    "x-device-token",
   ],
   exposedHeaders: ["Content-Range", "X-Content-Range"],
   maxAge: 86400,

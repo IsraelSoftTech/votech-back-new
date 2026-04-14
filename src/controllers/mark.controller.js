@@ -8,7 +8,7 @@ const CRUD = require("../utils/Crud");
 const appResponder = require("../utils/appResponder");
 const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
 
-const MarksModel = models.marks;
+const MarksModel = models.Mark;
 const TermsModel = models.Term;
 const SequencesModel = models.Sequence;
 

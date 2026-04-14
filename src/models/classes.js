@@ -11,13 +11,13 @@ module.exports = (sequelize) => {
       });
 
       // Class → Department (Specialty)
-      Class.belongsTo(models.specialties, {
+      Class.belongsTo(models.Specialty, {
         foreignKey: "department_id",
         as: "department",
       });
 
       // Class → Class Master (User)
-      Class.belongsTo(models.users, {
+      Class.belongsTo(models.User, {
         foreignKey: "class_master_id",
         as: "classMaster",
       });

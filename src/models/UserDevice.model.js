@@ -4,13 +4,13 @@ const { Model } = require("sequelize");
 module.exports = (sequelize, DataTypes) => {
   class UserDevice extends Model {
     static associate(models) {
-      UserDevice.belongsTo(models.users, {
+      UserDevice.belongsTo(models.User, {
         foreignKey: "user_id",
         as: "user",
       });
 
       // The admin who approved the unbind
-      UserDevice.belongsTo(models.users, {
+      UserDevice.belongsTo(models.User, {
         foreignKey: "unbound_by",
         as: "unboundByUser",
       });

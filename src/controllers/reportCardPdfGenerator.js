@@ -1352,11 +1352,11 @@ function termKeyToLabel(k) {
 }
 
 async function fetchMarksWithIncludes(academicYearId, classId) {
-  return models.marks.findAll({
+  return models.Mark.findAll({
     where: { academic_year_id: academicYearId, class_id: classId },
     include: [
       {
-        model: models.students,
+        model: models.Student,
         as: "student",
         attributes: [
           "id",
@@ -1373,7 +1373,7 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
             attributes: ["name"],
             include: [
               {
-                model: models.specialties,
+                model: models.Specialty,
                 as: "department",
                 attributes: ["name"],
               },
@@ -1392,7 +1392,7 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
             attributes: ["id", "class_id"],
             include: [
               {
-                model: models.users,
+                model: models.User,
                 as: "teacher",
                 attributes: ["id", "name", "username"],
               },
@@ -1409,7 +1409,7 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
       { model: models.AcademicYear, as: "academic_year", attributes: ["name"] },
     ],
     order: [
-      [{ model: models.students, as: "student" }, "full_name", "ASC"],
+      [{ model: models.Student, as: "student" }, "full_name", "ASC"],
       [{ model: models.Subject, as: "subject" }, "code", "ASC"],
       [{ model: models.Term, as: "term" }, "order_number", "ASC"],
       [{ model: models.Sequence, as: "sequence" }, "order_number", "ASC"],
@@ -1440,11 +1440,11 @@ const bulkPdfDirect = catchAsync(async (req, res, next) => {
   // ── Fetch everything in parallel ──
   const [academicYear, department, studentClass, termKey] = await Promise.all([
     models.AcademicYear.findByPk(academicYearId),
-    models.specialties.findByPk(departmentId),
+    models.Specialty.findByPk(departmentId),
     models.Class.findByPk(classId, {
       include: [
         {
-          model: models.users,
+          model: models.User,
           as: "classMaster",
           attributes: ["name", "username"],
         },
@@ -1535,11 +1535,11 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
 
   const [academicYear, department, studentClass, termKey] = await Promise.all([
     models.AcademicYear.findByPk(academicYearId),
-    models.specialties.findByPk(departmentId),
+    models.Specialty.findByPk(departmentId),
     models.Class.findByPk(classId, {
       include: [
         {
-          model: models.users,
+          model: models.User,
           as: "classMaster",
           attributes: ["name", "username"],
         },

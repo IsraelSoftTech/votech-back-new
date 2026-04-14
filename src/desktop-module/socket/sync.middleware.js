@@ -1,7 +1,15 @@
-"use strict";
-
+const models = require("../../models/index.model");
 const jwt = require("jsonwebtoken");
-const { pool } = require("../../../routes/utils");
+const {
+  pool,
+  authenticateToken,
+  logUserActivity,
+  createUserSession,
+  endUserSession,
+  getIpAddress,
+  getUserAgent,
+  JWT_SECRET,
+} = require("../../../routes/utils");
 
 module.exports = async (socket, next) => {
   try {
@@ -13,18 +21,23 @@ module.exports = async (socket, next) => {
 
     let decoded;
     try {
-      decoded = jwt.verify(sessionToken, process.env.JWT_SECRET);
+      decoded = jwt.verify(sessionToken, JWT_SECRET);
+      console.log(decoded);
     } catch (err) {
+      console.log(err);
       return next(new Error("AUTH_INVALID_TOKEN"));
     }
 
-    const { rows } = await pool.query(
-      `SELECT id, user_id, status FROM user_devices
-       WHERE device_token = $1 AND user_id = $2 AND status = 'bound'`,
-      [deviceToken, decoded.id]
-    );
+    const device = await models.UserDevice.findOne({
+      where: {
+        user_id: decoded.id,
+        device_status: "bound",
+      },
+    });
 
-    if (!rows.length) {
+    // console.log(device);
+
+    if (!device) {
       return next(new Error("AUTH_DEVICE_MISMATCH"));
     }
 
@@ -34,6 +47,7 @@ module.exports = async (socket, next) => {
 
     next();
   } catch (err) {
+    // console.log(err);
     console.error("[SyncMiddleware] Unexpected error:", err.message);
     next(new Error("AUTH_ERROR"));
   }
