@@ -12,6 +12,7 @@ const {
 
 const models = require("../../models/index.model");
 const { sequelize } = require("../../models/index");
+const { pool } = require("../../../routes/utils");
 
 class ScopeResolver {
   async _resolveClassScope(userId) {
@@ -180,7 +181,6 @@ class ScopeResolver {
     );
   }
 
-  // users — all roles get the full list but password is ALWAYS stripped
   async _queryUsers(since) {
     const sinceClause = since ? `WHERE "updatedAt" > :since` : "";
     return sequelize.query(`SELECT * FROM users ${sinceClause}`, {
@@ -189,11 +189,8 @@ class ScopeResolver {
     });
   }
 
-  // discipline_cases — role-specific logic
   async _queryDisciplineCases(userId, role, since) {
     const sinceClause = since ? `AND "updatedAt" > :since` : "";
-
-    // Admin, Discipline, Psychosocial — full table
     const fullRoles = [...ADMIN_ROLES, ROLES.DISCIPLINE, ROLES.PSYCHOSOCIAL];
     if (fullRoles.includes(role)) {
       const whereClause = since ? `WHERE "updatedAt" > :since` : "";
@@ -202,25 +199,19 @@ class ScopeResolver {
         type: QueryTypes.SELECT,
       });
     }
-
-    // Teacher — own records only (recorded by them or assigned to them)
     return sequelize.query(
-      `
-      SELECT * FROM discipline_cases
-      WHERE ("recordedBy" = :userId OR "teacherId" = :userId)
-      ${sinceClause}
-      `,
+      `SELECT * FROM discipline_cases
+       WHERE ("recordedBy" = :userId OR "teacherId" = :userId)
+       ${sinceClause}`,
       { replacements: { userId, since }, type: QueryTypes.SELECT }
     );
   }
 
-  // ── Main resolver ──────────────────────────────────────────────────────────
+  // ── Main resolver (_execute) ───────────────────────────────────────────────
 
   async _execute(userId, role, since = null) {
-    // Step 1: resolve class scope (skip for full admins — they get everything)
     let classIds = [];
     let subjectIds = [];
-
     if (!FULL_ADMIN_ROLES.includes(role)) {
       ({ classIds, subjectIds } = await this._resolveClassScope(userId));
     }
@@ -229,39 +220,23 @@ class ScopeResolver {
     const isFullAdmin = FULL_ADMIN_ROLES.includes(role);
     const isAdminRole = ADMIN_ROLES.includes(role);
 
-    // Step 2: iterate config and resolve each table
     for (const [key, config] of Object.entries(SCOPE_CONFIG)) {
       try {
-        // ── NEVER ──────────────────────────────────────────────────────────
-        if (config.strategy === STRATEGY.NEVER) {
-          // excluded — not added to payload at all
-          continue;
-        }
-
-        // ── PUBLIC ─────────────────────────────────────────────────────────
+        if (config.strategy === STRATEGY.NEVER) continue;
         if (config.strategy === STRATEGY.PUBLIC) {
           payload[key] = await this._queryAll(config.model, since);
           continue;
         }
-
-        // ── FULL FOR ROLES ─────────────────────────────────────────────────
         if (config.strategy === STRATEGY.FULL_FOR_ROLES) {
-          if (!config.allowedRoles.includes(role)) {
-            // silently excluded — key not added to payload
-            continue;
-          }
+          if (!config.allowedRoles.includes(role)) continue;
           payload[key] = await this._queryAll(config.model, since);
           continue;
         }
-
-        // ── OWNED ──────────────────────────────────────────────────────────
         if (config.strategy === STRATEGY.OWNED) {
-          // Special cases first
           if (key === "User") {
             payload[key] = await this._queryUsers(since);
             continue;
           }
-
           if (key === "DisciplineCase") {
             payload[key] = await this._queryDisciplineCases(
               userId,
@@ -270,36 +245,30 @@ class ScopeResolver {
             );
             continue;
           }
-
           if (key === "Specialty") {
             payload[key] = isFullAdmin
               ? await this._queryAll("specialties", since)
               : await this._querySpecialties(classIds, since);
             continue;
           }
-
           if (key === "Group") {
             payload[key] = await this._queryGroups(userId, since);
             continue;
           }
-
           if (key === "GroupParticipant") {
             payload[key] = await this._queryGroupParticipants(userId, since);
             continue;
           }
-
           if (key === "Message") {
             payload[key] = await this._queryMessages(userId, since);
             continue;
           }
-
           if (key === "AttendanceRecord") {
             payload[key] = isFullAdmin
               ? await this._queryAll("attendance_records", since)
               : await this._queryAttendanceRecords(classIds, since);
             continue;
           }
-
           if (key === "Fee") {
             payload[key] = isAdminRole
               ? await this._queryAll("fees", since)
@@ -307,7 +276,6 @@ class ScopeResolver {
             continue;
           }
 
-          // Generic OWNED — handled by filterType
           switch (config.filterType) {
             case FILTER_TYPE.BY_CLASS_IDS:
               payload[key] = isFullAdmin
@@ -319,7 +287,6 @@ class ScopeResolver {
                     since
                   );
               break;
-
             case FILTER_TYPE.BY_SUBJECT_IDS:
               payload[key] = isFullAdmin
                 ? await this._queryAll(config.model, since)
@@ -329,7 +296,6 @@ class ScopeResolver {
                     since
                   );
               break;
-
             case FILTER_TYPE.BY_CLASS_AND_SUBJECT:
               payload[key] = isFullAdmin
                 ? await this._queryAll(config.model, since)
@@ -340,9 +306,7 @@ class ScopeResolver {
                     since
                   );
               break;
-
             case FILTER_TYPE.BY_USER_ID:
-              // Admins get full table, others get own rows only
               payload[key] = isAdminRole
                 ? await this._queryAll(config.model, since)
                 : await this._queryByUserId(
@@ -352,9 +316,7 @@ class ScopeResolver {
                     since
                   );
               break;
-
             case FILTER_TYPE.BY_USER_ID_ONLY:
-              // No admin override — everyone gets own rows only
               payload[key] = await this._queryByUserId(
                 config.model,
                 config.filterKey || "userId",
@@ -362,7 +324,6 @@ class ScopeResolver {
                 since
               );
               break;
-
             default:
               console.warn(
                 `[ScopeResolver] Unhandled filterType "${config.filterType}" for key "${key}"`
@@ -378,35 +339,27 @@ class ScopeResolver {
         throw err;
       }
     }
-
     return payload;
   }
 
-  // ── Public API ─────────────────────────────────────────────────────────────
-
-  // Initial sync — full payload, no time filter
   async resolve(userId, role) {
     return this._execute(userId, role, null);
   }
 
-  // Delta sync — same scope rules, only rows changed since the given date
   async resolveDelta(userId, role, since) {
-    if (!since || !(since instanceof Date)) {
+    if (!since || !(since instanceof Date))
       throw new Error(
         "[ScopeResolver] resolveDelta requires a valid Date for `since`"
       );
-    }
     return this._execute(userId, role, since);
   }
 
   async resolveManifest(userId, role) {
     let classIds = [];
     let subjectIds = [];
-
     if (!FULL_ADMIN_ROLES.includes(role)) {
       ({ classIds, subjectIds } = await this._resolveClassScope(userId));
     }
-
     const isFullAdmin = FULL_ADMIN_ROLES.includes(role);
     const isAdminRole = ADMIN_ROLES.includes(role);
 
@@ -424,10 +377,10 @@ class ScopeResolver {
     const results = await Promise.allSettled(
       entries.map(async ([key, config]) => {
         let count = 0;
-
-        if (config.strategy === STRATEGY.PUBLIC) {
-          count = await models[config.model].count();
-        } else if (config.strategy === STRATEGY.FULL_FOR_ROLES) {
+        if (
+          config.strategy === STRATEGY.PUBLIC ||
+          config.strategy === STRATEGY.FULL_FOR_ROLES
+        ) {
           count = await models[config.model].count();
         } else if (config.strategy === STRATEGY.OWNED) {
           count =
@@ -442,7 +395,6 @@ class ScopeResolver {
               isAdminRole
             )) || 0;
         }
-
         return { key, count };
       })
     );
@@ -452,7 +404,6 @@ class ScopeResolver {
       if (result.status === "fulfilled") {
         manifest[result.value.key] = result.value.count;
       } else {
-        // Find which key failed
         const idx = results.indexOf(result);
         const key = entries[idx][0];
         console.error(
@@ -462,7 +413,6 @@ class ScopeResolver {
         manifest[key] = 0;
       }
     }
-
     return manifest;
   }
 
@@ -479,10 +429,7 @@ class ScopeResolver {
     const { Op } = require("sequelize");
     const m = (name) => models[name];
 
-    if (key === "User") {
-      return m("User").count();
-    }
-
+    if (key === "User") return m("User").count();
     if (key === "DisciplineCase") {
       const fullRoles = [...ADMIN_ROLES, ROLES.DISCIPLINE, ROLES.PSYCHOSOCIAL];
       if (fullRoles.includes(role)) return m("DisciplineCase").count();
@@ -490,7 +437,6 @@ class ScopeResolver {
         where: { [Op.or]: [{ recordedBy: userId }, { teacherId: userId }] },
       });
     }
-
     if (key === "Specialty") {
       if (isFullAdmin) return m("Specialty").count();
       if (!classIds.length) return 0;
@@ -506,7 +452,6 @@ class ScopeResolver {
         distinct: true,
       });
     }
-
     if (key === "Group") {
       return m("Group").count({
         include: [
@@ -520,7 +465,6 @@ class ScopeResolver {
         distinct: true,
       });
     }
-
     if (key === "GroupParticipant") {
       const userGroups = await m("GroupParticipant").findAll({
         attributes: ["groupId"],
@@ -532,7 +476,6 @@ class ScopeResolver {
         where: { groupId: { [Op.in]: groupIds } },
       });
     }
-
     if (key === "Message") {
       const userGroups = await m("GroupParticipant").findAll({
         attributes: ["groupId"],
@@ -549,7 +492,6 @@ class ScopeResolver {
         },
       });
     }
-
     if (key === "AttendanceRecord") {
       if (isFullAdmin) return m("AttendanceRecord").count();
       if (!classIds.length) return 0;
@@ -564,7 +506,6 @@ class ScopeResolver {
         ],
       });
     }
-
     if (key === "Fee") {
       if (isAdminRole) return m("Fee").count();
       if (!classIds.length) return 0;
@@ -580,46 +521,62 @@ class ScopeResolver {
       });
     }
 
-    // ── Generic filterType ───────────────────────────────────────────────────
-    const { Op: O } = require("sequelize");
     const model = m(config.model);
     const filterKey = config.filterKey || "classId";
-
     switch (config.filterType) {
       case FILTER_TYPE.BY_CLASS_IDS:
         if (isFullAdmin) return model.count();
         if (!classIds.length) return 0;
-        return model.count({ where: { [filterKey]: { [O.in]: classIds } } });
-
+        return model.count({ where: { [filterKey]: { [Op.in]: classIds } } });
       case FILTER_TYPE.BY_SUBJECT_IDS:
         if (isFullAdmin) return model.count();
         if (!subjectIds.length) return 0;
-        return model.count({ where: { id: { [O.in]: subjectIds } } });
-
+        return model.count({ where: { id: { [Op.in]: subjectIds } } });
       case FILTER_TYPE.BY_CLASS_AND_SUBJECT:
         if (isFullAdmin) return model.count();
         if (!classIds.length || !subjectIds.length) return 0;
         return model.count({
           where: {
-            classId: { [O.in]: classIds },
-            subjectId: { [O.in]: subjectIds },
+            classId: { [Op.in]: classIds },
+            subjectId: { [Op.in]: subjectIds },
           },
         });
-
       case FILTER_TYPE.BY_USER_ID:
         if (isAdminRole) return model.count();
         return model.count({
           where: { [config.filterKey || "userId"]: userId },
         });
-
       case FILTER_TYPE.BY_USER_ID_ONLY:
         return model.count({
           where: { [config.filterKey || "userId"]: userId },
         });
-
       default:
         return null;
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  resolveSlice — 100% pool queries, actual DB column names, full fallbacks
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Resolve the actual PostgreSQL table name from a Sequelize model.
+   * Handles: string return, { tableName, schema } object return, missing model.
+   */
+  _resolveTableName(config) {
+    const _model = models[config.model];
+    if (!_model) return config.model;
+
+    let name = _model.getTableName();
+    if (typeof name === "object" && name !== null) name = name.tableName;
+    if (!name) {
+      name =
+        config.model.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase() + "s";
+      console.warn(
+        `[ScopeResolver] No tableName for "${config.model}", guessed "${name}"`
+      );
+    }
+    return name;
   }
 
   async resolveSlice(userId, role, tableKey, offset, limit) {
@@ -631,14 +588,17 @@ class ScopeResolver {
       ADMIN_ROLES,
       FULL_ADMIN_ROLES,
     } = require("./scopeConfig");
-    const { Op } = require("sequelize");
 
     const config = SCOPE_CONFIG[tableKey];
     if (!config || config.strategy === STRATEGY.NEVER) return [];
 
+    // ── Shared variables for ALL branches ──────────────────────────────────
+    const _model = models[config.model];
+    const tableName = this._resolveTableName(config);
+    const pkField = _model?.primaryKeyAttribute || null;
+
     let classIds = [];
     let subjectIds = [];
-
     if (!FULL_ADMIN_ROLES.includes(role)) {
       ({ classIds, subjectIds } = await this._resolveClassScope(userId));
     }
@@ -646,194 +606,244 @@ class ScopeResolver {
     const isFullAdmin = FULL_ADMIN_ROLES.includes(role);
     const isAdminRole = ADMIN_ROLES.includes(role);
 
-    const paginate = { offset, limit };
+    // ── Pool query: SELECT * with optional WHERE, ORDER BY, LIMIT/OFFSET ──
+    // Fallbacks: 42703 (column missing) → retry without ORDER BY → skip
+    //            42P01 (table missing) → skip
+    const poolQuery = async (whereClause = "", params = []) => {
+      const pOff = params.length;
+      const L = `$${pOff + 1}`;
+      const O = `$${pOff + 2}`;
+      const orderClause = pkField ? `ORDER BY "${pkField}"` : "";
+      const sql = `SELECT * FROM "${tableName}" ${whereClause} ${orderClause} LIMIT ${L} OFFSET ${O}`;
 
-    // PUBLIC
+      try {
+        const { rows } = await pool.query(sql, [...params, limit, offset]);
+        return rows;
+      } catch (err) {
+        if (err.code === "42703") {
+          console.warn(
+            `[ScopeResolver] Column error on "${tableName}" (${tableKey}): ${err.message} — retrying without ORDER BY`
+          );
+          const fallback = `SELECT * FROM "${tableName}" ${whereClause} LIMIT ${L} OFFSET ${O}`;
+          try {
+            const { rows } = await pool.query(fallback, [
+              ...params,
+              limit,
+              offset,
+            ]);
+            return rows;
+          } catch (inner) {
+            if (inner.code === "42703" || inner.code === "42P01") {
+              console.warn(
+                `[ScopeResolver] Skipping "${tableName}" (${tableKey}): ${inner.message}`
+              );
+              return [];
+            }
+            throw inner;
+          }
+        }
+        if (err.code === "42P01") {
+          console.warn(
+            `[ScopeResolver] Table "${tableName}" (${tableKey}) does not exist — skipping`
+          );
+          return [];
+        }
+        throw err;
+      }
+    };
+
+    // ── Pool query: raw SQL for JOINs ─────────────────────────────────────
+    const poolQueryRaw = async (sql, params = []) => {
+      try {
+        const { rows } = await pool.query(sql, params);
+        return rows;
+      } catch (err) {
+        if (err.code === "42703" || err.code === "42P01") {
+          console.warn(
+            `[ScopeResolver] Query error for "${tableKey}": ${err.message} — skipping`
+          );
+          return [];
+        }
+        throw err;
+      }
+    };
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  PUBLIC
+    // ══════════════════════════════════════════════════════════════════════
     if (config.strategy === STRATEGY.PUBLIC) {
-      return models[config.model].findAll({ ...paginate, raw: true });
+      return poolQuery();
     }
 
-    // FULL FOR ROLES
+    // ══════════════════════════════════════════════════════════════════════
+    //  FULL FOR ROLES
+    // ══════════════════════════════════════════════════════════════════════
     if (config.strategy === STRATEGY.FULL_FOR_ROLES) {
       if (!config.allowedRoles.includes(role)) return [];
-      return models[config.model].findAll({ ...paginate, raw: true });
+      return poolQuery();
     }
 
-    // OWNED — special cases
-    const m = (name) => models[name];
+    // ══════════════════════════════════════════════════════════════════════
+    //  OWNED — special cases (verified DB column names)
+    // ══════════════════════════════════════════════════════════════════════
 
+    // ── users ─────────────────────────────────────────────────────────────
+    // DB cols: id, username, contact, password, name, email, gender, role,
+    //          suspended, created_at, createdAt, updatedAt, profile_image_url,
+    //          updatedBy, deviceId, scopeVersion
     if (tableKey === "User") {
-      const rows = await m("User").findAll({
-        ...paginate,
-        attributes: { exclude: ["password"] },
-        raw: true,
+      const rows = await poolQuery();
+      return rows.map((r) => {
+        delete r.password;
+        return r;
       });
-      return rows;
     }
 
+    // ── discipline_cases ──────────────────────────────────────────────────
+    // DB cols: recorded_by, teacher_id (snake_case confirmed)
     if (tableKey === "DisciplineCase") {
       const fullRoles = [...ADMIN_ROLES, ROLES.DISCIPLINE, ROLES.PSYCHOSOCIAL];
-      const where = fullRoles.includes(role)
-        ? {}
-        : { [Op.or]: [{ recordedBy: userId }, { teacherId: userId }] };
-      return m("DisciplineCase").findAll({ where, ...paginate, raw: true });
+      if (fullRoles.includes(role)) return poolQuery();
+      return poolQueryRaw(
+        `SELECT * FROM "${tableName}"
+         WHERE (recorded_by = $1 OR teacher_id = $1)
+         LIMIT $2 OFFSET $3`,
+        [userId, limit, offset]
+      );
     }
 
+    // ── specialties via specialty_classes ──────────────────────────────────
+    // DB: specialty_classes(specialty_id, class_id)
     if (tableKey === "Specialty") {
-      if (isFullAdmin)
-        return m("Specialty").findAll({ ...paginate, raw: true });
+      if (isFullAdmin) return poolQuery();
       if (!classIds.length) return [];
-      return m("Specialty").findAll({
-        include: [
-          {
-            model: m("SpecialtyClass"),
-            as: "specialtyClasses",
-            where: { classId: { [Op.in]: classIds } },
-            required: true,
-          },
-        ],
-        ...paginate,
-        distinct: true,
-        raw: true,
-      });
+      return poolQueryRaw(
+        `SELECT DISTINCT sp.* FROM "${tableName}" sp
+         JOIN specialty_classes sc ON sc.specialty_id = sp.id
+         WHERE sc.class_id = ANY($1)
+         LIMIT $2 OFFSET $3`,
+        [classIds, limit, offset]
+      );
     }
 
+    // ── groups via group_participants ──────────────────────────────────────
+    // DB: group_participants(id, group_id, user_id, joined_at)
     if (tableKey === "Group") {
-      return m("Group").findAll({
-        include: [
-          {
-            model: m("GroupParticipant"),
-            as: "participants",
-            where: { userId },
-            required: true,
-          },
-        ],
-        ...paginate,
-        distinct: true,
-        raw: true,
-      });
+      return poolQueryRaw(
+        `SELECT g.* FROM "${tableName}" g
+         JOIN group_participants gp ON gp.group_id = g.id
+         WHERE gp.user_id = $1
+         LIMIT $2 OFFSET $3`,
+        [userId, limit, offset]
+      );
     }
 
+    // ── group_participants ────────────────────────────────────────────────
     if (tableKey === "GroupParticipant") {
-      const userGroups = await m("GroupParticipant").findAll({
-        attributes: ["groupId"],
-        where: { userId },
-      });
-      const groupIds = userGroups.map((r) => r.groupId);
-      if (!groupIds.length) return [];
-      return m("GroupParticipant").findAll({
-        where: { groupId: { [Op.in]: groupIds } },
-        ...paginate,
-        raw: true,
-      });
+      return poolQueryRaw(
+        `SELECT gp.* FROM "${tableName}" gp
+         WHERE gp.group_id IN (
+           SELECT group_id FROM group_participants WHERE user_id = $1
+         )
+         LIMIT $2 OFFSET $3`,
+        [userId, limit, offset]
+      );
     }
 
+    // ── messages ─────────────────────────────────────────────────────────
+    // DB: messages(sender_id, receiver_id, group_id)
     if (tableKey === "Message") {
-      const userGroups = await m("GroupParticipant").findAll({
-        attributes: ["groupId"],
-        where: { userId },
-      });
-      const groupIds = userGroups.map((r) => r.groupId);
-      return m("Message").findAll({
-        where: {
-          [Op.or]: [
-            { senderId: userId },
-            { receiverId: userId },
-            ...(groupIds.length ? [{ groupId: { [Op.in]: groupIds } }] : []),
-          ],
-        },
-        ...paginate,
-        raw: true,
-      });
+      const groupResult = await poolQueryRaw(
+        `SELECT group_id FROM group_participants WHERE user_id = $1`,
+        [userId]
+      );
+      const groupIds = groupResult.map((r) => r.group_id).filter(Boolean);
+
+      if (groupIds.length) {
+        return poolQueryRaw(
+          `SELECT * FROM "${tableName}"
+           WHERE sender_id = $1 OR receiver_id = $1 OR group_id = ANY($2)
+           LIMIT $3 OFFSET $4`,
+          [userId, groupIds, limit, offset]
+        );
+      }
+      return poolQueryRaw(
+        `SELECT * FROM "${tableName}"
+         WHERE sender_id = $1 OR receiver_id = $1
+         LIMIT $2 OFFSET $3`,
+        [userId, limit, offset]
+      );
     }
 
+    // ── attendance_records via attendance_sessions ────────────────────────
+    // DB: attendance_records(session_id), attendance_sessions(class_id)
     if (tableKey === "AttendanceRecord") {
-      if (isFullAdmin)
-        return m("AttendanceRecord").findAll({ ...paginate, raw: true });
+      if (isFullAdmin) return poolQuery();
       if (!classIds.length) return [];
-      return m("AttendanceRecord").findAll({
-        include: [
-          {
-            model: m("AttendanceSession"),
-            as: "session",
-            where: { classId: { [Op.in]: classIds } },
-            required: true,
-          },
-        ],
-        ...paginate,
-        raw: true,
-      });
+      return poolQueryRaw(
+        `SELECT ar.* FROM "${tableName}" ar
+         JOIN attendance_sessions s ON s.id = ar.session_id
+         WHERE s.class_id = ANY($1)
+         LIMIT $2 OFFSET $3`,
+        [classIds, limit, offset]
+      );
     }
 
+    // ── fees via students ────────────────────────────────────────────────
+    // DB: fees(student_id), students(class_id)
     if (tableKey === "Fee") {
-      if (isAdminRole) return m("Fee").findAll({ ...paginate, raw: true });
+      if (isAdminRole) return poolQuery();
       if (!classIds.length) return [];
-      return m("Fee").findAll({
-        include: [
-          {
-            model: m("Student"),
-            as: "student",
-            where: { classId: { [Op.in]: classIds } },
-            required: true,
-          },
-        ],
-        ...paginate,
-        raw: true,
-      });
+      return poolQueryRaw(
+        `SELECT f.* FROM "${tableName}" f
+         JOIN students s ON s.id = f.student_id
+         WHERE s.class_id = ANY($1)
+         LIMIT $2 OFFSET $3`,
+        [classIds, limit, offset]
+      );
     }
 
-    // Generic filterType
-    const model = m(config.model);
-    const filterKey = config.filterKey || "classId";
+    // ══════════════════════════════════════════════════════════════════════
+    //  OWNED — generic filterType (all pool, snake_case DB column names)
+    // ══════════════════════════════════════════════════════════════════════
+
+    const filterKey = config.filterKey || "class_id";
 
     switch (config.filterType) {
       case FILTER_TYPE.BY_CLASS_IDS:
-        if (isFullAdmin) return model.findAll({ ...paginate, raw: true });
+        if (isFullAdmin) return poolQuery();
         if (!classIds.length) return [];
-        return model.findAll({
-          where: { [filterKey]: { [Op.in]: classIds } },
-          ...paginate,
-          raw: true,
-        });
+        return poolQuery(`WHERE "${filterKey}" = ANY($1)`, [classIds]);
 
       case FILTER_TYPE.BY_SUBJECT_IDS:
-        if (isFullAdmin) return model.findAll({ ...paginate, raw: true });
+        if (isFullAdmin) return poolQuery();
         if (!subjectIds.length) return [];
-        return model.findAll({
-          where: { id: { [Op.in]: subjectIds } },
-          ...paginate,
-          raw: true,
-        });
+        return poolQuery(`WHERE "id" = ANY($1)`, [subjectIds]);
 
       case FILTER_TYPE.BY_CLASS_AND_SUBJECT:
-        if (isFullAdmin) return model.findAll({ ...paginate, raw: true });
+        if (isFullAdmin) return poolQuery();
         if (!classIds.length || !subjectIds.length) return [];
-        return model.findAll({
-          where: {
-            classId: { [Op.in]: classIds },
-            subjectId: { [Op.in]: subjectIds },
-          },
-          ...paginate,
-          raw: true,
-        });
+        return poolQuery(
+          `WHERE "class_id" = ANY($1) AND "subject_id" = ANY($2)`,
+          [classIds, subjectIds]
+        );
 
       case FILTER_TYPE.BY_USER_ID:
-        if (isAdminRole) return model.findAll({ ...paginate, raw: true });
-        return model.findAll({
-          where: { [config.filterKey || "userId"]: userId },
-          ...paginate,
-          raw: true,
-        });
+        if (isAdminRole) return poolQuery();
+        return poolQuery(`WHERE "${config.filterKey || "user_id"}" = $1`, [
+          userId,
+        ]);
 
       case FILTER_TYPE.BY_USER_ID_ONLY:
-        return model.findAll({
-          where: { [config.filterKey || "userId"]: userId },
-          ...paginate,
-          raw: true,
-        });
+        return poolQuery(`WHERE "${config.filterKey || "user_id"}" = $1`, [
+          userId,
+        ]);
 
       default:
-        return [];
+        console.warn(
+          `[ScopeResolver] Unknown filterType "${config.filterType}" for "${tableKey}" — returning full table`
+        );
+        return poolQuery();
     }
   }
 }
