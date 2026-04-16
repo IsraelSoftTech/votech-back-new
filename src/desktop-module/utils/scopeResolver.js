@@ -618,6 +618,7 @@ class ScopeResolver {
 
       try {
         const { rows } = await pool.query(sql, [...params, limit, offset]);
+        // console.log(rows);
         return rows;
       } catch (err) {
         if (err.code === "42703") {
@@ -694,7 +695,7 @@ class ScopeResolver {
     if (tableKey === "User") {
       const rows = await poolQuery();
       return rows.map((r) => {
-        delete r.password;
+        if (r.id !== userId) delete r.password;
         return r;
       });
     }

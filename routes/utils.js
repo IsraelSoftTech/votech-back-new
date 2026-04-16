@@ -5,10 +5,7 @@ require("dotenv").config();
 const isDesktop = process.env.NODE_ENV === "desktop";
 const isDevelopment = process.env.NODE_ENV === "development";
 // Use local DB for desktop and development; remote for production
-const db =
-  isDesktop || isDevelopment
-    ? process.env.DATABASE_URL_LOCAL || process.env.DATABASE_URL
-    : process.env.DATABASE_URL;
+const db = process.env.DATABASE_URL;
 
 const pool = new Pool({
   connectionString: db,

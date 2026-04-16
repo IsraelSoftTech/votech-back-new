@@ -153,6 +153,9 @@ async function streamSync(socket, session) {
 
         if (!rows || rows.length === 0) break;
 
+        console.log(`[DEBUG] full row:`, JSON.stringify(rows[0], null, 2));
+        console.log(`[DEBUG] ${tableKey} row keys:`, Object.keys(rows[0]));
+
         // In streamSync, right before sendBatchAndWaitForAck:
         if (offset === 0 && rows.length > 0) {
           console.log(`[DEBUG] ${tableKey} row keys:`, Object.keys(rows[0]));
