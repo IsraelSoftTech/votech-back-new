@@ -127,7 +127,6 @@ const hodsRouter = require("./routes/hods");
 // const teacherDisciplineRouter = require("./routes/teacher-discipline-cases");
 const profileRouter = require("./routes/profile");
 
-const createAttendanceRouter = require("./routes/attendance");
 const createStaffAttendanceRouter = require("./routes/staff-attendance");
 const createDisciplineCasesRouter = require("./routes/discipline_cases");
 const { pool, authenticateToken } = require("./routes/utils");
@@ -200,7 +199,7 @@ app.use("/api/hods", hodsRouter);
 app.use("/api/students", studentsRouter);
 // app.use("/api/teacher-discipline-cases", teacherDisciplineRouter);
 
-app.use("/api/attendance", createAttendanceRouter(pool, authenticateToken));
+
 app.use(
   "/api/staff-attendance",
   createStaffAttendanceRouter(pool, authenticateToken)

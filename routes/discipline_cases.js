@@ -16,10 +16,12 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
           dc.recorded_at,
           dc.resolved_at,
           dc.resolution_notes,
+          dc.class_id,
+          dc.student_id,
           'student' as case_type,
           s.full_name as student_name,
           s.sex as student_sex,
-          c.name as class_name,
+          COALESCE(c.name, sc.name) as class_name,
           NULL as teacher_name,
           NULL as teacher_role,
           u.username as recorded_by_username,
@@ -28,6 +30,7 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
         FROM discipline_cases dc
         LEFT JOIN students s ON dc.student_id = s.id
         LEFT JOIN classes c ON dc.class_id = c.id
+        LEFT JOIN classes sc ON s.class_id = sc.id
         LEFT JOIN users u ON dc.recorded_by = u.id
         ORDER BY dc.recorded_at DESC
       `;
@@ -114,8 +117,15 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
       let query, params;
 
       if (student_id) {
-        // Student case
-        if (!class_id) {
+        let resolvedClassId = class_id;
+        if (!resolvedClassId) {
+          const studentRow = await pool.query(
+            "SELECT class_id FROM students WHERE id = $1",
+            [student_id]
+          );
+          resolvedClassId = studentRow.rows[0]?.class_id;
+        }
+        if (!resolvedClassId) {
           return res
             .status(400)
             .json({ error: "class_id is required for student cases" });
@@ -127,7 +137,7 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
         `;
         params = [
           student_id,
-          class_id,
+          resolvedClassId,
           case_description,
           case_type || "student",
           req.user.id,

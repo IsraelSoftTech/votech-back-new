@@ -4,7 +4,6 @@ const { Pool } = require("pg");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
-const createAttendanceRouter = require("./routes/attendance");
 const createStaffAttendanceRouter = require("./routes/staff-attendance");
 const createDisciplineCasesRouter = require("./routes/discipline_cases");
 
@@ -78,7 +77,7 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
-app.use("/api/attendance", createAttendanceRouter(pool, authenticateToken));
+
 app.use(
   "/api/staff-attendance",
   createStaffAttendanceRouter(pool, authenticateToken)
