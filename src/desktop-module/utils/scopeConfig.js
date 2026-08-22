@@ -1,5 +1,47 @@
 "use strict";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// scopeConfig.js
+//
+// Single source of truth for what each role receives during sync.
+// Every table in the system is listed here.
+//
+// Key decisions encoded here:
+//   - IdCard        → PUBLIC. Everyone can view and print. Image URL points to
+//                     CDN — image create/update requires online, but the record
+//                     itself syncs normally via LWW.
+//   - User          → PUBLIC for the record list. Admin3 gets passwords (their
+//                     own machine). Everyone else gets password replaced with
+//                     "__redacted__" server-side. This is handled in
+//                     dumpGenerator.js / scopeResolver.js, not here.
+//   - AuditLog      → Admin3 only. They need it locally to handle complaints
+//                     without switching between desktop and web.
+//   - Classes, Specialties, ClassMasters, SpecialtyClass,
+//     Subjects, ClassSubjects, SubjectCoefficients,
+//     SubjectClassifications, TeacherAssignments, Timetables
+//                   → PUBLIC. Everyone needs these for dropdowns and context.
+//                     Ownership filtering removed — data is not sensitive and
+//                     not having it breaks too many UI flows.
+//   - Students      → Admin1/2/3/4 get all. Di/Ps/Te get only students in
+//                     their assigned classes (via class_subjects +
+//                     teacher_assignments).
+//   - Marks         → Admin1/3 get all. Others get only their class+subject
+//                     intersection.
+//   - Fees          → Admin only. Teachers never see fees.
+//   - LessonPlans, Lessons, Vocational
+//                   → PUBLIC (all roles). Non-admin ownership enforced at app
+//                     layer for writes, but everyone can read.
+//   - UserSessions, UserActivities
+//                   → PUBLIC. Everyone gets the full table for audit context.
+//   - AttendanceSessions, AttendanceRecords
+//                   → PUBLIC. Everyone gets everything — filtering is too
+//                     complex and the data is not sensitive.
+//   - StaffAttendanceRecords, StaffAttendanceSettings, StaffEmploymentStatus
+//                   → PUBLIC (COND resolved as: sync to all, app layer controls
+//                     writes).
+//   - Finance tables → Admin roles only. Never to Di/Ps/Te.
+// ─────────────────────────────────────────────────────────────────────────────
+
 const ROLES = {
   ADMIN1: "Admin1",
   ADMIN2: "Admin2",
@@ -11,15 +53,18 @@ const ROLES = {
 };
 
 const ALL_ROLES = Object.values(ROLES);
+
+// Admin1 and Admin3: full academic access, full admin powers
 const FULL_ADMIN_ROLES = [ROLES.ADMIN1, ROLES.ADMIN3];
 
+// All four admin roles: finance access, full student/class access
 const ADMIN_ROLES = [ROLES.ADMIN1, ROLES.ADMIN2, ROLES.ADMIN3, ROLES.ADMIN4];
 
 const STRATEGY = {
-  PUBLIC: "PUBLIC",
-  FULL_FOR_ROLES: "FULL_FOR_ROLES",
-  OWNED: "OWNED",
-  NEVER: "NEVER",
+  PUBLIC: "PUBLIC", // All authenticated roles, all rows
+  FULL_FOR_ROLES: "FULL_FOR_ROLES", // Specific roles only, all rows
+  OWNED: "OWNED", // Row-level filtering per user
+  NEVER: "NEVER", // Never synced to any client
 };
 
 const FILTER_TYPE = {
@@ -34,21 +79,23 @@ const FILTER_TYPE = {
 };
 
 const SCOPE_CONFIG = {
+  // ── Server-internal tables — never synced ──────────────────────────────────
+
   SequelizeMeta: {
     strategy: STRATEGY.NEVER,
     notes: "Sequelize migration tracking. Server internal.",
   },
   ChangeLog: {
     strategy: STRATEGY.NEVER,
-    notes: "Server-side audit log. Not synced.",
+    notes: "Server-side trigger log. Not synced.",
   },
   DbSwapLog: {
     strategy: STRATEGY.NEVER,
-    notes: "DB swap operations log. Server internal.",
+    notes: "DB swap log. Server internal.",
   },
   DbSwapLogs: {
     strategy: STRATEGY.NEVER,
-    notes: "DB swap operations log (duplicate model). Server internal.",
+    notes: "DB swap log (duplicate model). Server internal.",
   },
   SystemMode: {
     strategy: STRATEGY.NEVER,
@@ -58,27 +105,34 @@ const SCOPE_CONFIG = {
     strategy: STRATEGY.NEVER,
     notes: "DB swap audit trail. Server internal.",
   },
-  IdCard: {
-    strategy: STRATEGY.NEVER,
-    notes: "No LWW columns. No writable sync needed.",
-  },
   UserDevice: {
     strategy: STRATEGY.NEVER,
-    notes:
-      "Device binding is server-managed. Client never receives this table.",
-  },
-  AuditLog: {
-    strategy: STRATEGY.NEVER,
-    notes: "LWW conflict log lives on the server only.",
+    notes: "Device binding is server-managed. Client never receives this.",
   },
   SyncAuditLog: {
     strategy: STRATEGY.NEVER,
-    notes: "Sync audit log. Server only.",
+    notes: "Sync audit log. Server only — except Admin3 (see AuditLog below).",
   },
   DeviceUnbindRequest: {
     strategy: STRATEGY.NEVER,
     notes: "Admin device management. Server only.",
   },
+  SyncSession: {
+    strategy: STRATEGY.NEVER,
+    notes: "Server sync session tracking. Not synced to clients.",
+  },
+
+  // ── AuditLog — Admin3 only ────────────────────────────────────────────────
+  // Admin3 needs this locally to handle user complaints without switching
+  // between desktop and web. No other role needs it.
+  AuditLog: {
+    strategy: STRATEGY.FULL_FOR_ROLES,
+    model: "AuditLog",
+    allowedRoles: [ROLES.ADMIN3],
+    notes: "Admin3 only. Needed locally for complaint resolution.",
+  },
+
+  // ── Academic structure — PUBLIC ────────────────────────────────────────────
 
   AcademicYear: {
     strategy: STRATEGY.PUBLIC,
@@ -105,15 +159,18 @@ const SCOPE_CONFIG = {
     model: "Department",
     notes: "All roles need department list.",
   },
-  BudgetHead: {
-    strategy: STRATEGY.PUBLIC,
-    model: "BudgetHead",
-    notes: "All roles need budget head list for dropdowns.",
-  },
+
+  // ── Reference / lookup — PUBLIC ────────────────────────────────────────────
+
   AssetCategory: {
     strategy: STRATEGY.PUBLIC,
     model: "AssetCategory",
     notes: "All roles need asset categories.",
+  },
+  BudgetHead: {
+    strategy: STRATEGY.PUBLIC,
+    model: "BudgetHead",
+    notes: "All roles need budget head list for dropdowns.",
   },
   TimetableConfig: {
     strategy: STRATEGY.PUBLIC,
@@ -125,6 +182,169 @@ const SCOPE_CONFIG = {
     model: "Event",
     notes: "All roles see all events. Write access enforced at app layer.",
   },
+
+  // ── Classes and structure — PUBLIC ────────────────────────────────────────
+  // Previously filtered by assignment. Now PUBLIC so every user has the full
+  // class list for dropdowns, context, and navigation. Not sensitive data.
+
+  Class: {
+    strategy: STRATEGY.PUBLIC,
+    model: "Class",
+    notes: "All roles get all classes. Needed for dropdowns and context.",
+  },
+  ClassMaster: {
+    strategy: STRATEGY.PUBLIC,
+    model: "ClassMaster",
+    notes: "All roles get all class masters. Needed for dropdowns.",
+  },
+  Specialty: {
+    strategy: STRATEGY.PUBLIC,
+    model: "Specialty",
+    notes: "All roles get all specialties. Needed for dropdowns.",
+  },
+  SpecialtyClass: {
+    strategy: STRATEGY.PUBLIC,
+    model: "SpecialtyClass",
+    notes: "All roles get all specialty-class mappings.",
+  },
+
+  // ── Subjects and assignments — PUBLIC ─────────────────────────────────────
+  // Same reasoning as classes — everyone needs the full lists for dropdowns,
+  // report cards, and timetables. Marks are still filtered separately.
+
+  Subject: {
+    strategy: STRATEGY.PUBLIC,
+    model: "Subject",
+    notes: "All roles get all subjects. Needed for dropdowns.",
+  },
+  ClassSubject: {
+    strategy: STRATEGY.PUBLIC,
+    model: "ClassSubject",
+    notes: "All roles get all class-subject mappings.",
+  },
+  SubjectCoefficient: {
+    strategy: STRATEGY.PUBLIC,
+    model: "SubjectCoefficient",
+    notes: "All roles get all coefficients. Needed for report cards.",
+  },
+  SubjectClassification: {
+    strategy: STRATEGY.PUBLIC,
+    model: "SubjectClassification",
+    notes: "All roles get all classifications.",
+  },
+  TeacherAssignment: {
+    strategy: STRATEGY.PUBLIC,
+    model: "TeacherAssignment",
+    notes: "All roles get all teacher assignments. Needed for context.",
+  },
+  Timetable: {
+    strategy: STRATEGY.PUBLIC,
+    model: "Timetable",
+    notes: "All roles get all timetables.",
+  },
+
+  // ── Staff directory — PUBLIC ───────────────────────────────────────────────
+  // Passwords handled specially:
+  //   - Admin3 → receives actual password hash (manages user accounts)
+  //   - Everyone else → password field set to "__redacted__" server-side
+  // This logic lives in dumpGenerator.js and scopeResolver.js, not here.
+
+  User: {
+    strategy: STRATEGY.PUBLIC,
+    model: "User",
+    filterType: FILTER_TYPE.CUSTOM,
+    customFilter: {
+      adminWithPasswords: [ROLES.ADMIN3], // only Admin3 gets real passwords
+      stripPasswordForOthers: true, // everyone else gets "__redacted__"
+    },
+    notes:
+      "All roles get full user list. Admin3 gets password hashes. All others get __redacted__ in the password field.",
+  },
+  Teacher: {
+    strategy: STRATEGY.PUBLIC,
+    model: "Teacher",
+    notes: "All roles need the teacher list.",
+  },
+  Hod: {
+    strategy: STRATEGY.PUBLIC,
+    model: "Hod",
+    notes: "All roles need HOD list.",
+  },
+  HodTeacher: {
+    strategy: STRATEGY.PUBLIC,
+    model: "HodTeacher",
+    notes: "All roles need HOD-teacher assignments.",
+  },
+
+  // ── ID Cards — PUBLIC ─────────────────────────────────────────────────────
+  // All roles can view and print ID cards. The card_number and issued_at are
+  // stored locally. The actual card image lives on a CDN — creating or updating
+  // the image requires an online connection, but the record syncs via LWW.
+
+  IdCard: {
+    strategy: STRATEGY.PUBLIC,
+    model: "IdCard",
+    notes:
+      "All roles get ID card records for printing. Image URL is CDN-hosted — image create/update requires online. Record syncs via LWW.",
+  },
+
+  // ── Students — filtered ────────────────────────────────────────────────────
+  // Admins get all students. Di/Ps/Te get only students in their classes.
+
+  Student: {
+    strategy: STRATEGY.OWNED,
+    model: "Student",
+    filterType: FILTER_TYPE.BY_CLASS_IDS,
+    filterKey: "class_id",
+    notes:
+      "Admin1/2/3/4 get all students. Di/Ps/Te get students in their assigned classes only.",
+  },
+
+  // ── Marks — filtered ──────────────────────────────────────────────────────
+  // Admin1/3 get all. Others get only class+subject intersection.
+
+  Mark: {
+    strategy: STRATEGY.OWNED,
+    model: "Mark",
+    filterType: FILTER_TYPE.BY_CLASS_AND_SUBJECT,
+    notes:
+      "Admin1/3 get all. Others get marks for their assigned classes AND subjects only.",
+  },
+
+  // ── Attendance — PUBLIC ────────────────────────────────────────────────────
+  // Not sensitive. Filtering via sessions join is error-prone. Sync everything.
+
+  AttendanceSession: {
+    strategy: STRATEGY.PUBLIC,
+    model: "AttendanceSession",
+    notes: "All roles get all attendance sessions.",
+  },
+  AttendanceRecord: {
+    strategy: STRATEGY.PUBLIC,
+    model: "AttendanceRecord",
+    notes: "All roles get all attendance records.",
+  },
+
+  // ── Staff attendance — PUBLIC (COND resolved) ──────────────────────────────
+
+  StaffAttendanceRecord: {
+    strategy: STRATEGY.PUBLIC,
+    model: "StaffAttendanceRecord",
+    notes: "All roles. Write access enforced at app layer.",
+  },
+  StaffAttendanceSetting: {
+    strategy: STRATEGY.PUBLIC,
+    model: "StaffAttendanceSetting",
+    notes: "All roles. Write access enforced at app layer.",
+  },
+  StaffEmploymentStatus: {
+    strategy: STRATEGY.PUBLIC,
+    model: "StaffEmploymentStatus",
+    notes: "All roles. Write access enforced at app layer.",
+  },
+
+  // ── Discipline ─────────────────────────────────────────────────────────────
+
   Case: {
     strategy: STRATEGY.PUBLIC,
     model: "Case",
@@ -140,6 +360,85 @@ const SCOPE_CONFIG = {
     model: "CaseReport",
     notes: "All roles receive all case reports.",
   },
+  DisciplineCase: {
+    strategy: STRATEGY.OWNED,
+    model: "DisciplineCase",
+    filterType: FILTER_TYPE.CUSTOM,
+    customFilter: {
+      fullForRoles: [...ADMIN_ROLES, ROLES.DISCIPLINE, ROLES.PSYCHOSOCIAL],
+      ownedByFields: ["recorded_by", "teacher_id"],
+    },
+    notes:
+      "Admin/Discipline/Psychosocial get all. Teacher gets only cases where they are recorded_by or teacher_id.",
+  },
+  TeacherDisciplineCase: {
+    strategy: STRATEGY.FULL_FOR_ROLES,
+    model: "TeacherDisciplineCase",
+    allowedRoles: [ROLES.ADMIN1, ROLES.DISCIPLINE],
+    notes: "Admin1 and Discipline only.",
+  },
+
+  // ── Lesson plans & lessons — PUBLIC ───────────────────────────────────────
+  // All roles sync. Write ownership enforced at app layer.
+
+  LessonPlan: {
+    strategy: STRATEGY.PUBLIC,
+    model: "LessonPlan",
+    notes: "All roles get all lesson plans. Write ownership at app layer.",
+  },
+  Lesson: {
+    strategy: STRATEGY.PUBLIC,
+    model: "Lesson",
+    notes: "All roles get all lessons. Write ownership at app layer.",
+  },
+
+  // ── Vocational — PUBLIC ────────────────────────────────────────────────────
+
+  Vocational: {
+    strategy: STRATEGY.PUBLIC,
+    model: "Vocational",
+    notes: "All roles get all vocational records.",
+  },
+
+  // ── Messaging & groups — OWNED ────────────────────────────────────────────
+  // Each user only syncs what they are part of. No admin override.
+
+  Group: {
+    strategy: STRATEGY.OWNED,
+    model: "Group",
+    filterType: FILTER_TYPE.BY_USER_ID_ONLY,
+    notes: "Every role only gets groups they are a member of.",
+  },
+  GroupParticipant: {
+    strategy: STRATEGY.OWNED,
+    model: "GroupParticipant",
+    filterType: FILTER_TYPE.BY_USER_ID_ONLY,
+    notes: "Every role only gets participants of their own groups.",
+  },
+  Message: {
+    strategy: STRATEGY.OWNED,
+    model: "Message",
+    filterType: FILTER_TYPE.BY_USER_ID_ONLY,
+    notes: "Every role only gets their own messages.",
+  },
+
+  // ── User activity & sessions — PUBLIC ─────────────────────────────────────
+
+  UserActivity: {
+    strategy: STRATEGY.PUBLIC,
+    model: "UserActivity",
+    notes: "All roles get full activity log.",
+  },
+  UserSession: {
+    strategy: STRATEGY.PUBLIC,
+    model: "UserSession",
+    notes: "All roles get full session log.",
+  },
+
+  // ── Inventory & assets ─────────────────────────────────────────────────────
+  // PropertyEquipment, ReportInventory, ReportInventoryHead → PUBLIC (read).
+  // Inventory, AssetDepreciation → Admin only (COND resolved as: admin only).
+
   PropertyEquipment: {
     strategy: STRATEGY.PUBLIC,
     model: "PropertyEquipment",
@@ -155,39 +454,48 @@ const SCOPE_CONFIG = {
     model: "ReportInventoryHead",
     notes: "All roles receive. Write is admin-only at app layer.",
   },
-  Hod: {
-    strategy: STRATEGY.PUBLIC,
-    model: "Hod",
-    notes: "All roles need HOD list.",
+  Inventory: {
+    strategy: STRATEGY.FULL_FOR_ROLES,
+    model: "Inventory",
+    allowedRoles: ADMIN_ROLES,
+    notes: "Admin only.",
   },
-  HodTeacher: {
-    strategy: STRATEGY.PUBLIC,
-    model: "HodTeacher",
-    notes: "All roles need HOD-teacher assignments.",
+  AssetDepreciation: {
+    strategy: STRATEGY.FULL_FOR_ROLES,
+    model: "AssetDepreciation",
+    allowedRoles: ADMIN_ROLES,
+    notes: "Admin only.",
   },
-  Teacher: {
-    strategy: STRATEGY.PUBLIC,
-    model: "Teacher",
-    notes: "All roles need teacher list.",
+
+  // ── Applications (HR) ─────────────────────────────────────────────────────
+
+  Application: {
+    strategy: STRATEGY.FULL_FOR_ROLES,
+    model: "Application",
+    allowedRoles: ADMIN_ROLES,
+    notes: "Admin only.",
   },
+
+  // ── Finance — Admin only ───────────────────────────────────────────────────
+  // COND resolved as: never to Di/Ps/Te. Finance data is sensitive.
 
   FinancialTransaction: {
     strategy: STRATEGY.FULL_FOR_ROLES,
     model: "FinancialTransaction",
     allowedRoles: ADMIN_ROLES,
-    notes: "Finance data. Never sent to non-admin roles.",
+    notes: "Admin only. Never sent to Di/Ps/Te.",
   },
   Salary: {
     strategy: STRATEGY.FULL_FOR_ROLES,
     model: "Salary",
     allowedRoles: ADMIN_ROLES,
-    notes: "🚨 Sensitive. Never sent to non-admin roles.",
+    notes: "🚨 Sensitive. Admin only. Never sent to Di/Ps/Te.",
   },
   SalaryDescription: {
     strategy: STRATEGY.FULL_FOR_ROLES,
     model: "SalaryDescription",
     allowedRoles: ADMIN_ROLES,
-    notes: "🚨 Sensitive. Never sent to non-admin roles.",
+    notes: "🚨 Sensitive. Admin only.",
   },
   SalaryPayslipSettings: {
     strategy: STRATEGY.FULL_FOR_ROLES,
@@ -201,237 +509,15 @@ const SCOPE_CONFIG = {
     allowedRoles: ADMIN_ROLES,
     notes: "Finance config. Admin only.",
   },
-  Application: {
-    strategy: STRATEGY.FULL_FOR_ROLES,
-    model: "Application",
-    allowedRoles: ADMIN_ROLES,
-    notes: "HR applications. Admin only.",
-  },
-  TeacherDisciplineCase: {
-    strategy: STRATEGY.FULL_FOR_ROLES,
-    model: "TeacherDisciplineCase",
-    allowedRoles: [ROLES.ADMIN1, ROLES.DISCIPLINE],
-    notes: "Admin1 and Discipline only. No other role receives this.",
-  },
-  Inventory: {
-    strategy: STRATEGY.FULL_FOR_ROLES,
-    model: "Inventory",
-    allowedRoles: ADMIN_ROLES,
-    notes: "Admin only until stakeholder confirms other roles need it.",
-  },
-  AssetDepreciation: {
-    strategy: STRATEGY.FULL_FOR_ROLES,
-    model: "AssetDepreciation",
-    allowedRoles: ADMIN_ROLES,
-    notes: "Admin only until stakeholder confirms other roles need it.",
-  },
-  StaffAttendanceRecord: {
-    strategy: STRATEGY.FULL_FOR_ROLES,
-    model: "StaffAttendanceRecord",
-    allowedRoles: ALL_ROLES,
-    notes:
-      "⚠️ COND — all roles for now. Revisit after stakeholder confirmation.",
-  },
-  StaffAttendanceSetting: {
-    strategy: STRATEGY.FULL_FOR_ROLES,
-    model: "StaffAttendanceSetting",
-    allowedRoles: ALL_ROLES,
-    notes:
-      "⚠️ COND — all roles for now. Revisit after stakeholder confirmation.",
-  },
-  StaffEmploymentStatus: {
-    strategy: STRATEGY.FULL_FOR_ROLES,
-    model: "StaffEmploymentStatus",
-    allowedRoles: ALL_ROLES,
-    notes:
-      "⚠️ COND — all roles for now. Revisit after stakeholder confirmation.",
-  },
 
-  User: {
-    strategy: STRATEGY.OWNED,
-    model: "User",
-    filterType: FILTER_TYPE.CUSTOM,
-    customFilter: {
-      fullForAdmins: true,
-      stripColumns: ["password"],
-    },
-    notes:
-      "All roles get full user list. Password column stripped server-side always.",
-  },
+  // ── Fees — Admin only ─────────────────────────────────────────────────────
+  // Teachers do not see fees. Period.
 
-  Class: {
-    strategy: STRATEGY.OWNED,
-    model: "Class",
-    filterType: FILTER_TYPE.BY_CLASS_IDS,
-    notes: "Admin1/3 get all. Others get assigned classes only.",
-  },
-  ClassMaster: {
-    strategy: STRATEGY.OWNED,
-    model: "ClassMaster",
-    filterType: FILTER_TYPE.BY_CLASS_IDS,
-    filterKey: "classId",
-    notes: "Filtered to user's assigned classes.",
-  },
-  Specialty: {
-    strategy: STRATEGY.OWNED,
-    model: "Specialty",
-    filterType: FILTER_TYPE.CUSTOM,
-    customFilter: {
-      joinThrough: "SpecialtyClass",
-      joinKey: "specialtyId",
-      filterKey: "classId",
-      fullForAdmins: true,
-    },
-    notes: "Filtered via specialty_classes join. Full admins get all.",
-  },
-  SpecialtyClass: {
-    strategy: STRATEGY.OWNED,
-    model: "SpecialtyClass",
-    filterType: FILTER_TYPE.BY_CLASS_IDS,
-    filterKey: "classId",
-    notes: "Filtered to user's assigned classes.",
-  },
-  Subject: {
-    strategy: STRATEGY.OWNED,
-    model: "Subject",
-    filterType: FILTER_TYPE.BY_SUBJECT_IDS,
-    notes: "Admin1/3 get all. Others get assigned subjects only.",
-  },
-  ClassSubject: {
-    strategy: STRATEGY.OWNED,
-    model: "ClassSubject",
-    filterType: FILTER_TYPE.BY_CLASS_IDS,
-    filterKey: "classId",
-    notes: "Filtered to user's assigned classes.",
-  },
-  SubjectCoefficient: {
-    strategy: STRATEGY.OWNED,
-    model: "SubjectCoefficient",
-    filterType: FILTER_TYPE.BY_CLASS_IDS,
-    filterKey: "classId",
-    notes: "Filtered to user's assigned classes.",
-  },
-  SubjectClassification: {
-    strategy: STRATEGY.OWNED,
-    model: "SubjectClassification",
-    filterType: FILTER_TYPE.BY_CLASS_IDS,
-    filterKey: "classId",
-    notes: "Filtered to user's assigned classes.",
-  },
-  TeacherAssignment: {
-    strategy: STRATEGY.OWNED,
-    model: "TeacherAssignment",
-    filterType: FILTER_TYPE.BY_CLASS_IDS,
-    filterKey: "classId",
-    notes: "Filtered to user's assigned classes.",
-  },
-  Timetable: {
-    strategy: STRATEGY.OWNED,
-    model: "Timetable",
-    filterType: FILTER_TYPE.BY_CLASS_IDS,
-    filterKey: "classId",
-    notes: "Filtered to user's assigned classes.",
-  },
-  Student: {
-    strategy: STRATEGY.OWNED,
-    model: "Student",
-    filterType: FILTER_TYPE.BY_CLASS_IDS,
-    filterKey: "classId",
-    notes:
-      "Admin roles get all students. Others get students in their classes only.",
-  },
-  Mark: {
-    strategy: STRATEGY.OWNED,
-    model: "Mark",
-    filterType: FILTER_TYPE.BY_CLASS_AND_SUBJECT,
-    notes:
-      "Admin1/3 get all. Others get marks for their classes AND subjects only.",
-  },
-  AttendanceSession: {
-    strategy: STRATEGY.OWNED,
-    model: "AttendanceSession",
-    filterType: FILTER_TYPE.BY_CLASS_IDS,
-    filterKey: "classId",
-    notes: "Filtered to user's assigned classes.",
-  },
-  AttendanceRecord: {
-    strategy: STRATEGY.OWNED,
-    model: "AttendanceRecord",
-    filterType: FILTER_TYPE.BY_CLASS_IDS_VIA_SESSIONS,
-    notes: "No direct classId. Joined through attendance_sessions.",
-  },
-  DisciplineCase: {
-    strategy: STRATEGY.OWNED,
-    model: "DisciplineCase",
-    filterType: FILTER_TYPE.CUSTOM,
-    customFilter: {
-      fullForRoles: [...ADMIN_ROLES, ROLES.DISCIPLINE, ROLES.PSYCHOSOCIAL],
-      ownedByFields: ["recordedBy", "teacherId"],
-    },
-    notes:
-      "Admin/Discipline/Psychosocial get all. Teacher gets own records only.",
-  },
   Fee: {
-    strategy: STRATEGY.OWNED,
+    strategy: STRATEGY.FULL_FOR_ROLES,
     model: "Fee",
-    filterType: FILTER_TYPE.BY_CLASS_IDS_VIA_STUDENTS,
-    notes:
-      "Admin gets all. Others get fees for students in their classes only.",
-  },
-  LessonPlan: {
-    strategy: STRATEGY.OWNED,
-    model: "LessonPlan",
-    filterType: FILTER_TYPE.BY_USER_ID,
-    filterKey: "userId",
-    notes: "Admins get all. Others get own lesson plans only.",
-  },
-  Lesson: {
-    strategy: STRATEGY.OWNED,
-    model: "Lesson",
-    filterType: FILTER_TYPE.BY_USER_ID,
-    filterKey: "userId",
-    notes: "Admins get all. Others get own lessons only.",
-  },
-  Vocational: {
-    strategy: STRATEGY.OWNED,
-    model: "Vocational",
-    filterType: FILTER_TYPE.BY_USER_ID,
-    filterKey: "userId",
-    notes: "Admins get all. Others get own vocational entries only.",
-  },
-  UserActivity: {
-    strategy: STRATEGY.OWNED,
-    model: "UserActivity",
-    filterType: FILTER_TYPE.BY_USER_ID,
-    filterKey: "userId",
-    notes: "Admins get all. Others get own activity only.",
-  },
-  UserSession: {
-    strategy: STRATEGY.OWNED,
-    model: "UserSession",
-    filterType: FILTER_TYPE.BY_USER_ID,
-    filterKey: "userId",
-    notes: "Admins get all. Others get own sessions only.",
-  },
-  Group: {
-    strategy: STRATEGY.OWNED,
-    model: "Group",
-    filterType: FILTER_TYPE.BY_USER_ID_ONLY,
-    notes:
-      "Every role only gets groups they are a member of. No admin override.",
-  },
-  GroupParticipant: {
-    strategy: STRATEGY.OWNED,
-    model: "GroupParticipant",
-    filterType: FILTER_TYPE.BY_USER_ID_ONLY,
-    notes:
-      "Every role only gets participants of their own groups. No admin override.",
-  },
-  Message: {
-    strategy: STRATEGY.OWNED,
-    model: "Message",
-    filterType: FILTER_TYPE.BY_USER_ID_ONLY,
-    notes: "Every role only gets their own messages. No admin override.",
+    allowedRoles: ADMIN_ROLES,
+    notes: "Admin only. Teachers never see fees.",
   },
 };
 

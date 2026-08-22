@@ -175,10 +175,12 @@ function getTermConfig(termLabel) {
         { key: "_termAvg", header: "TERM\nAVG", isAvg: true },
       ],
       getTermAvg: (s) => s.scores.term1Avg,
-      termTotalKey: "term1",
-      cumulativeLabel: "T1",
+      termTotalKey: "term1", // ✅
+      getCumulativeLabel: (_tt) => "T1",
       getCumulative: (tt) =>
-        typeof tt.term1?.average === "number" ? tt.term1.average : null,
+        typeof tt.term1?.average === "number" && tt.term1.average > 0
+          ? tt.term1.average
+          : null,
     };
   }
 
@@ -192,17 +194,22 @@ function getTermConfig(termLabel) {
         { key: "_yearAvg", header: "TOTAL\nAVG", isAvg: true },
       ],
       getTermAvg: (s) => s.scores.term2Avg,
+      termTotalKey: "term2", // ✅ THIS WAS MISSING
       getYearAvg: (s) => {
         const t1 = s.scores.term1Avg;
         const t2 = s.scores.term2Avg;
         if (t1 == null || t2 == null) return null;
         return round((t1 + t2) / 2);
       },
-      termTotalKey: "term2",
-      cumulativeLabel: "T1 + T2",
+      getCumulativeLabel: (tt) => {
+        const parts = [];
+        if (tt.term1?.average > 0) parts.push("T1");
+        if (tt.term2?.average > 0) parts.push("T2");
+        return parts.length ? parts.join(" + ") : "T2";
+      },
       getCumulative: (tt) => {
         const a = [tt.term1?.average, tt.term2?.average].filter(
-          (v) => typeof v === "number"
+          (v) => typeof v === "number" && v > 0
         );
         return a.length ? round(a.reduce((x, y) => x + y, 0) / a.length) : null;
       },
@@ -221,14 +228,20 @@ function getTermConfig(termLabel) {
     ],
     getTermAvg: (s) => s.scores.term3Avg,
     getFinalAvg: (s) => s.scores.finalAvg,
-    termTotalKey: "term3",
-    cumulativeLabel: "T1 + T2 + T3",
+    termTotalKey: "term3", // ✅
+    getCumulativeLabel: (tt) => {
+      const parts = [];
+      if (tt.term1?.average > 0) parts.push("T1");
+      if (tt.term2?.average > 0) parts.push("T2");
+      if (tt.term3?.average > 0) parts.push("T3");
+      return parts.length ? parts.join(" + ") : "T3";
+    },
     getCumulative: (tt) => {
       const a = [
         tt.term1?.average,
         tt.term2?.average,
         tt.term3?.average,
-      ].filter((v) => typeof v === "number");
+      ].filter((v) => typeof v === "number" && v > 0);
       return a.length ? round(a.reduce((x, y) => x + y, 0) / a.length) : null;
     },
   };
@@ -767,7 +780,7 @@ function buildPerformanceSummary(data, termCfg) {
         [
           lbl("CLASS AVERAGE:"),
           val(cs.classAverage != null ? `${fmtAvg(cs.classAverage)}/20` : "—"),
-          lbl(`CUMUL. (${termCfg.cumulativeLabel}):`),
+          lbl(`CUMUL. (${termCfg.getCumulativeLabel(data.termTotals)}):`),
           val(cumAvg != null ? `${fmtAvg(cumAvg)}/20` : "N/A"),
           { text: "" },
           { text: "" },
@@ -1463,7 +1476,7 @@ const bulkPdfDirect = catchAsync(async (req, res, next) => {
   // ── Fetch marks and grading in parallel ──
   const [marks, gradingRaw] = await Promise.all([
     fetchMarksWithIncludes(academicYearId, classId),
-    models.academic_bands.findAll({
+    models.AcademicBand.findAll({
       where: { academic_year_id: academicYear.id, class_id: studentClass.id },
       raw: true,
     }),
@@ -1557,7 +1570,7 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
 
   const [marks, gradingRaw] = await Promise.all([
     fetchMarksWithIncludes(academicYearId, classId),
-    models.academic_bands.findAll({
+    models.AcademicBand.findAll({
       where: { academic_year_id: academicYear.id, class_id: studentClass.id },
       raw: true,
     }),

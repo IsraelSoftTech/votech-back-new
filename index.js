@@ -155,6 +155,23 @@ async function runMigrations() {
   } catch (err) {
     console.warn("⚠️ Migration (property_equipment):", err.message);
   }
+
+  try {
+    await pool.query(`
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'
+    `);
+    await pool
+      .query(
+        `
+      ALTER TABLE students ADD CONSTRAINT students_status_check
+      CHECK (status IN ('active', 'graduated', 'withdrawn'))
+    `
+      )
+      .catch(() => {});
+    console.log("✅ students.status column ready");
+  } catch (err) {
+    console.warn("⚠️ Migration (students.status):", err.message);
+  }
 }
 
 function killPort(port) {
@@ -177,6 +194,9 @@ async function startOnce(port) {
 
   const server = createServer(app);
   initSockets(server);
+
+  const { startWatchdog } = require("./src/controllers/promotion.controller");
+  startWatchdog();
 
   server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on port ${port}`);

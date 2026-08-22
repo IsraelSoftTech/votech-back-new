@@ -344,7 +344,7 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
             attributes: ["name"],
             include: [
               {
-                model: models.specialties,
+                model: models.Specialty,
                 as: "department",
                 attributes: ["name"],
               },
@@ -363,7 +363,7 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
             attributes: ["id", "class_id"],
             include: [
               {
-                model: models.users,
+                model: models.Us,
                 as: "teacher",
                 attributes: ["id", "name", "username"],
               },
@@ -445,7 +445,7 @@ const singleReportCard = catchAsync(async (req, res, next) => {
             attributes: ["name"],
             include: [
               {
-                model: models.specialties,
+                model: models.Specialty,
                 as: "department",
                 attributes: ["name"],
               },
@@ -464,7 +464,7 @@ const singleReportCard = catchAsync(async (req, res, next) => {
             attributes: ["id", "class_id"],
             include: [
               {
-                model: models.users,
+                model: models.Us,
                 as: "teacher",
                 attributes: ["id", "name", "username"],
               },
@@ -493,7 +493,7 @@ const singleReportCard = catchAsync(async (req, res, next) => {
   const reportCardClass = await models.Class.findByPk(classId, {
     include: [
       {
-        model: models.users,
+        model: models.Us,
         as: "classMaster",
         attributes: ["name", "username"],
       },
@@ -2480,14 +2480,14 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
   if (!academicYearData)
     return next(new AppError("Academic year not found", StatusCodes.NOT_FOUND));
 
-  const department = await models.specialties.findByPk(departmentId);
+  const department = await models.Specialty.findByPk(departmentId);
   if (!department)
     return next(new AppError("Department not found", StatusCodes.NOT_FOUND));
 
   const studentClass = await models.Class.findByPk(classId, {
     include: [
       {
-        model: models.users,
+        model: models.Us,
         as: "classMaster",
         attributes: ["name", "username"],
       },
@@ -2524,7 +2524,7 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
             attributes: ["name"],
             include: [
               {
-                model: models.specialties,
+                model: models.Specialty,
                 as: "department",
                 attributes: ["name"],
               },
@@ -2543,7 +2543,7 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
             attributes: ["id", "class_id"],
             include: [
               {
-                model: models.users,
+                model: models.Us,
                 as: "teacher",
                 attributes: ["id", "name", "username"],
               },
@@ -2680,11 +2680,11 @@ const bulkReportCardsHTML = catchAsync(async (req, res, next) => {
   // Fetch necessary data
   const [academicYearData, department, studentClass] = await Promise.all([
     models.AcademicYear.findByPk(academicYearId),
-    models.specialties.findByPk(departmentId),
+    models.Specialty.findByPk(departmentId),
     models.Class.findByPk(classId, {
       include: [
         {
-          model: models.users,
+          model: models.Us,
           as: "classMaster",
           attributes: ["name", "username"],
         },
@@ -2757,7 +2757,7 @@ const bulkReportCardsHTML = catchAsync(async (req, res, next) => {
             attributes: ["name"],
             include: [
               {
-                model: models.specialties,
+                model: models.Specialty,
                 as: "department",
                 attributes: ["name"],
               },
@@ -2776,7 +2776,7 @@ const bulkReportCardsHTML = catchAsync(async (req, res, next) => {
             attributes: ["id", "class_id"],
             include: [
               {
-                model: models.users,
+                model: models.Us,
                 as: "teacher",
                 attributes: ["id", "name", "username"],
               },

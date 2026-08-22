@@ -79,6 +79,17 @@ module.exports = function (sequelize, DataTypes) {
         type: DataTypes.BLOB,
         allowNull: true,
       },
+      status: {
+        type: DataTypes.STRING(20),
+        allowNull: false,
+        defaultValue: "active",
+        validate: {
+          isIn: {
+            args: [["active", "graduated", "withdrawn"]],
+            msg: "status must be 'active', 'graduated' or 'withdrawn'",
+          },
+        },
+      },
     },
     {
       sequelize,

@@ -19,6 +19,23 @@ const ReportCardSnapshot = require("./ReportCardSnapShot.model")(
 const specialties = require("./specialties")(sequelize, DataTypes);
 const specialty_classes = require("./specialty_classes")(sequelize, DataTypes);
 const academic_bands = require("./AcademicBand.model")(sequelize, DataTypes);
+const promotion_requirements = require("./PromotionRequirement.model")(
+  sequelize,
+  DataTypes
+);
+const promotion_runs = require("./PromotionRun.model")(sequelize, DataTypes);
+const promotion_run_moves = require("./PromotionRunMove.model")(
+  sequelize,
+  DataTypes
+);
+const student_promotions = require("./StudentPromotion.model")(
+  sequelize,
+  DataTypes
+);
+const promotion_run_lock = require("./PromotionRunLock.model")(
+  sequelize,
+  DataTypes
+);
 const change_logs = require("./changeLog.model")(sequelize, DataTypes);
 const system_mode = require("./SystemMode.model")(sequelize, DataTypes);
 const db_swap_logs = require("./dbSwapLog.model")(sequelize, DataTypes);
@@ -630,6 +647,11 @@ const models = {
   Specialty: specialties,
   SpecialtyClass: specialty_classes,
   AcademicBand: academic_bands,
+  PromotionRequirement: promotion_requirements,
+  PromotionRun: promotion_runs,
+  PromotionRunMove: promotion_run_moves,
+  StudentPromotion: student_promotions,
+  PromotionRunLock: promotion_run_lock,
   ChangeLog: change_logs,
   SystemMode: system_mode,
   DbSwapLog: db_swap_logs,

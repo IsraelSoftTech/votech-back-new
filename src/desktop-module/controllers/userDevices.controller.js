@@ -1,7 +1,11 @@
 "use strict";
 
-const db = require("../models");
-const { logUserActivity, getIpAddress, getUserAgent } = require("./utils");
+const db = require("../../models");
+const {
+  logUserActivity,
+  getIpAddress,
+  getUserAgent,
+} = require("../../../routes/utils");
 
 const requestUnbind = async (req, res) => {
   try {
