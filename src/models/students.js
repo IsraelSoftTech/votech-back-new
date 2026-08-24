@@ -71,6 +71,15 @@ module.exports = function (sequelize, DataTypes) {
         type: DataTypes.STRING(50),
         allowNull: true,
       },
+      // Real column on the DB (character varying, nullable), the legacy
+      // routes/students.js writes to it directly via raw SQL, it was just
+      // never declared on this Sequelize model, so anything going through
+      // the ORM (raw:true queries, the new src/ students layer) silently
+      // dropped it.
+      mother_contact: {
+        type: DataTypes.STRING(50),
+        allowNull: true,
+      },
       photo_url: {
         type: DataTypes.STRING(255),
         allowNull: true,
@@ -126,6 +135,11 @@ module.exports = function (sequelize, DataTypes) {
     Student.belongsTo(models.Specialty, {
       foreignKey: "specialty_id",
       as: "specialties",
+    });
+
+    Student.hasMany(models.StudentDepartmentChoice, {
+      foreignKey: "student_id",
+      as: "department_choices",
     });
   };
 

@@ -52,6 +52,10 @@ const report_card_run_lock = require("./ReportCardRunLock.model")(
   sequelize,
   DataTypes
 );
+const student_department_choices = require("./StudentDepartmentChoice.model")(
+  sequelize,
+  DataTypes
+);
 const academic_job_notifications = require("./AcademicJobNotification.model")(
   sequelize,
   DataTypes
@@ -675,6 +679,7 @@ const models = {
   ReportCardSession: report_card_sessions,
   ReportCardRun: report_card_runs,
   ReportCardRunLock: report_card_run_lock,
+  StudentDepartmentChoice: student_department_choices,
   AcademicJobNotification: academic_job_notifications,
   AcademicYearGrant: academic_year_grants,
   ChangeLog: change_logs,

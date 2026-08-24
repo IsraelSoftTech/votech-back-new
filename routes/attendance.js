@@ -16,6 +16,45 @@ module.exports = function createAttendanceRouter(pool, authenticateToken) {
     }
   });
 
+  // Aggregate summary for one student — built for the Students page
+  // detail hub / the report card's "Days Present" conduct field. Only
+  // present/absent exist anywhere in attendance_records (checked the
+  // real data directly), there is no "late" concept tracked in this
+  // system at all, so this deliberately does not report a times-late
+  // figure rather than fabricate one.
+  router.get("/student/:id/summary", authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const { academic_year_id } = req.query;
+    try {
+      const params = [id];
+      let dateFilter = "";
+      if (academic_year_id) {
+        const yearRes = await pool.query(
+          "SELECT start_date, end_date FROM \"academicYears\" WHERE id = $1",
+          [academic_year_id]
+        );
+        const year = yearRes.rows[0];
+        if (year) {
+          params.push(year.start_date, year.end_date);
+          dateFilter = `AND ats.session_time BETWEEN $${params.length - 1} AND $${params.length}`;
+        }
+      }
+      const result = await pool.query(
+        `SELECT ar.status
+         FROM attendance_records ar
+         JOIN attendance_sessions ats ON ar.session_id = ats.id
+         WHERE ar.student_id = $1 ${dateFilter}`,
+        params
+      );
+      const totalSessions = result.rows.length;
+      const daysPresent = result.rows.filter((r) => r.status === "present").length;
+      res.json({ totalSessions, daysPresent });
+    } catch (error) {
+      console.error("Error fetching student attendance summary:", error);
+      res.status(500).json({ error: "Failed to fetch attendance summary" });
+    }
+  });
+
   router.get("/:classId/students", authenticateToken, async (req, res) => {
     const { classId } = req.params;
     try {

@@ -150,6 +150,7 @@ const reportCardRouter = require("./src/routes/reportCard.route");
 const contentRouter = require("./src/routes/content.route");
 const globalErrorController = require("./src/controllers/error.controller");
 const departmentRouter = require("./src/routes/department.route");
+const academicsDashboardRouter = require("./src/routes/academicsDashboard.route");
 const { readOnlyGate } = require("./src/controllers/contextSwitch.controller");
 const desktopRouter = require("./src/desktop-module/desktop.routes");
 
@@ -232,6 +233,7 @@ app.use("/api/v1/report-card-sessions", reportCardSessionRouter);
 app.use("/api/v1/academic-notifications", academicNotificationRouter);
 app.use("/api/v1/content", contentRouter);
 app.use("/api/v1/departments", departmentRouter);
+app.use("/api/v1/academics-dashboard", academicsDashboardRouter);
 app.use("/api/v1/desktop", desktopRouter);
 
 console.log("✅ Server routes mounted successfully");

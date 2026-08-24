@@ -135,6 +135,31 @@ async function fetchMarksByStudent(studentIds, classId, academicYearId) {
   return byStudent;
 }
 
+// Backward-compatible orientation restriction: a student's full ranked
+// six (not just Choice 1) all count as "eligible" destination
+// departments — the backfill tool may have only set rank 1 for students
+// who registered before this feature existed, a fully-registered
+// student has all six. Returns a Map<studentId, number[] departmentIds>,
+// students with zero recorded choices are simply absent from the map,
+// which the caller treats as "unrestricted" (today's behavior),
+// deliberately, per product direction — this is a backward-compat
+// feature, not a hard requirement retrofitted onto every existing
+// student.
+async function fetchDepartmentChoicesByStudent(studentIds) {
+  if (!studentIds.length) return new Map();
+  const rows = await models.StudentDepartmentChoice.findAll({
+    where: { student_id: { [Op.in]: studentIds } },
+    attributes: ["student_id", "department_id"],
+    raw: true,
+  });
+  const byStudent = new Map();
+  for (const r of rows) {
+    if (!byStudent.has(r.student_id)) byStudent.set(r.student_id, []);
+    byStudent.get(r.student_id).push(r.department_id);
+  }
+  return byStudent;
+}
+
 function computeAndDecide(marksForStudent, subjectMeta, requirement) {
   const { subjectAverages, annualAverage, hasIncompleteData, gaps } =
     computeStudentAverages(marksForStudent || [], subjectMeta);
@@ -279,6 +304,13 @@ const previewMove = catchAsync(async (req, res, next) => {
     academic_year_from_id
   );
 
+  // Only meaningful for a split (fan-out) move — a single-destination
+  // move has nothing to restrict against. Fetched once for the whole
+  // roster rather than per chunk, it's one query either way.
+  const departmentChoicesByStudent = isSplit
+    ? await fetchDepartmentChoicesByStudent(studentIds)
+    : new Map();
+
   const results = [];
   for (let i = 0; i < studentIds.length; i += CHUNK_SIZE) {
     const chunk = studentIds.slice(i, i + CHUNK_SIZE);
@@ -299,6 +331,7 @@ const previewMove = catchAsync(async (req, res, next) => {
         requirement
       );
       const st = studentMap.get(studentId);
+      const allowedDepartmentIds = departmentChoicesByStudent.get(studentId) || null;
       results.push({
         student_id: studentId,
         name: st?.full_name,
@@ -306,6 +339,12 @@ const previewMove = catchAsync(async (req, res, next) => {
         overall_average: outcome.annualAverage,
         decision: outcome.decision,
         reasons: outcome.reasons,
+        // null = no choices recorded, unrestricted (matches
+        // today's behavior for students who predate this feature and
+        // haven't been backfilled); an array (even empty, though empty
+        // shouldn't happen given the unique constraints) restricts the
+        // destination-class picker to these departments.
+        allowed_department_ids: allowedDepartmentIds,
         has_incomplete_data: outcome.hasIncompleteData,
         gaps: outcome.gaps,
       });
@@ -605,10 +644,11 @@ const startRun = catchAsync(async (req, res, next) => {
       }
 
       const destIds = [...new Set(Object.values(provided).map(Number).filter(Boolean))];
+      const destClassesById = new Map();
       if (destIds.length) {
         const destClasses = await models.Class.findAll({
           where: { id: { [Op.in]: destIds } },
-          attributes: ["id"],
+          attributes: ["id", "department_id"],
         });
         if (destClasses.length !== destIds.length) {
           return next(
@@ -618,7 +658,36 @@ const startRun = catchAsync(async (req, res, next) => {
             )
           );
         }
+        for (const c of destClasses) destClassesById.set(c.id, c);
       }
+
+      // Orientation backward-compat restriction: a student with recorded
+      // department choices (from registration or the backfill tool) can
+      // only be sent to a destination inside one of those departments.
+      // The frontend already restricts the picker to this same set, this
+      // is the actual authority — re-validated here so a stale client or
+      // a direct API call can't bypass it, never trust client-side-only
+      // validation.
+      const departmentChoicesByStudent = await fetchDepartmentChoicesByStudent(promotedStudentIds);
+      const violationNames = [];
+      for (const studentId of promotedStudentIds) {
+        const allowed = departmentChoicesByStudent.get(studentId);
+        if (!allowed) continue; // no choices recorded, unrestricted
+        const destClassId = Number(provided[studentId] ?? provided[String(studentId)]);
+        const destClass = destClassesById.get(destClassId);
+        if (destClass && !allowed.includes(destClass.department_id)) {
+          violationNames.push(studentId);
+        }
+      }
+      if (violationNames.length) {
+        return next(
+          new AppError(
+            `${sourceClass.name}: ${violationNames.length} student(s) were assigned a destination outside their chosen department(s) — fix these before starting the run.`,
+            StatusCodes.BAD_REQUEST
+          )
+        );
+      }
+
       destinationOverrides = provided;
     } else if (!move.is_graduation) {
       if (!move.destination_class_id) {
@@ -1420,6 +1489,25 @@ const reverseMove = catchAsync(async (req, res, next) => {
   appResponder(StatusCodes.OK, { status: "reversed" }, res);
 });
 
+// One student's full promotion history across every year — built for
+// the Students page detail hub. StudentPromotion rows are keyed and
+// indexed on student_id directly (not derived by matching names against
+// class-scoped run search, which is what listRuns's search is actually
+// for), so this is a real, correct per-student query, not a workaround.
+const getStudentPromotionHistory = catchAsync(async (req, res) => {
+  const rows = await models.StudentPromotion.findAll({
+    where: { student_id: req.params.studentId },
+    order: [["created_at", "DESC"]],
+    include: [
+      { association: models.StudentPromotion.associations.from_class },
+      { association: models.StudentPromotion.associations.to_class },
+      { association: models.StudentPromotion.associations.from_academic_year },
+      { association: models.StudentPromotion.associations.to_academic_year },
+    ],
+  });
+  appResponder(StatusCodes.OK, rows, res);
+});
+
 module.exports = {
   previewMove,
   startRun,
@@ -1432,4 +1520,5 @@ module.exports = {
   acquireYearSwitchLock,
   releaseYearSwitchLock,
   startWatchdog,
+  getStudentPromotionHistory,
 };

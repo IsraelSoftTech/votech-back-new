@@ -86,6 +86,16 @@ module.exports = (sequelize) => {
         allowNull: false,
         references: { model: "specialties", key: "id" },
       },
+      // Orientation (Form One) classes fan out to a student's chosen
+      // department at promotion time instead of a single fixed
+      // destination class — this flag is what the registration form,
+      // promotion, and the class-creation UI all key off of to know a
+      // class needs that treatment, rather than matching on name.
+      is_orientation: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+      },
     },
     {
       sequelize,

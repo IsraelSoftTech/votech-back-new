@@ -5,11 +5,21 @@ const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
 module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
   const router = express.Router();
 
-  // Get all discipline cases (students only)
+  // Get all discipline cases (students only), optionally scoped to one
+  // student — added for the Students page detail hub, which needs one
+  // student's cases, not the whole school's, every previous caller
+  // omits student_id and keeps getting everything exactly as before.
   router.get("/", authenticateToken, async (req, res) => {
     try {
+      const { student_id } = req.query;
+      const params = [];
+      let whereClause = "";
+      if (student_id) {
+        params.push(student_id);
+        whereClause = `WHERE dc.student_id = $${params.length}`;
+      }
       const query = `
-        SELECT 
+        SELECT
           dc.id,
           dc.case_description,
           dc.status,
@@ -29,9 +39,10 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
         LEFT JOIN students s ON dc.student_id = s.id
         LEFT JOIN classes c ON dc.class_id = c.id
         LEFT JOIN users u ON dc.recorded_by = u.id
+        ${whereClause}
         ORDER BY dc.recorded_at DESC
       `;
-      const result = await pool.query(query);
+      const result = await pool.query(query, params);
       res.json(result.rows);
     } catch (error) {
       console.error("Error fetching discipline cases:", error);

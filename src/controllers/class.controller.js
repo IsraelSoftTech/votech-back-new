@@ -141,6 +141,20 @@ function validateClassData(data, partial = false) {
     data.suspended = false;
   }
 
+  // is_orientation — drives whether registration captures the six ranked
+  // department choices and whether promotion later restricts this
+  // class's students to their chosen departments (see
+  // StudentDepartmentChoice). Only meaningful on create/full update, a
+  // partial update that doesn't mention it should leave the existing
+  // value alone rather than silently resetting it to false.
+  if ("is_orientation" in data) {
+    if (typeof data.is_orientation !== "boolean") {
+      errors.push("is_orientation must be a boolean");
+    }
+  } else if (!partial) {
+    data.is_orientation = false;
+  }
+
   if (errors.length > 0) {
     throw new AppError(errors.join("; "), StatusCodes.BAD_REQUEST);
   }

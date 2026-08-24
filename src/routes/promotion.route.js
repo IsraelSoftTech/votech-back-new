@@ -24,6 +24,10 @@ promotionRouter
 promotionRouter.route("/runs/:id").get(promotionControllers.getRun);
 
 promotionRouter
+  .route("/students/:studentId/history")
+  .get(promotionControllers.getStudentPromotionHistory);
+
+promotionRouter
   .route("/runs/:runId/moves/:moveId/students")
   .get(promotionControllers.getMoveStudents);
 

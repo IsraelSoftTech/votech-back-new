@@ -221,6 +221,43 @@ async function runMigrations() {
   } catch (err) {
     console.warn("⚠️ Migration (promotion_run_moves split/manual columns):", err.message);
   }
+
+  try {
+    await pool.query(`
+      ALTER TABLE classes ADD COLUMN IF NOT EXISTS is_orientation BOOLEAN NOT NULL DEFAULT false
+    `);
+    // One-time backfill for the two orientation classes that already
+    // exist today, identified by name since the flag itself didn't exist
+    // yet when they were created. Going forward the flag (set explicitly
+    // at class-creation time) is the only source of truth, this only
+    // ever needs to touch rows that predate it — it's a no-op once
+    // they're flagged.
+    await pool.query(`
+      UPDATE classes SET is_orientation = true
+      WHERE is_orientation = false AND name ILIKE '%orientation%'
+    `);
+    console.log("✅ classes.is_orientation column ready (existing Orientation classes backfilled)");
+  } catch (err) {
+    console.warn("⚠️ Migration (classes.is_orientation):", err.message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS student_department_choices (
+        id SERIAL PRIMARY KEY,
+        student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        department_id INTEGER NOT NULL REFERENCES specialties(id),
+        "rank" INTEGER NOT NULL CHECK ("rank" BETWEEN 1 AND 6),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (student_id, "rank"),
+        UNIQUE (student_id, department_id)
+      )
+    `);
+    console.log("✅ student_department_choices table ready");
+  } catch (err) {
+    console.warn("⚠️ Migration (student_department_choices):", err.message);
+  }
 }
 
 function killPort(port) {
