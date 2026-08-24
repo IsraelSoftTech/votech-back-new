@@ -27,14 +27,18 @@ const validateUser = (req, res, next) => {
   next();
 };
 
+const { injectActiveAcademicYearBody } = require("../middleware/injectActiveAcademicYear.middleware");
+
 marksRouter.use(validateUser);
 
 marksRouter
   .route("/")
-  .post(marksControllers.createMark)
+  .post(injectActiveAcademicYearBody, marksControllers.createMark)
   .get(marksControllers.readAllMarks);
 
-marksRouter.route("/save").post(marksControllers.saveMarksBatch);
+marksRouter
+  .route("/save")
+  .post(injectActiveAcademicYearBody, marksControllers.saveMarksBatch);
 marksRouter.route("/terms").get(marksControllers.readAllTerms);
 marksRouter.route("/sequences").get(marksControllers.readAllSequences);
 

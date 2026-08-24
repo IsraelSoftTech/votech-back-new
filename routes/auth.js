@@ -11,6 +11,7 @@ const {
   getUserAgent,
   JWT_SECRET,
 } = require("./utils");
+const { getActiveYear } = require("../src/services/activeAcademicYear.service");
 
 const router = express.Router();
 
@@ -116,6 +117,14 @@ router.post("/login", async (req, res) => {
     // Create user session
     await createUserSession(user.id, ipAddress, userAgent);
 
+    let activeYearId = null;
+    try {
+      const activeYear = await getActiveYear();
+      activeYearId = activeYear?.id ?? null;
+    } catch (activeYearError) {
+      console.warn("Login: could not resolve active academic year", activeYearError.message);
+    }
+
     res.json({
       token,
       user: {
@@ -125,6 +134,7 @@ router.post("/login", async (req, res) => {
         role: user.role,
         contact: user.contact,
         email: user.email,
+        active_year_id: activeYearId,
       },
     });
   } catch (error) {

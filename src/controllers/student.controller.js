@@ -2,6 +2,7 @@ const models = require("../models/index.model");
 const CRUD = require("../utils/Crud");
 const catchAsync = require("../utils/catchAsync");
 const { sequelize, DataTypes } = require("../db");
+const { applyDefaultYearListFilter } = require("../utils/academicYearScope.util");
 
 const tableName = models.Student.getTableName();
 
@@ -26,6 +27,7 @@ const readOneStudent = catchAsync(async (req, res, next) => {
 });
 
 const readAllStudents = catchAsync(async (req, res, next) => {
+  await applyDefaultYearListFilter(req);
   await CRUDStudentsModel.readAll(res, req, "", 1, 10000);
 });
 

@@ -155,6 +155,33 @@ async function runMigrations() {
   } catch (err) {
     console.warn("⚠️ Migration (property_equipment):", err.message);
   }
+
+  try {
+    const {
+      run: runAcademicYearStep1,
+    } = require("./src/db/migrations/academicYearManagement.step1");
+    await runAcademicYearStep1(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (academic year management step 1):", err.message);
+  }
+
+  try {
+    const {
+      run: runStudentIdCardsStep1,
+    } = require("./src/db/migrations/studentIdCards.step1");
+    await runStudentIdCardsStep1(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (student id cards step 1):", err.message);
+  }
+
+  try {
+    const {
+      run: runStudentIdCardsStep2,
+    } = require("./src/db/migrations/studentIdCards.step2");
+    await runStudentIdCardsStep2(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (student id cards step 2):", err.message);
+  }
 }
 
 function killPort(port) {

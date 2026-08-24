@@ -5,6 +5,7 @@ const catchAsync = require("../utils/catchAsync");
 const CRUD = require("../utils/Crud");
 const appResponder = require("../utils/appResponder");
 const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
+const { applyDefaultYearListFilter } = require("../utils/academicYearScope.util");
 
 const AcademicBandModel = models.AcademicBand;
 const tableName = AcademicBandModel.getTableName();
@@ -123,6 +124,7 @@ const readOneAcademicBand = catchAsync(async (req, res, next) => {
 });
 
 const readAllAcademicBands = catchAsync(async (req, res, next) => {
+  await applyDefaultYearListFilter(req);
   await CRUDAcademicBand.readAll(res, req, "", 1, 100, include);
 });
 

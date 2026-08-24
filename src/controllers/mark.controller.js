@@ -7,6 +7,7 @@ const catchAsync = require("../utils/catchAsync");
 const CRUD = require("../utils/Crud");
 const appResponder = require("../utils/appResponder");
 const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
+const { applyDefaultYearListFilter } = require("../utils/academicYearScope.util");
 
 const MarksModel = models.Mark;
 const TermsModel = models.Term;
@@ -137,6 +138,7 @@ const readOneMark = catchAsync(async (req, res) => {
 });
 
 const readAllMarks = catchAsync(async (req, res) => {
+  await applyDefaultYearListFilter(req);
   await CRUDMarks.readAll(res, req, "student_id", 1, 300);
 });
 

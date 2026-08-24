@@ -9,6 +9,10 @@ const marks = require("./Mark.model")(sequelize, DataTypes);
 const users = require("./users")(sequelize, DataTypes);
 const students = require("./students")(sequelize, DataTypes);
 const AcademicYear = require("./AcademicYear.model")(sequelize, DataTypes);
+const AcademicYearSwitchLog = require("./AcademicYearSwitchLog.model")(
+  sequelize,
+  DataTypes
+);
 const Term = require("./Term.model")(sequelize, DataTypes);
 const Sequence = require("./Sequence.model")(sequelize, DataTypes);
 const ReportCardComment = require("./ReportCard.model")(sequelize, DataTypes);
@@ -623,6 +627,7 @@ const models = {
   User: users,
   Student: students,
   AcademicYear,
+  AcademicYearSwitchLog,
   Term,
   Sequence,
   ReportCardComment,

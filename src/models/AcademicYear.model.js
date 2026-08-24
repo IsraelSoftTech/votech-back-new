@@ -13,6 +13,26 @@ module.exports = (sequelize) => {
       AcademicYear.hasMany(models.Mark, {
         foreignKey: "academic_year_id",
       });
+      if (models.AcademicYearSwitchLog) {
+        AcademicYear.hasMany(models.AcademicYearSwitchLog, {
+          foreignKey: "from_year_id",
+          as: "switchLogsFrom",
+        });
+        AcademicYear.hasMany(models.AcademicYearSwitchLog, {
+          foreignKey: "to_year_id",
+          as: "switchLogsTo",
+        });
+      }
+      if (models.User) {
+        AcademicYear.belongsTo(models.User, {
+          foreignKey: "switched_by",
+          as: "switchedByUser",
+        });
+        AcademicYear.belongsTo(models.User, {
+          foreignKey: "reactivated_by",
+          as: "reactivatedByUser",
+        });
+      }
     }
   }
 
@@ -55,6 +75,27 @@ module.exports = (sequelize) => {
       status: {
         type: DataTypes.ENUM("active", "archived"),
         allowNull: false,
+      },
+      switched_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      switched_by: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+      },
+      reactivated_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      reactivated_by: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+      },
+      is_locked_for_editing: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
       },
     },
     {

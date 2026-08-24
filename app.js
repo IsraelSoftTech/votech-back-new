@@ -121,6 +121,7 @@ const assetCategoriesRouter = require("./routes/asset-categories");
 const budgetHeadsRouter = require("./routes/budget-heads");
 const messagesRouter = require("./routes/messages");
 const studentsRouter = require("./routes/students");
+const studentIdCardsRouter = require("./routes/student-id-cards");
 const monitorRouter = require("./routes/monitor");
 const vocationalRouter = require("./routes/vocational");
 const hodsRouter = require("./routes/hods");
@@ -145,6 +146,9 @@ const contentRouter = require("./src/routes/content.route");
 const globalErrorController = require("./src/controllers/error.controller");
 const departmentRouter = require("./src/routes/department.route");
 const { readOnlyGate } = require("./src/controllers/contextSwitch.controller");
+const {
+  enforceActiveYearWrites,
+} = require("./src/middleware/enforceActiveYearWrites.middleware");
 const desktopRouter = require("./src/desktop-module/desktop.routes");
 
 app.get("/api/test", (req, res) => {
@@ -173,6 +177,7 @@ if (process.env.NODE_ENV === "desktop") {
 app.use("/api", authRouter);
 
 app.use(readOnlyGate);
+app.use(enforceActiveYearWrites);
 
 app.use("/api/users", usersRouter);
 app.use("/api/profile", profileRouter);
@@ -197,6 +202,7 @@ app.use("/api/monitor", monitorRouter);
 app.use("/api/vocational", vocationalRouter);
 app.use("/api/hods", hodsRouter);
 app.use("/api/students", studentsRouter);
+app.use("/api/student-id-cards", studentIdCardsRouter);
 // app.use("/api/teacher-discipline-cases", teacherDisciplineRouter);
 
 

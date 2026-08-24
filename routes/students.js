@@ -5,6 +5,17 @@ const ftpService = require("../ftp-service");
 const path = require("path");
 
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+const {
+  pickYearIdFromObject,
+  injectActiveYearIntoBody,
+} = require("../src/utils/academicYearScope.util");
+const { getActiveYear } = require("../src/services/activeAcademicYear.service");
+const {
+  createIdCardForStudent,
+} = require("../src/services/studentIdCard.service");
+const {
+  generateThumbFromUploadBuffer,
+} = require("../src/services/studentPhotoThumb.service");
 
 const router = express.Router();
 const upload =
@@ -22,14 +33,28 @@ const fileHandler = require("../src/services/fileStorage.service");
 // List students
 router.get("/", async (req, res) => {
   try {
-    const result = await pool.query(`
+    let yearFilter = pickYearIdFromObject(req.query);
+    if (!yearFilter && req.query.all_years !== "true") {
+      const active = await getActiveYear();
+      yearFilter = active?.id ?? null;
+    }
+
+    const params = [];
+    let sql = `
       SELECT s.*, c.name as class_name, sp.name as specialty_name 
       FROM students s 
       LEFT JOIN classes c ON s.class_id = c.id 
       LEFT JOIN specialties sp ON s.specialty_id = sp.id 
-      WHERE s."deletedAt" IS NULL
-      ORDER BY s.full_name
-    `);
+      WHERE s."deletedAt" IS NULL`;
+
+    if (yearFilter) {
+      params.push(Number(yearFilter));
+      sql += ` AND s.academic_year_id = $${params.length}`;
+    }
+
+    sql += " ORDER BY s.full_name";
+
+    const result = await pool.query(sql, params);
     res.json(result.rows);
   } catch (e) {
     res.status(500).json({ error: "Failed to fetch students" });
@@ -60,6 +85,13 @@ router.post(
   handleFilesMiddleware,
   async (req, res) => {
     const body = req.body || {};
+    req.body = body;
+    try {
+      await injectActiveYearIntoBody(req);
+    } catch (_) {
+      /* no active year configured — registration may still proceed if column nullable */
+    }
+
     const full_name = body.full_name || body.fullName;
     const student_id = body.student_id || body.studentId;
     if (!full_name || !student_id)
@@ -85,7 +117,8 @@ router.post(
       mother_name: body.mother_name || body.mother,
       class_id: body.class_id || body.class || null,
       specialty_id: body.specialty_id || body.dept || null,
-      academic_year_id: body.academic_year_id || body.academicYear || null,
+      academic_year_id:
+        body.academic_year_id || body.academicYear || req.body.academic_year_id || null,
       guardian_contact: body.guardian_contact || body.fatherContact || null,
       mother_contact: body.mother_contact || body.motherContact || null,
       photo_url: null,
@@ -139,9 +172,24 @@ router.post(
         ChangeTypes.create,
         req.user
       );
+
+      let idCard = null;
+      try {
+        idCard = await createIdCardForStudent(result.rows[0].id);
+      } catch (cardErr) {
+        console.error("Auto ID card creation failed:", cardErr);
+      }
+
+      if (req.file?.buffer) {
+        generateThumbFromUploadBuffer(result.rows[0].id, req.file.buffer).catch(
+          (err) => console.warn("Student thumb on create:", err.message)
+        );
+      }
+
       res.status(201).json({
         message: "Student created successfully",
         student: result.rows[0],
+        idCard,
       });
     } catch (e) {
       console.error("Create student error:", e);
@@ -151,6 +199,26 @@ router.post(
     }
   }
 );
+
+// Lightweight student photo thumbnail (cached, ~120×150 JPEG)
+router.get("/:id/photo/thumb", authenticateToken, async (req, res) => {
+  try {
+    const {
+      getStudentPhotoThumb,
+    } = require("../src/services/studentPhotoThumb.service");
+    const refresh = req.query.refresh === "1" || req.query.refresh === "true";
+    const buffer = await getStudentPhotoThumb(req.params.id, { refresh });
+    if (!buffer) {
+      return res.status(404).json({ error: "Photo not found" });
+    }
+    res.setHeader("Content-Type", "image/jpeg");
+    res.setHeader("Cache-Control", "public, max-age=604800");
+    res.send(buffer);
+  } catch (e) {
+    console.error("Student photo thumb error:", e);
+    res.status(500).json({ error: "Failed to load photo thumbnail" });
+  }
+});
 
 // Update student
 router.put(
@@ -192,6 +260,9 @@ router.put(
         update.photo_url = await ftpService.uploadBuffer(
           req.file.buffer,
           remotePath
+        );
+        generateThumbFromUploadBuffer(id, req.file.buffer).catch((err) =>
+          console.warn("Student thumb on update:", err.message)
         );
       }
       // Only update columns that exist

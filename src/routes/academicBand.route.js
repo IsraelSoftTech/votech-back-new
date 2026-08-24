@@ -1,21 +1,26 @@
 const express = require("express");
 
 const academicBandControllers = require("../controllers/accademicBand.controller");
-const { protect, restrictTo } = require("../controllers/auth.controller");
+const { protect } = require("../controllers/auth.controller");
+const {
+  injectActiveAcademicYearBody,
+} = require("../middleware/injectActiveAcademicYear.middleware");
 
 const academicBandRouter = express.Router();
 
 academicBandRouter.use(protect);
-// academicBandRouter.use(restrictTo("Admin1", "Admin3"));
 
 academicBandRouter
   .route("/")
-  .post(academicBandControllers.createAcademicBand)
+  .post(injectActiveAcademicYearBody, academicBandControllers.createAcademicBand)
   .get(academicBandControllers.readAllAcademicBands);
 
 academicBandRouter
   .route("/save")
-  .post(academicBandControllers.saveAcademicBandsBatch);
+  .post(
+    injectActiveAcademicYearBody,
+    academicBandControllers.saveAcademicBandsBatch
+  );
 
 academicBandRouter
   .route("/:id")
