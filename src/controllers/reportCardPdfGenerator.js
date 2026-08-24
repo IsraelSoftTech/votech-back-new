@@ -26,7 +26,7 @@ const { StatusCodes } = require("http-status-codes");
 const catchAsync = require("../utils/catchAsync");
 const AppError = require("../utils/AppError");
 const models = require("../models/index.model");
-const { buildReportCardsFromMarks } = require("./reportCard.controller");
+const { buildReportCardsFromMarks, attachAcademicRemarks } = require("./reportCard.controller");
 
 /* ═══════════════════════════════════════════════════════════════════
    1. FONT & PRINTER SETUP
@@ -770,6 +770,25 @@ function buildPerformanceSummary(data, termCfg) {
     decorationColor: C.primary,
   });
 
+  // Fills what used to be two always-blank trailing cells on this row.
+  // Measured against the real embedded font (see reportCardPdfGenerator
+  // remark-placement investigation): the longest possible value,
+  // "Promoted on Condition", only fits on one line at 7pt when the label
+  // and value share one merged (colSpan: 2) cell — kept as two separate
+  // cells like the rest of the row, it wraps.
+  const remark = data.academicRemark;
+  const remarkTone =
+    { good: C.excellent, bad: C.red, warn: C.fairlyGood }[remark?.tone] || C.dark;
+  const remarkCell = remark
+    ? {
+        colSpan: 2,
+        text: [
+          { text: "ACADEMIC REMARK: ", fontSize: 7, bold: true, color: C.primary },
+          { text: remark.text.toUpperCase(), fontSize: 7, bold: true, color: remarkTone },
+        ],
+      }
+    : { colSpan: 2, text: "" };
+
   return {
     unbreakable: true,
     table: {
@@ -788,8 +807,8 @@ function buildPerformanceSummary(data, termCfg) {
           val(cs.classAverage != null ? `${fmtAvg(cs.classAverage)}/20` : "—"),
           lbl(`CUMUL. (${termCfg.getCumulativeLabel(data.termTotals)}):`),
           val(cumAvg != null ? `${fmtAvg(cumAvg)}/20` : "N/A"),
-          { text: "" },
-          { text: "" },
+          remarkCell,
+          {},
         ],
       ],
     },
@@ -1027,26 +1046,6 @@ function buildBottomSection(data, gradingScale) {
             fontSize: 6.5,
             bold: true,
             color: C.dark,
-            alignment: "right",
-            width: "*",
-          },
-        ],
-        margin: [0, 0, 0, 1],
-      },
-      {
-        columns: [
-          {
-            text: "Decision:",
-            fontSize: 6.5,
-            bold: true,
-            color: C.primary,
-            width: "auto",
-          },
-          {
-            text: admin.decision || "",
-            fontSize: 6.5,
-            bold: true,
-            color: C.good,
             alignment: "right",
             width: "*",
           },
@@ -1525,6 +1524,7 @@ const bulkPdfDirect = catchAsync(async (req, res, next) => {
     "";
   const termLabel = termKeyToLabel(termKey);
   const cards = buildReportCardsFromMarks(marks, classMaster, termKey);
+  await attachAcademicRemarks(cards, academicYearId, classId, termKey);
   const gradingScale = prepareGrading(gradingRaw);
 
   // ── Load logo once (cached after first call) ──
@@ -1624,6 +1624,8 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
       )
     );
   }
+
+  await attachAcademicRemarks([card], academicYearId, classId, termKey);
 
   const gradingScale = prepareGrading(gradingRaw);
   const logoBase64 = loadLogoBase64();

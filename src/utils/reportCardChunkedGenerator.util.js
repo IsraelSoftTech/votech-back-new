@@ -27,7 +27,10 @@ const crypto = require("crypto");
 const { execFile } = require("child_process");
 const { getBinaryPath, getLibDir } = require("../../scripts/ensureQpdf");
 const models = require("../models/index.model");
-const { buildReportCardsFromMarks } = require("../controllers/reportCard.controller");
+const {
+  buildReportCardsFromMarks,
+  attachAcademicRemarks,
+} = require("../controllers/reportCard.controller");
 const {
   printer,
   buildDocDefinition,
@@ -175,6 +178,7 @@ async function generateClassReportCardsToFile(academicYearId, classId, term, onP
   // the render step, which is the part that scales badly per student.
   const cards = buildReportCardsFromMarks(marks, classMaster, termKey);
   logMem("after buildReportCardsFromMarks");
+  await attachAcademicRemarks(cards, academicYearId, classId, termKey);
   const gradingScale = prepareGrading(gradingRaw);
   const logoBase64 = loadLogoBase64();
   logMem("after grading+logo load");

@@ -8,6 +8,7 @@ const { StatusCodes } = require("http-status-codes");
 const puppeteer = require("puppeteer");
 const fs = require("fs");
 const path = require("path");
+const { decidePromotion } = require("../utils/promotionDecision.util");
 
 const sequencesFormat = {
   seq1: { name: "Sequence 1", weight: 1 },
@@ -115,6 +116,12 @@ function buildReportCardsFromMarks(marks, classMaster, termKey = "term3") {
         code: m.subject.code,
         title: m.subject.name,
         coef: m.subject.coefficient,
+        // Needed only to key the promotion-requirement lookup in
+        // computeAcademicRemark (compulsory_general_subject_ids /
+        // compulsory_professional_subject_ids are numeric subject ids,
+        // the Subject include itself never selects id — see
+        // fetchMarksWithIncludes — but the Mark row's own FK does).
+        subjectId: m.subject_id,
         teacher:
           matchingClassSubject?.teacher?.name ||
           matchingClassSubject?.teacher?.username ||
@@ -285,6 +292,80 @@ function buildReportCardsFromMarks(marks, classMaster, termKey = "term3") {
   studentsArray.forEach((st) => (st.classStatistics = classStats));
 
   return studentsArray;
+}
+
+// ─── Academic Remark ────────────────────────────────────────────────
+//
+// Reuses the promotion module's own decision algorithm (decidePromotion)
+// rather than re-deriving pass/fail rules here, so a report card's remark
+// can never silently drift from what the promotion engine would actually
+// decide for that student. Only the DATA differs: promotion runs its own
+// leaner query (see promotionMath.js's deliberate duplication note), this
+// feeds it straight from the report card's already-computed `card`
+// object (term/annual averages, per-subject finalAvg) — no extra query
+// per student, so bulk generation's memory profile is unaffected.
+//
+// Term 1 / Term 2: binary signal — "Academic Warning" if the student
+// would not be a clean "promoted" using that term's own average and
+// subject averages, "Satisfactory" otherwise. The stakeholder doc only
+// specifies the warning case; "Satisfactory" fills the field for
+// everyone else rather than leaving it visibly blank next to peers who
+// do have a remark.
+// Term 3 / Annual (end of year): the real three-way decision — Failed,
+// Promoted, or Promoted on Condition.
+function computeAcademicRemark(card, requirement, termKey) {
+  if (!requirement || requirement.decision_mode === "manual") return null;
+
+  const isEndOfYear = termKey === "term3" || termKey === "annual";
+  const totalsKey = isEndOfYear ? "annual" : termKey;
+  const subjectAvgKey = isEndOfYear ? "finalAvg" : `${termKey}Avg`;
+
+  const overallAverage = card.termTotals?.[totalsKey]?.average;
+  if (!overallAverage) return null; // no marks recorded for this period yet
+
+  const subjectAverages = new Map();
+  const tagCategory = (subjects, category) => {
+    for (const s of subjects || []) {
+      if (s.subjectId == null) continue;
+      subjectAverages.set(s.subjectId, {
+        annual: s.scores?.[subjectAvgKey] ?? null,
+        category,
+        name: s.title,
+      });
+    }
+  };
+  tagCategory(card.generalSubjects, "general");
+  tagCategory(card.professionalSubjects, "professional");
+  tagCategory(card.practicalSubjects, "practical");
+
+  const { decision } = decidePromotion(overallAverage, subjectAverages, requirement);
+
+  if (!isEndOfYear) {
+    return decision === "promoted"
+      ? { text: "Satisfactory", tone: "good" }
+      : { text: "Academic Warning", tone: "bad" };
+  }
+
+  if (decision === "failed") return { text: "Failed", tone: "bad" };
+  if (decision === "promoted_on_condition") {
+    return { text: "Promoted on Condition", tone: "warn" };
+  }
+  return { text: "Promoted", tone: "good" };
+}
+
+// One requirement fetch per class (not per student), then a cheap
+// in-memory pass over already-built cards — shared by every report-card
+// generation path (single, bulk-direct, chunked session) so they all
+// compute the remark identically instead of triplicating the fetch+loop.
+async function attachAcademicRemarks(cards, academicYearId, classId, termKey) {
+  const requirement = await models.PromotionRequirement.findOne({
+    where: { academic_year_id: academicYearId, class_id: classId },
+    raw: true,
+  });
+  for (const card of cards) {
+    card.academicRemark = computeAcademicRemark(card, requirement, termKey);
+  }
+  return cards;
 }
 
 // BULK — unchanged behavior, but now uses the fixed builder
@@ -3634,4 +3715,6 @@ module.exports = {
   bulkReportCardsHTML,
   bulkReportCardsHTMLTest, // Add this export
   buildReportCardsFromMarks,
+  computeAcademicRemark,
+  attachAcademicRemarks,
 };
