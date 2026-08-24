@@ -7,7 +7,8 @@
     "start": "node index.js",
     "dev": "cross-env NODE_ENV=development PORT=5000 nodemon index.js",
     "load-schema": "node load-schema.js",
-    "create-admin": "node create-admin.js"
+    "create-admin": "node create-admin.js",
+    "postinstall": "node scripts/ensureQpdf.js"
   },
   "dependencies": {
     "20": "^3.1.9",
@@ -20,6 +21,7 @@
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "express-validator": "^7.3.1",
+    "extract-zip": "^2.0.1",
     "ftp": "^0.3.10",
     "http-status-codes": "^2.2.0",
     "joi": "^18.0.0",

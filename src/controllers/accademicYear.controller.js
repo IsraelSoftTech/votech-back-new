@@ -6,6 +6,11 @@ const CRUD = require("../utils/Crud");
 const { Op } = require("sequelize");
 const models = require("../models/index.model");
 const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
+const { verifyPasswordAndRole } = require("../utils/freshAuth.util");
+const {
+  acquireYearSwitchLock,
+  releaseYearSwitchLock,
+} = require("./promotion.controller");
 
 const AcademicYearModel = require("../models/AcademicYear.model")(
   sequelize,
@@ -81,6 +86,29 @@ async function validateAcademicYearInput(data, id = null, transaction = null) {
     transaction,
   });
   if (existingName) throw new AppError("Academic year name must be unique");
+}
+
+// Classes that still have active students sitting in the given academic
+// year, this is the authoritative "not yet promoted" signal: a completed
+// promotion move already moves its students' academic_year_id forward, so
+// anyone left behind here genuinely was never promoted (or was reversed
+// back), regardless of what the PromotionRunMove history says happened.
+async function getStragglerClasses(academicYearId, transaction = null) {
+  const rows = await models.Student.findAll({
+    where: { academic_year_id: academicYearId, status: "active" },
+    attributes: ["class_id"],
+    group: ["class_id"],
+    raw: true,
+    transaction,
+  });
+  const classIds = [...new Set(rows.map((r) => r.class_id).filter(Boolean))];
+  if (!classIds.length) return [];
+  return models.Class.findAll({
+    where: { id: { [Op.in]: classIds } },
+    attributes: ["id", "name"],
+    raw: true,
+    transaction,
+  });
 }
 
 async function setOthersArchived(excludeId = null, transaction = null) {
@@ -185,7 +213,8 @@ async function createDefaultTermsAndSequences(academicYearId, transaction) {
 // ———————————— Controllers ————————————
 
 const createAcademicYear = catchAsync(async (req, res, next) => {
-  const payload = req.body;
+  const payload = { ...req.body };
+  delete payload.status; // status is never set directly, see below
 
   const startYear = new Date(payload.start_date).getFullYear();
   const endYear = new Date(payload.end_date).getFullYear();
@@ -195,11 +224,11 @@ const createAcademicYear = catchAsync(async (req, res, next) => {
     // Validate input
     await validateAcademicYearInput(payload, null, t);
 
-    // Archive other active years if needed
-    if (payload.status === "active") {
-      const affected = await setOthersArchived(null, t);
-      console.log(`[AY:create] Archived ${affected} active academic year(s).`);
-    }
+    // The very first academic year ever created activates itself, there
+    // is nothing to switch from yet. Every year created after that starts
+    // archived, switchAcademicYear is the only way to make it active.
+    const anyYearExists = await AcademicYearModel.findOne({ transaction: t });
+    payload.status = anyYearExists ? "archived" : "active";
 
     // Create academic year
     const ay = await AcademicYearModel.create(payload, { transaction: t });
@@ -254,12 +283,29 @@ const readOneAcademicYear = catchAsync(async (req, res, next) => {
 });
 
 const readAllAcademicYears = catchAsync(async (req, res, next) => {
+  // Only Admin1 and Admin3 manage academic years and need the full list
+  // (archived years included). Every other role only ever operates in the
+  // active year, so that is all they are shown, regardless of what they
+  // pass in the query string.
+  const privileged = req.user.role === "Admin1" || req.user.role === "Admin3";
+  if (!privileged) {
+    req.query.status = "active";
+  }
   await CRUDAcademicYear.readAll(res, req, "", 1, 100);
 });
 
 const updateAcademicYear = catchAsync(async (req, res, next) => {
   const id = req.params.id;
-  const payload = req.body;
+  const payload = { ...req.body };
+
+  if (payload.status !== undefined) {
+    return next(
+      new AppError(
+        "The active academic year cannot be changed here. Use the year switch action to make a different year active.",
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
 
   const updated = await sequelize.transaction(async (t) => {
     // Fetch existing record
@@ -271,14 +317,6 @@ const updateAcademicYear = catchAsync(async (req, res, next) => {
 
     // Validate input
     await validateAcademicYearInput(payload, id, t);
-
-    // Archive other active years if needed
-    if (payload.status === "active") {
-      const affected = await setOthersArchived(id, t);
-      console.log(
-        `[AY:update] Archived ${affected} other active academic year(s).`
-      );
-    }
 
     // Perform update
     const [affected] = await AcademicYearModel.update(payload, {
@@ -333,6 +371,28 @@ const deleteAcademicYear = catchAsync(async (req, res, next) => {
       new AppError(
         "Cannot delete an active academic year. Please archive it first.",
         StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+
+  const [studentCount, markCount, promotionRunCount] = await Promise.all([
+    models.Student.count({ where: { academic_year_id: id } }),
+    models.Mark.count({ where: { academic_year_id: id } }),
+    models.PromotionRun.count({
+      where: {
+        [Op.or]: [
+          { academic_year_from_id: id },
+          { academic_year_to_id: id },
+        ],
+      },
+    }),
+  ]);
+
+  if (studentCount || markCount || promotionRunCount) {
+    return next(
+      new AppError(
+        `Cannot delete "${academicYear.name}", it still has real data attached: ${studentCount} student(s), ${markCount} mark(s), ${promotionRunCount} promotion run(s). Deleting it would destroy that history.`,
+        StatusCodes.CONFLICT
       )
     );
   }
@@ -409,6 +469,153 @@ const deleteAcademicYear = catchAsync(async (req, res, next) => {
   });
 });
 
+// ─── Year switching (Admin3 only) ───────────────────────────────────────
+//
+// The active year moves forward only, and only one year at a time is ever
+// "active" globally. This never touches archived-year data directly, it
+// only flips which year is current. Retroactive edits to an archived year
+// go through a grant instead (see academicYearGrant.controller.js).
+
+// Read-only preview so the frontend can show the warning/checklist before
+// the admin commits to anything, no re-auth needed just to look.
+const getSwitchChecklist = catchAsync(async (req, res) => {
+  const activeYear = await AcademicYearModel.findOne({ where: { status: "active" } });
+
+  if (!activeYear) {
+    return res.status(StatusCodes.OK).json({
+      success: true,
+      data: {
+        active_year: null,
+        default_next_year: null,
+        other_years: [],
+        blocking_classes: [],
+        promotion_run_in_progress: false,
+      },
+    });
+  }
+
+  const laterYears = await AcademicYearModel.findAll({
+    where: { start_date: { [Op.gt]: activeYear.start_date } },
+    order: [["start_date", "ASC"]],
+  });
+  const blockingClasses = await getStragglerClasses(activeYear.id);
+  const lock = await models.PromotionRunLock.findByPk(1);
+
+  res.status(StatusCodes.OK).json({
+    success: true,
+    data: {
+      active_year: activeYear,
+      default_next_year: laterYears[0] || null,
+      other_years: laterYears.slice(1),
+      blocking_classes: blockingClasses,
+      promotion_run_in_progress: !!(lock && lock.current_run_id),
+    },
+  });
+});
+
+const switchAcademicYear = catchAsync(async (req, res, next) => {
+  const { target_year_id, password, confirm_non_default } = req.body || {};
+
+  await verifyPasswordAndRole(req.user.id, password, "Admin3");
+
+  if (!target_year_id) {
+    return next(
+      new AppError("target_year_id is required", StatusCodes.BAD_REQUEST)
+    );
+  }
+  const targetYear = await AcademicYearModel.findByPk(target_year_id);
+  if (!targetYear) {
+    return next(
+      new AppError("Target academic year not found", StatusCodes.NOT_FOUND)
+    );
+  }
+  if (targetYear.status === "active") {
+    return next(
+      new AppError("That year is already the active year", StatusCodes.BAD_REQUEST)
+    );
+  }
+
+  const activeYear = await AcademicYearModel.findOne({ where: { status: "active" } });
+
+  if (activeYear) {
+    if (new Date(targetYear.start_date) <= new Date(activeYear.start_date)) {
+      return next(
+        new AppError(
+          `Cannot switch to "${targetYear.name}", it does not start after the currently active year "${activeYear.name}". The active year can only move forward in time.`,
+          StatusCodes.BAD_REQUEST
+        )
+      );
+    }
+
+    const laterYears = await AcademicYearModel.findAll({
+      where: { start_date: { [Op.gt]: activeYear.start_date } },
+      order: [["start_date", "ASC"]],
+    });
+    const defaultNext = laterYears[0];
+    if (defaultNext && defaultNext.id !== targetYear.id && !confirm_non_default) {
+      return next(
+        new AppError(
+          `"${targetYear.name}" skips over "${defaultNext.name}", which would normally come next. If this is intentional, resend the request with confirm_non_default: true.`,
+          StatusCodes.CONFLICT
+        )
+      );
+    }
+
+    const stragglers = await getStragglerClasses(activeYear.id);
+    if (stragglers.length) {
+      return next(
+        new AppError(
+          `Cannot switch years yet, ${stragglers.length} class(es) still have active students in "${activeYear.name}" who have not been promoted: ${stragglers
+            .map((c) => c.name)
+            .join(", ")}. Run or finish their promotion first.`,
+          StatusCodes.CONFLICT
+        )
+      );
+    }
+  }
+
+  const lockAcquired = await acquireYearSwitchLock();
+  if (!lockAcquired) {
+    return next(
+      new AppError(
+        "A promotion run is currently in progress. Wait for it to finish before switching academic years.",
+        StatusCodes.CONFLICT
+      )
+    );
+  }
+
+  try {
+    const result = await sequelize.transaction(async (t) => {
+      await setOthersArchived(targetYear.id, t);
+      await AcademicYearModel.update(
+        { status: "active" },
+        { where: { id: targetYear.id }, transaction: t }
+      );
+      const fresh = await AcademicYearModel.findByPk(targetYear.id, { transaction: t });
+
+      await logChanges(
+        AcademicYearModel.tableName,
+        targetYear.id,
+        ChangeTypes.update,
+        req.user,
+        {
+          status: { before: "archived", after: "active" },
+          switched_from: {
+            before: activeYear ? activeYear.name : null,
+            after: fresh.name,
+          },
+        }
+      );
+
+      return fresh;
+    });
+
+    res.status(StatusCodes.OK).json({ success: true, data: result });
+  } finally {
+    await releaseYearSwitchLock();
+  }
+});
+
 module.exports = {
   initAcademicYear,
   createAcademicYear,
@@ -416,4 +623,6 @@ module.exports = {
   readAllAcademicYears,
   updateAcademicYear,
   deleteAcademicYear,
+  getSwitchChecklist,
+  switchAcademicYear,
 };

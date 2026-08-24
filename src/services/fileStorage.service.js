@@ -51,30 +51,25 @@ const config = {
   remoteUrlBase: process.env.FTP_BASE_URL || "",
 };
 
-// Ensure remote FTP directory exists
+// Ensure remote FTP directory exists. This used to pre-check each path
+// segment with client.list() and only mkdir on error, but this FTP server
+// (st60307.ispot.cc) returns an empty list with NO error for a directory
+// that doesn't exist yet, instead of an ENOENT-style error — so that check
+// always concluded "already exists" and silently skipped the real mkdir,
+// which is exactly what was making every report-card upload fail with
+// "Can't open that file: No such file or directory" (confirmed directly
+// against the live server, see scripts/debugFtpMkdir.js). mkdir(dir, true)
+// (recursive) is a no-op error-free call when the directory already
+// exists on this server too, so just always call it — no existence check
+// needed at all.
 function ensureRemoteDir(client, dir) {
-  console.log(`Creating directory structure: ${dir}`);
-  const parts = dir.split("/").filter(Boolean);
-
-  return parts.reduce((promise, _, idx) => {
-    const segment = "/" + parts.slice(0, idx + 1).join("/");
-    return promise.then(
-      () =>
-        new Promise((res, rej) => {
-          client.list(segment, (err) => {
-            if (err) {
-              console.log(`Creating directory: ${segment}`);
-              client.mkdir(segment, true, (mkErr) =>
-                mkErr ? rej(mkErr) : res()
-              );
-            } else {
-              console.log(`Directory already exists: ${segment}`);
-              res();
-            }
-          });
-        })
-    );
-  }, Promise.resolve());
+  return new Promise((resolve, reject) => {
+    console.log(`Ensuring directory exists: ${dir}`);
+    client.mkdir(dir, true, (err) => {
+      if (err) return reject(err);
+      resolve();
+    });
+  });
 }
 
 // Test if uploaded file is available via HTTP
@@ -433,6 +428,16 @@ async function handleFileUploads(req, maxSizePerFileInMB, allowedExtensions) {
     : handleFileUploadsDevelopment(req);
 }
 
+// The "ftp" package only times out the initial connect/PASV handshake, not a
+// stalled data transfer (a half-open TCP connection just sits there). That's
+// what left report card runs stuck "running" forever: the whole session
+// executor is a bare `await` on this promise, so if it never settles, the
+// run's status never changes, the lock never releases, and no failure
+// notification ever fires. A hard watchdog guarantees this always settles
+// one way or another, same principle as the desktop sync handler's 30s
+// batch-ack timeout (sync.handler.js) — never await a network op unbounded.
+const FTP_UPLOAD_TIMEOUT_MS = Number(process.env.FTP_UPLOAD_TIMEOUT_MS) || 5 * 60 * 1000;
+
 async function uploadSingleFileToFTP(localFilePath, remoteFileName, ftpConfig) {
   return new Promise((resolve, reject) => {
     console.log(`\n=== FTP Upload Details ===`);
@@ -450,14 +455,38 @@ async function uploadSingleFileToFTP(localFilePath, remoteFileName, ftpConfig) {
 
     const client = new Client();
 
+    let settled = false;
+    const settle = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(watchdog);
+      fn(arg);
+    };
+
+    const watchdog = setTimeout(() => {
+      console.error(
+        `❌ FTP upload watchdog fired after ${FTP_UPLOAD_TIMEOUT_MS}ms — connection or transfer stalled, forcing it closed`
+      );
+      try {
+        client.end();
+      } catch (endErr) {
+        // Best-effort, the connection is already unresponsive.
+      }
+      settle(reject, new Error(`FTP upload timed out after ${FTP_UPLOAD_TIMEOUT_MS}ms`));
+    }, FTP_UPLOAD_TIMEOUT_MS);
+
     const remoteDir = ftpConfig.remoteDir || config.remoteDir || "/";
     const remotePath = path.posix
       .join(remoteDir, remoteFileName)
       .split(" ")
       .join("");
-    const fileUrl = (remoteDir.replace("/", "") + remoteFileName)
-      .split(" ")
-      .join("");
+    // remotePath is already an absolute, correctly-joined path (leading
+    // "/"), so baseUrl (no trailing slash) + remotePath is a clean join —
+    // the old (remoteDir.replace("/", "") + remoteFileName) construction
+    // dropped the separating slash whenever remoteDir was just "/",
+    // producing URLs like ".../votechs7academygroupreport-cards/..." with
+    // the two path segments jammed together.
+    const fileUrl = remotePath;
     const baseUrl = ftpConfig.remoteUrlBase || config.remoteUrlBase || "";
 
     let uploadStarted = false;
@@ -466,8 +495,13 @@ async function uploadSingleFileToFTP(localFilePath, remoteFileName, ftpConfig) {
       console.log("✓ FTP connection established");
 
       try {
-        // Ensure remote directory exists
-        await ensureRemoteDir(client, remoteDir);
+        // Ensure remote directory exists. remoteFileName can itself carry a
+        // subdirectory prefix (e.g. "report-cards/session-1-class-2.pdf"),
+        // so the directory that actually needs to exist is remotePath's own
+        // parent, not just the configured base remoteDir — creating only
+        // the base and then PUTting into a missing subdirectory is exactly
+        // what was making report card uploads fail.
+        await ensureRemoteDir(client, path.posix.dirname(remotePath));
 
         console.log(`Uploading to: ${remotePath}`);
 
@@ -477,7 +511,7 @@ async function uploadSingleFileToFTP(localFilePath, remoteFileName, ftpConfig) {
           console.error("Read stream error:", err);
           client.end();
           if (!uploadStarted) {
-            reject(new Error(`Failed to read file: ${err.message}`));
+            settle(reject, new Error(`Failed to read file: ${err.message}`));
           }
         });
 
@@ -487,7 +521,7 @@ async function uploadSingleFileToFTP(localFilePath, remoteFileName, ftpConfig) {
           if (err) {
             console.error("❌ FTP PUT error:", err);
             client.end();
-            return reject(new Error(`FTP PUT failed: ${err.message}`));
+            return settle(reject, new Error(`FTP PUT failed: ${err.message}`));
           }
 
           console.log("✓ File uploaded successfully");
@@ -500,8 +534,14 @@ async function uploadSingleFileToFTP(localFilePath, remoteFileName, ftpConfig) {
               console.log("✓ File permissions set");
             }
 
-            // Verify file exists
-            client.list(remoteDir, (listErr, list) => {
+            // Verify file exists. remoteFileName may carry a subdirectory
+            // prefix, list() only returns basenames within the listed
+            // directory, so both the listed dir and the comparison target
+            // must be the file's own parent dir / basename, not the
+            // possibly-different configured base remoteDir.
+            const uploadDir = path.posix.dirname(remotePath);
+            const uploadBasename = path.posix.basename(remoteFileName);
+            client.list(uploadDir, (listErr, list) => {
               client.end();
 
               if (listErr) {
@@ -509,19 +549,19 @@ async function uploadSingleFileToFTP(localFilePath, remoteFileName, ftpConfig) {
                   "Could not verify file (ignoring):",
                   listErr.message
                 );
-                return resolve(fileUrl);
+                return settle(resolve, `${baseUrl}${fileUrl}`);
               }
 
               const fileFound = list.some(
-                (file) => file.name === remoteFileName
+                (file) => file.name === uploadBasename
               );
               if (fileFound) {
                 console.log("✓ File verified on server");
                 console.log(`✓ File URL: ${baseUrl}${fileUrl}`);
-                resolve(fileUrl);
+                settle(resolve, `${baseUrl}${fileUrl}`);
               } else {
                 console.warn("Warning: File not found in directory listing");
-                resolve(fileUrl); // Return anyway, might be permission issue
+                settle(resolve, `${baseUrl}${fileUrl}`); // Return anyway, might be permission issue
               }
             });
           });
@@ -529,13 +569,13 @@ async function uploadSingleFileToFTP(localFilePath, remoteFileName, ftpConfig) {
       } catch (err) {
         console.error("❌ FTP operation error:", err);
         client.end();
-        reject(new Error(`FTP operation failed: ${err.message}`));
+        settle(reject, new Error(`FTP operation failed: ${err.message}`));
       }
     });
 
     client.on("error", (err) => {
       console.error("❌ FTP client error:", err);
-      reject(new Error(`FTP connection failed: ${err.message}`));
+      settle(reject, new Error(`FTP connection failed: ${err.message}`));
     });
 
     console.log("Connecting to FTP server...");
@@ -546,10 +586,13 @@ async function uploadSingleFileToFTP(localFilePath, remoteFileName, ftpConfig) {
         port: ftpConfig.port || config.port || 21,
         user: ftpConfig.user || config.user,
         password: ftpConfig.password || config.password,
+        connTimeout: 15000,
+        pasvTimeout: 15000,
+        keepalive: 10000,
       });
     } catch (connectErr) {
       console.error("❌ FTP connect error:", connectErr);
-      reject(new Error(`FTP connect failed: ${connectErr.message}`));
+      settle(reject, new Error(`FTP connect failed: ${connectErr.message}`));
     }
   });
 }

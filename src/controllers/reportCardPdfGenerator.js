@@ -405,8 +405,14 @@ function buildHeader(data, logoBase64) {
 
   const centerContent = [];
   if (logoBase64) {
+    // Reference the image registered once in docDefinition.images (see
+    // buildDocDefinition), not the raw base64 string. Passing the same
+    // base64 string directly per page makes pdfmake embed a full,
+    // uncompressed copy of the logo on every single page, this was the
+    // single largest memory/file-size cost in mass generation, not the
+    // student count.
     centerContent.push({
-      image: logoBase64,
+      image: "reportLogo",
       width: 40,
       height: 40,
       alignment: "center",
@@ -1207,10 +1213,16 @@ function buildDocDefinition(cards, termLabel, gradingScale, logoBase64) {
       lineHeight: 1.08,
     },
 
+    // Registered once, referenced by name below and in buildHeader, so
+    // pdfmake embeds the logo's bytes exactly once per document instead
+    // of once per page. For a 1000-student class that's the difference
+    // between embedding it once versus 2000 times (header + watermark).
+    ...(logoBase64 ? { images: { reportLogo: logoBase64 } } : {}),
+
     ...(logoBase64
       ? {
           background: (_currentPage, pageSize) => ({
-            image: logoBase64,
+            image: "reportLogo",
             width: 380,
             height: 380,
             opacity: 0.04,
@@ -1367,6 +1379,13 @@ function termKeyToLabel(k) {
 async function fetchMarksWithIncludes(academicYearId, classId) {
   return models.Mark.findAll({
     where: { academic_year_id: academicYearId, class_id: classId },
+    // raw + nest: plain nested JS objects instead of hydrated Sequelize
+    // instances (each with its own getters/associations/dataValues
+    // machinery). Same nested shape buildReportCardsFromMarks already
+    // expects, just without the per-row hydration overhead, this was the
+    // single biggest memory cost in mass generation.
+    raw: true,
+    nest: true,
     include: [
       {
         model: models.Student,
@@ -1402,6 +1421,15 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
           {
             model: models.ClassSubject,
             as: "classSubjects",
+            // A subject is taught in many classes school-wide, without
+            // this every Mark row was being joined against every class's
+            // teacher-assignment row for that subject, not just this
+            // class's, a 400,000-row result for a class with 20,000 real
+            // marks (measured on a 1000-student class), that fan-out was
+            // the actual dominant memory cost in mass generation, not
+            // rendering or merging.
+            where: { class_id: classId },
+            required: false,
             attributes: ["id", "class_id"],
             include: [
               {
@@ -1535,6 +1563,7 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
     departmentId,
     classId,
     term = "term3",
+    disposition = "attachment",
   } = req.query;
 
   if (!studentId || !academicYearId || !departmentId || !classId) {
@@ -1608,9 +1637,10 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
 
   const studentName = sanitize(card.student.name);
   const filename = `${studentName}-${sanitize(termLabel)}-report-card.pdf`;
+  const safeDisposition = disposition === "inline" ? "inline" : "attachment";
 
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Disposition", `${safeDisposition}; filename="${filename}"`);
   res.setHeader("Content-Length", pdfBuffer.length);
   res.status(200).end(pdfBuffer);
 });
@@ -1622,4 +1652,15 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
 module.exports = {
   bulkPdfDirect,
   singlePdfDirect,
+  // Reused by reportCardSession.controller.js's chunked generator, see
+  // that file for why generation is split into per-chunk documents
+  // instead of one document for the whole class.
+  printer,
+  buildDocDefinition,
+  prepareGrading,
+  loadLogoBase64,
+  termKeyToLabel,
+  resolveTermKey,
+  fetchMarksWithIncludes,
+  sanitize,
 };

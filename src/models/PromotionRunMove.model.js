@@ -58,6 +58,25 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.JSONB,
         allowNull: false,
       },
+      // { [student_id]: "promoted" | "promoted_on_condition" | "failed" | "graduated" }
+      // Set when requirement_snapshot.decision_mode is "manual" (a national
+      // exam class whose real result isn't in this system), must cover
+      // every active student in the source class before the run can start.
+      // Null/empty for an automatic class, decisions are computed instead.
+      manual_decisions: {
+        type: DataTypes.JSONB,
+        allowNull: true,
+      },
+      // { [student_id]: destination_class_id }
+      // Set when requirement_snapshot.promotion_mode is "split" (a class
+      // that fans students into different departments, e.g. Orientation),
+      // must cover every student who is not "failed" before the run can
+      // start. Null/empty for a single-destination class, every promoted
+      // student goes to destination_class_id instead.
+      destination_overrides: {
+        type: DataTypes.JSONB,
+        allowNull: true,
+      },
       status: {
         type: DataTypes.ENUM(
           "pending",

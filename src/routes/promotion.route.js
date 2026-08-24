@@ -2,10 +2,12 @@ const express = require("express");
 
 const promotionControllers = require("../controllers/promotion.controller");
 const { protect, restrictTo } = require("../controllers/auth.controller");
+const { attachRequestContext } = require("../utils/requestContext.util");
 
 const promotionRouter = express.Router();
 
 promotionRouter.use(protect);
+promotionRouter.use(attachRequestContext);
 promotionRouter.use(restrictTo("Admin3"));
 
 promotionRouter.route("/preview").post(promotionControllers.previewMove);

@@ -65,6 +65,30 @@ module.exports = (sequelize, DataTypes) => {
           min: { args: [0], msg: "Minimum professional subjects passed cannot be negative" },
         },
       },
+      // "split" waives the same-department destination check and requires
+      // an explicit destination class per promoted student (e.g. Orientation
+      // classes fanning out into Electrical/Building/Mechanics/...), instead
+      // of one destination class for the whole move.
+      promotion_mode: {
+        type: DataTypes.STRING(20),
+        allowNull: false,
+        defaultValue: "single",
+        validate: {
+          isIn: { args: [["single", "split"]], msg: "promotion_mode must be 'single' or 'split'" },
+        },
+      },
+      // "manual" means this class's real result lives outside the system
+      // (a national exam board like GCE/ITVEE), so the criteria above are
+      // advisory only, an admin must pick each student's decision by hand
+      // instead of it being computed.
+      decision_mode: {
+        type: DataTypes.STRING(20),
+        allowNull: false,
+        defaultValue: "automatic",
+        validate: {
+          isIn: { args: [["automatic", "manual"]], msg: "decision_mode must be 'automatic' or 'manual'" },
+        },
+      },
     },
     {
       sequelize,

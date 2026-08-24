@@ -6,7 +6,11 @@ const {
   bulkPdfDirect,
   singlePdfDirect,
 } = require("../controllers/reportCardPdfGenerator");
-const { classMasterSheet } = require("../controllers/mastersheet.controller");
+
+const {
+  classMasterSheet,
+  classMasterSheetData,
+} = require("../controllers/mastersheet.controller");
 
 const reportCardRouter = express.Router();
 
@@ -24,6 +28,8 @@ reportCardRouter.route("/bulk-html").get(bulkPdfDirect);
 reportCardRouter.route("/bulk-pdfs-direct").get(bulkPdfDirect);
 
 reportCardRouter.route("/bulk-html-direct").get(bulkPdfDirect);
+reportCardRouter.route("/single-pdf-direct").get(singlePdfDirect);
 reportCardRouter.route("/master-sheet").get(classMasterSheet);
+reportCardRouter.route("/master-sheet-data").get(classMasterSheetData);
 
 module.exports = reportCardRouter;

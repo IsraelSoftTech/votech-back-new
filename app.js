@@ -141,6 +141,9 @@ const classRouter = require("./src/routes/class.route");
 const academicBandRouter = require("./src/routes/academicBand.route");
 const promotionRequirementRouter = require("./src/routes/promotionRequirement.route");
 const promotionRouter = require("./src/routes/promotion.route");
+const academicYearGrantRouter = require("./src/routes/academicYearGrant.route");
+const reportCardSessionRouter = require("./src/routes/reportCardSession.route");
+const academicNotificationRouter = require("./src/routes/academicNotification.route");
 const marksRouter = require("./src/routes/mark.route");
 const studentRouterV1 = require("./src/routes/students.route");
 const reportCardRouter = require("./src/routes/reportCard.route");
@@ -213,6 +216,7 @@ app.use(
 );
 
 app.use("/api/v1/academic-years", accademicYearRouter);
+app.use("/api/v1/academic-year-grants", academicYearGrantRouter);
 app.use("/api/v1/subjects", subjectRouter);
 app.use("/api/v1/class-subjects", classSubjectRouter);
 app.use("/api/v1/department-classes", departmentClassesRouter);
@@ -224,6 +228,8 @@ app.use("/api/v1/promotions", promotionRouter);
 app.use("/api/v1/marks", marksRouter);
 app.use("/api/v1/students", studentRouterV1);
 app.use("/api/v1/report-cards", reportCardRouter);
+app.use("/api/v1/report-card-sessions", reportCardSessionRouter);
+app.use("/api/v1/academic-notifications", academicNotificationRouter);
 app.use("/api/v1/content", contentRouter);
 app.use("/api/v1/departments", departmentRouter);
 app.use("/api/v1/desktop", desktopRouter);

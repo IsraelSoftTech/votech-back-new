@@ -36,6 +36,26 @@ const promotion_run_lock = require("./PromotionRunLock.model")(
   sequelize,
   DataTypes
 );
+const academic_year_grants = require("./AcademicYearGrant.model")(
+  sequelize,
+  DataTypes
+);
+const report_card_sessions = require("./ReportCardSession.model")(
+  sequelize,
+  DataTypes
+);
+const report_card_runs = require("./ReportCardRun.model")(
+  sequelize,
+  DataTypes
+);
+const report_card_run_lock = require("./ReportCardRunLock.model")(
+  sequelize,
+  DataTypes
+);
+const academic_job_notifications = require("./AcademicJobNotification.model")(
+  sequelize,
+  DataTypes
+);
 const change_logs = require("./changeLog.model")(sequelize, DataTypes);
 const system_mode = require("./SystemMode.model")(sequelize, DataTypes);
 const db_swap_logs = require("./dbSwapLog.model")(sequelize, DataTypes);
@@ -652,6 +672,11 @@ const models = {
   PromotionRunMove: promotion_run_moves,
   StudentPromotion: student_promotions,
   PromotionRunLock: promotion_run_lock,
+  ReportCardSession: report_card_sessions,
+  ReportCardRun: report_card_runs,
+  ReportCardRunLock: report_card_run_lock,
+  AcademicJobNotification: academic_job_notifications,
+  AcademicYearGrant: academic_year_grants,
   ChangeLog: change_logs,
   SystemMode: system_mode,
   DbSwapLog: db_swap_logs,
@@ -710,5 +735,14 @@ Object.values(models).forEach((model) => {
     model.associate(models);
   }
 });
+
+// Enforce the active-year read-only rule at the point of actual write,
+// not just at the route entrance — see src/utils/yearLock.util.js for
+// why. Scoped to the academics data this project owns; nothing outside
+// this list is affected.
+const { attachYearLockHooks } = require("../utils/yearLock.util");
+attachYearLockHooks(models.Mark);
+attachYearLockHooks(models.Student);
+attachYearLockHooks(models.PromotionRequirement);
 
 module.exports = models;

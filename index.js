@@ -172,6 +172,55 @@ async function runMigrations() {
   } catch (err) {
     console.warn("⚠️ Migration (students.status):", err.message);
   }
+
+  try {
+    await pool.query(`
+      ALTER TABLE promotion_run_lock ADD COLUMN IF NOT EXISTS year_switch_in_progress BOOLEAN NOT NULL DEFAULT false
+    `);
+    console.log("✅ promotion_run_lock.year_switch_in_progress column ready");
+  } catch (err) {
+    console.warn("⚠️ Migration (promotion_run_lock.year_switch_in_progress):", err.message);
+  }
+
+  try {
+    await pool.query(`
+      ALTER TABLE promotion_requirements ADD COLUMN IF NOT EXISTS promotion_mode VARCHAR(20) NOT NULL DEFAULT 'single'
+    `);
+    await pool
+      .query(
+        `
+      ALTER TABLE promotion_requirements ADD CONSTRAINT promotion_requirements_promotion_mode_check
+      CHECK (promotion_mode IN ('single', 'split'))
+    `
+      )
+      .catch(() => {});
+    await pool.query(`
+      ALTER TABLE promotion_requirements ADD COLUMN IF NOT EXISTS decision_mode VARCHAR(20) NOT NULL DEFAULT 'automatic'
+    `);
+    await pool
+      .query(
+        `
+      ALTER TABLE promotion_requirements ADD CONSTRAINT promotion_requirements_decision_mode_check
+      CHECK (decision_mode IN ('automatic', 'manual'))
+    `
+      )
+      .catch(() => {});
+    console.log("✅ promotion_requirements.promotion_mode/decision_mode columns ready");
+  } catch (err) {
+    console.warn("⚠️ Migration (promotion_requirements split/manual columns):", err.message);
+  }
+
+  try {
+    await pool.query(`
+      ALTER TABLE promotion_run_moves ADD COLUMN IF NOT EXISTS manual_decisions JSONB
+    `);
+    await pool.query(`
+      ALTER TABLE promotion_run_moves ADD COLUMN IF NOT EXISTS destination_overrides JSONB
+    `);
+    console.log("✅ promotion_run_moves.manual_decisions/destination_overrides columns ready");
+  } catch (err) {
+    console.warn("⚠️ Migration (promotion_run_moves split/manual columns):", err.message);
+  }
 }
 
 function killPort(port) {
@@ -197,6 +246,9 @@ async function startOnce(port) {
 
   const { startWatchdog } = require("./src/controllers/promotion.controller");
   startWatchdog();
+
+  const { startReportCardWatchdog } = require("./src/controllers/reportCardSession.controller");
+  startReportCardWatchdog();
 
   server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on port ${port}`);

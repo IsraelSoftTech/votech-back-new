@@ -78,6 +78,18 @@ async function validatePromotionRequirementData(data, partial = false) {
     }
   }
 
+  if (!partial || "promotion_mode" in data) {
+    if (!["single", "split"].includes(data.promotion_mode)) {
+      errors.push('promotion_mode must be "single" or "split"');
+    }
+  }
+
+  if (!partial || "decision_mode" in data) {
+    if (!["automatic", "manual"].includes(data.decision_mode)) {
+      errors.push('decision_mode must be "automatic" or "manual"');
+    }
+  }
+
   const generalIds = Array.isArray(data.compulsory_general_subject_ids)
     ? data.compulsory_general_subject_ids
     : [];
@@ -186,6 +198,8 @@ const savePromotionRequirement = catchAsync(async (req, res, next) => {
     compulsory_general_subject_ids,
     compulsory_professional_subject_ids,
     min_professional_subjects_passed,
+    promotion_mode,
+    decision_mode,
   } = req.body;
 
   const payload = {
@@ -196,6 +210,8 @@ const savePromotionRequirement = catchAsync(async (req, res, next) => {
     compulsory_general_subject_ids: compulsory_general_subject_ids || [],
     compulsory_professional_subject_ids: compulsory_professional_subject_ids || [],
     min_professional_subjects_passed: min_professional_subjects_passed || 0,
+    promotion_mode: promotion_mode || "single",
+    decision_mode: decision_mode || "automatic",
   };
 
   await validatePromotionRequirementData(payload);

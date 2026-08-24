@@ -18,6 +18,7 @@ const fs = require("fs");
 const { StatusCodes } = require("http-status-codes");
 const catchAsync = require("../utils/catchAsync");
 const AppError = require("../utils/AppError");
+const appResponder = require("../utils/appResponder");
 const models = require("../models/index.model");
 const { buildReportCardsFromMarks } = require("./reportCard.controller");
 
@@ -505,8 +506,11 @@ function layoutCoverPage(meta, analysis, logoBase64) {
   const elements = [];
 
   if (logoBase64) {
+    // References the image registered once in buildMasterSheetDoc's
+    // returned docDefinition.images, not the raw base64 string, same fix
+    // (and same reason) as reportCardPdfGenerator.js's buildHeader.
     elements.push({
-      image: logoBase64,
+      image: "reportLogo",
       width: 75,
       height: 75,
       alignment: "center",
@@ -1950,10 +1954,12 @@ function buildMasterSheetDoc(meta, analysis, gradingScale, logoBase64) {
         },
       ],
     }),
+    ...(logoBase64 ? { images: { reportLogo: logoBase64 } } : {}),
+
     ...(logoBase64
       ? {
           background: (currPage, size) => ({
-            image: logoBase64,
+            image: "reportLogo",
             width: 340,
             height: 340,
             opacity: 0.02,
@@ -1978,16 +1984,16 @@ function buildMasterSheetDoc(meta, analysis, gradingScale, logoBase64) {
 
 const sanitize = (str = "") => String(str).replace(/[^\w]+/g, "_");
 
-const classMasterSheet = catchAsync(async (req, res, next) => {
-  const { academicYearId, departmentId, classId, term = "term3" } = req.query;
-
+// Shared by both the PDF endpoint and the JSON "view" endpoint, so the
+// admin-facing screen and the downloaded PDF are always built from the
+// exact same computed analysis — only the presentation differs.
+async function getMasterSheetData({ academicYearId, departmentId, classId, term = "term3" }) {
   if (!academicYearId || !departmentId || !classId) {
-    return next(
-      new AppError(
-        "Required arguments missing: academicYearId, departmentId, classId",
-        StatusCodes.BAD_REQUEST
-      )
+    const err = new AppError(
+      "Required arguments missing: academicYearId, departmentId, classId",
+      StatusCodes.BAD_REQUEST
     );
+    throw err;
   }
 
   const [academicYear, department, studentClass] = await Promise.all([
@@ -2004,27 +2010,20 @@ const classMasterSheet = catchAsync(async (req, res, next) => {
     }),
   ]);
 
-  if (!academicYear)
-    return next(new AppError("Academic year not found", StatusCodes.NOT_FOUND));
-  if (!department)
-    return next(new AppError("Department not found", StatusCodes.NOT_FOUND));
-  if (!studentClass)
-    return next(new AppError("Class not found", StatusCodes.NOT_FOUND));
+  if (!academicYear) throw new AppError("Academic year not found", StatusCodes.NOT_FOUND);
+  if (!department) throw new AppError("Department not found", StatusCodes.NOT_FOUND);
+  if (!studentClass) throw new AppError("Class not found", StatusCodes.NOT_FOUND);
 
   const marks = await fetchMarksWithIncludes(academicYearId, classId);
   if (!marks.length) {
-    return next(
-      new AppError(
-        `No marks recorded for class ${studentClass.name}`,
-        StatusCodes.NOT_FOUND
-      )
+    throw new AppError(
+      `No marks recorded for class ${studentClass.name}`,
+      StatusCodes.NOT_FOUND
     );
   }
 
   const classMaster =
-    studentClass?.classMaster?.name ||
-    studentClass?.classMaster?.username ||
-    "";
+    studentClass?.classMaster?.name || studentClass?.classMaster?.username || "";
   const termKey = await resolveTermKey(term, academicYearId);
   const cards = buildReportCardsFromMarks(marks, classMaster, termKey);
 
@@ -2044,6 +2043,44 @@ const classMasterSheet = catchAsync(async (req, res, next) => {
     principal: "Mr. Thomas Ambe",
   };
 
+  return { meta, analysis, gradingScale };
+}
+
+// ── JSON data endpoint — powers the in-app navigable master sheet view
+// (subject switcher, stats, student table). Never renders a PDF, so it's
+// cheap regardless of class size — the same analysis object the PDF path
+// computes, just serialized instead of laid out.
+const classMasterSheetData = catchAsync(async (req, res, next) => {
+  const { academicYearId, departmentId, classId, term = "term3" } = req.query;
+  try {
+    const { meta, analysis, gradingScale } = await getMasterSheetData({
+      academicYearId,
+      departmentId,
+      classId,
+      term,
+    });
+    appResponder(StatusCodes.OK, { meta, analysis, gradingScale }, res);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+const classMasterSheet = catchAsync(async (req, res, next) => {
+  const { academicYearId, departmentId, classId, term = "term3", disposition = "attachment" } =
+    req.query;
+
+  let meta, analysis, gradingScale;
+  try {
+    ({ meta, analysis, gradingScale } = await getMasterSheetData({
+      academicYearId,
+      departmentId,
+      classId,
+      term,
+    }));
+  } catch (err) {
+    return next(err);
+  }
+
   const logoBase64 = loadLogoBase64();
   const docDefinition = buildMasterSheetDoc(
     meta,
@@ -2053,15 +2090,16 @@ const classMasterSheet = catchAsync(async (req, res, next) => {
   );
 
   const explicitFilename = `Official_Report_Booklet_${sanitize(
-    academicYear.name
-  )}_${sanitize(department.name)}_${sanitize(studentClass.name)}_${sanitize(
+    meta.academicYear
+  )}_${sanitize(meta.departmentName)}_${sanitize(meta.className)}_${sanitize(
     analysis.termInfo.label
   )}.pdf`;
 
+  const safeDisposition = disposition === "inline" ? "inline" : "attachment";
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader(
     "Content-Disposition",
-    `attachment; filename="${explicitFilename}"`
+    `${safeDisposition}; filename="${explicitFilename}"`
   );
 
   try {
@@ -2158,6 +2196,13 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
           {
             model: models.ClassSubject,
             as: "classSubjects",
+            // Same fan-out bug found and fixed in reportCardPdfGenerator.js's
+            // copy of this query: without this, every Mark row joins
+            // against every class's teacher-assignment row for that
+            // subject school-wide, not just this class's, a measured
+            // 20x row multiplication at scale.
+            where: { class_id: classId },
+            required: false,
             attributes: ["id", "class_id"],
             include: [
               {
@@ -2200,4 +2245,9 @@ function streamPdfToResponse(docDefinition, res) {
   });
 }
 
-module.exports = { classMasterSheet, analyzeMasterSheet, buildMasterSheetDoc };
+module.exports = {
+  classMasterSheet,
+  classMasterSheetData,
+  analyzeMasterSheet,
+  buildMasterSheetDoc,
+};

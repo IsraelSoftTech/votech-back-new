@@ -3,12 +3,14 @@ const express = require("express");
 
 const marksControllers = require("../controllers/mark.controller");
 const { protect, restrictTo } = require("../controllers/auth.controller");
+const { attachRequestContext } = require("../utils/requestContext.util");
 const AppError = require("../utils/AppError");
 const { StatusCodes } = require("http-status-codes");
 
 const marksRouter = express.Router();
 
 marksRouter.use(protect);
+marksRouter.use(attachRequestContext);
 // marksRouter.use(restrictTo("Admin1", "Admin3"));
 
 const validateUser = (req, res, next) => {
