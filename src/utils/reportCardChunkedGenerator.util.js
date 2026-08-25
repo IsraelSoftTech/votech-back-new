@@ -60,11 +60,17 @@ function tempFilePath(prefix) {
   return path.join(TEMP_DIR, `${prefix}-${crypto.randomBytes(6).toString("hex")}.pdf`);
 }
 
-function renderChunkToFile(chunkCards, termLabel, gradingScale, logoBase64) {
+function renderChunkToFile(chunkCards, termLabel, gradingScale, logoBase64, isOrientationClass) {
   return new Promise((resolve, reject) => {
     const filePath = tempFilePath("chunk");
     try {
-      const docDef = buildDocDefinition(chunkCards, termLabel, gradingScale, logoBase64);
+      const docDef = buildDocDefinition(
+        chunkCards,
+        termLabel,
+        gradingScale,
+        logoBase64,
+        isOrientationClass
+      );
       const doc = printer.createPdfKitDocument(docDef);
       const stream = fs.createWriteStream(filePath);
       doc.on("error", (err) => {
@@ -188,7 +194,13 @@ async function generateClassReportCardsToFile(academicYearId, classId, term, onP
   try {
     for (let i = 0; i < cards.length; i += CHUNK_SIZE) {
       const chunk = cards.slice(i, i + CHUNK_SIZE);
-      const chunkPath = await renderChunkToFile(chunk, termLabel, gradingScale, logoBase64);
+      const chunkPath = await renderChunkToFile(
+        chunk,
+        termLabel,
+        gradingScale,
+        logoBase64,
+        studentClass.is_orientation
+      );
       chunkPaths.push(chunkPath);
       processed += chunk.length;
       if (onProgress) onProgress(processed, cards.length);

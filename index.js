@@ -258,6 +258,17 @@ async function runMigrations() {
   } catch (err) {
     console.warn("⚠️ Migration (student_department_choices):", err.message);
   }
+
+  try {
+    await pool.query(`
+      ALTER TABLE subjects ADD COLUMN IF NOT EXISTS orientation_department_id INTEGER REFERENCES specialties(id)
+    `);
+    // Deliberately no backfill — admins tag these explicitly on the
+    // Subjects page, there's no reliable existing signal to infer from.
+    console.log("✅ subjects.orientation_department_id column ready");
+  } catch (err) {
+    console.warn("⚠️ Migration (subjects.orientation_department_id):", err.message);
+  }
 }
 
 function killPort(port) {

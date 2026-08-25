@@ -11,6 +11,7 @@ const allowedOrigins = [
   "https://www.votechs7academygroup.com",
   "https://votech-latest-front.onrender.com",
   "http://localhost:3000",
+  "http://localhost:3001",
   "http://localhost:3004",
   "http://192.168.1.201:3000",
   "http://192.168.1.200:3000",

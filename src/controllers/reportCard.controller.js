@@ -122,6 +122,14 @@ function buildReportCardsFromMarks(marks, classMaster, termKey = "term3") {
         // the Subject include itself never selects id — see
         // fetchMarksWithIncludes — but the Mark row's own FK does).
         subjectId: m.subject_id,
+        // Set only when an admin has tagged this subject as an
+        // orientation-placement "sampler" for a department on the
+        // Subjects page. Left in its normal category array here always;
+        // it's the PDF layer (buildStudentPage) that decides whether to
+        // pull it into its own section, only for actual orientation
+        // classes, so this stays a no-op for every other class/subject.
+        orientationDepartmentId: m.subject.orientation_department_id ?? null,
+        orientationDepartmentName: m.subject.orientationDepartment?.name ?? null,
         teacher:
           matchingClassSubject?.teacher?.name ||
           matchingClassSubject?.teacher?.username ||
@@ -446,7 +454,7 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
       {
         model: models.Subject,
         as: "subject",
-        attributes: ["code", "name", "coefficient", "category"],
+        attributes: ["code", "name", "coefficient", "category", "orientation_department_id"],
         include: [
           {
             model: models.ClassSubject,
@@ -467,6 +475,11 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
                 attributes: ["id", "name", "username"],
               },
             ],
+          },
+          {
+            model: models.Specialty,
+            as: "orientationDepartment",
+            attributes: ["id", "name"],
           },
         ],
       },
@@ -555,7 +568,7 @@ const singleReportCard = catchAsync(async (req, res, next) => {
       {
         model: models.Subject,
         as: "subject",
-        attributes: ["code", "name", "coefficient", "category"],
+        attributes: ["code", "name", "coefficient", "category", "orientation_department_id"],
         include: [
           {
             model: models.ClassSubject,
@@ -576,6 +589,11 @@ const singleReportCard = catchAsync(async (req, res, next) => {
                 attributes: ["id", "name", "username"],
               },
             ],
+          },
+          {
+            model: models.Specialty,
+            as: "orientationDepartment",
+            attributes: ["id", "name"],
           },
         ],
       },
@@ -625,6 +643,32 @@ const singleReportCard = catchAsync(async (req, res, next) => {
         StatusCodes.NOT_FOUND
       )
     );
+  }
+
+  // Same split as the PDF generator (buildStudentPage): pull tagged
+  // subjects into their own group instead of duplicating them, gated on
+  // the same two conditions (is_orientation class AND at least one
+  // tagged subject actually taken), so the on-screen Academics tab
+  // matches the downloadable PDF instead of silently dropping subjects.
+  const isOrientationSubject = (s) => Boolean(s.orientationDepartmentId);
+  const orientationSubjects = reportCardClass?.is_orientation
+    ? [
+        ...(reportCard.generalSubjects || []),
+        ...(reportCard.professionalSubjects || []),
+        ...(reportCard.practicalSubjects || []),
+      ].filter(isOrientationSubject)
+    : [];
+  if (orientationSubjects.length > 0) {
+    reportCard.generalSubjects = (reportCard.generalSubjects || []).filter(
+      (s) => !isOrientationSubject(s)
+    );
+    reportCard.professionalSubjects = (reportCard.professionalSubjects || []).filter(
+      (s) => !isOrientationSubject(s)
+    );
+    reportCard.practicalSubjects = (reportCard.practicalSubjects || []).filter(
+      (s) => !isOrientationSubject(s)
+    );
+    reportCard.orientationSubjects = orientationSubjects;
   }
 
   appResponder(StatusCodes.OK, { reportCard }, res);
@@ -2642,7 +2686,7 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
       {
         model: models.Subject,
         as: "subject",
-        attributes: ["code", "name", "coefficient", "category"],
+        attributes: ["code", "name", "coefficient", "category", "orientation_department_id"],
         include: [
           {
             model: models.ClassSubject,
@@ -2663,6 +2707,11 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
                 attributes: ["id", "name", "username"],
               },
             ],
+          },
+          {
+            model: models.Specialty,
+            as: "orientationDepartment",
+            attributes: ["id", "name"],
           },
         ],
       },
@@ -2883,7 +2932,7 @@ const bulkReportCardsHTML = catchAsync(async (req, res, next) => {
       {
         model: models.Subject,
         as: "subject",
-        attributes: ["code", "name", "coefficient", "category"],
+        attributes: ["code", "name", "coefficient", "category", "orientation_department_id"],
         include: [
           {
             model: models.ClassSubject,
@@ -2904,6 +2953,11 @@ const bulkReportCardsHTML = catchAsync(async (req, res, next) => {
                 attributes: ["id", "name", "username"],
               },
             ],
+          },
+          {
+            model: models.Specialty,
+            as: "orientationDepartment",
+            attributes: ["id", "name"],
           },
         ],
       },

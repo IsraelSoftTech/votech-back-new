@@ -130,9 +130,15 @@ const readAllStudents = catchAsync(async (req, res) => {
     order: [[sortBy, sortDir]],
     limit,
     offset,
+    distinct: true, // department_choices below is a hasMany (up to 6 rows) — without
+    // this, findAndCountAll's COUNT fans out with the join and over-reports pagination totals.
     include: [
       { association: models.Student.associations.Class },
       { association: models.Student.associations.specialties },
+      {
+        association: models.Student.associations.department_choices,
+        include: [{ association: models.StudentDepartmentChoice.associations.department }],
+      },
     ],
   });
 
@@ -309,6 +315,31 @@ const createStudent = catchAsync(async (req, res, next) => {
       )
     );
   }
+  // A chosen department is a claim about which department this student
+  // belongs to — the class must actually belong to that department, or
+  // the two fields silently disagree and nothing downstream (fee
+  // schedule, department filtering) can trust either one.
+  if (data.specialty_id && Number(data.specialty_id) !== targetClass.department_id) {
+    return next(
+      new AppError(
+        `${targetClass.name} does not belong to the selected department.`,
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+
+  const activeAcademicYear = await models.AcademicYear.findOne({ where: { status: "active" } });
+  if (!activeAcademicYear) {
+    return next(new AppError("No active academic year is set.", StatusCodes.BAD_REQUEST));
+  }
+  if (Number(data.academic_year_id) !== activeAcademicYear.id) {
+    return next(
+      new AppError(
+        `New students can only be registered under the active academic year (${activeAcademicYear.name}).`,
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
 
   const t = await sequelize.transaction();
   try {
@@ -354,6 +385,20 @@ const updateStudent = catchAsync(async (req, res, next) => {
   const targetClass = await models.Class.findByPk(targetClassId);
   if (!targetClass) {
     return next(new AppError("Class not found.", StatusCodes.NOT_FOUND));
+  }
+
+  // Same department/class consistency rule as registration — check
+  // whichever value (incoming or already on the record) ends up in
+  // effect after this update, not just the field that changed.
+  const effectiveSpecialtyId =
+    "specialty_id" in data ? data.specialty_id : student.specialty_id;
+  if (effectiveSpecialtyId && Number(effectiveSpecialtyId) !== targetClass.department_id) {
+    return next(
+      new AppError(
+        `${targetClass.name} does not belong to the selected department.`,
+        StatusCodes.BAD_REQUEST
+      )
+    );
   }
 
   const existingChoiceCount = await models.StudentDepartmentChoice.count({
