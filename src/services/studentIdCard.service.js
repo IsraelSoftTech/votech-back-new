@@ -2,6 +2,21 @@
 
 const crypto = require("crypto");
 const { pool } = require("../../routes/utils");
+const {
+  attachListThumbsToRows,
+  readCardThumbDataUriSync,
+} = require("./studentPhotoThumb.service");
+
+function attachCardThumbToRow(row) {
+  if (!row?.photo_url?.trim()) return row;
+
+  const thumb_src = readCardThumbDataUriSync(row.student_db_id);
+  if (thumb_src) {
+    return { ...row, has_photo: true, thumb_src };
+  }
+
+  return { ...row, has_photo: true };
+}
 
 function buildCardNumber(studentDbId) {
   const year = new Date().getFullYear();
@@ -59,6 +74,7 @@ async function backfillMissingCards() {
     const card = await createIdCardForStudent(row.id);
     if (card) created += 1;
   }
+  invalidateIdCardListMetaCache();
   return { created, total: missing.length };
 }
 
@@ -119,6 +135,29 @@ function buildYearClause(yearFilter, params) {
   if (!yearFilter) return "";
   params.push(Number(yearFilter));
   return ` AND s.academic_year_id = $${params.length}`;
+}
+
+const listMetaCache = new Map();
+const META_TTL_MS = 90_000;
+
+async function getCachedListMeta(yearFilter) {
+  const key = String(yearFilter ?? "all");
+  const hit = listMetaCache.get(key);
+  if (hit && Date.now() - hit.ts < META_TTL_MS) {
+    return { stats: hit.stats, classes: hit.classes };
+  }
+
+  const [stats, classes] = await Promise.all([
+    getStudentIdCardStats({ yearFilter }),
+    listStudentIdCardClasses({ yearFilter }),
+  ]);
+
+  listMetaCache.set(key, { stats, classes, ts: Date.now() });
+  return { stats, classes };
+}
+
+function invalidateIdCardListMetaCache() {
+  listMetaCache.clear();
 }
 
 async function getStudentIdCardStats({ yearFilter } = {}) {
@@ -215,43 +254,38 @@ async function listStudentIdCardsPaginated({
       s.student_id,
       s.full_name,
       s.registration_date,
-      s.photo_url,
+      (s.photo_url IS NOT NULL AND TRIM(s.photo_url) <> '') AS has_photo,
       c.name AS class_name,
       sp.name AS specialty_name,
       ay.name AS academic_year_name,
       sic.card_number,
-      CASE WHEN sic.id IS NOT NULL THEN 'generated' ELSE 'missing' END AS card_status
+      CASE WHEN sic.id IS NOT NULL THEN 'generated' ELSE 'missing' END AS card_status,
+      COUNT(*) OVER()::int AS total_count
     ${joins}
     ${filterClause}
     ORDER BY s.full_name ASC
     LIMIT $${params.length + 1} OFFSET $${params.length + 2}
   `;
 
-  const countSql = `
-    SELECT COUNT(*)::int AS total
-    ${joins}
-    ${filterClause}
-  `;
-
   const listParams = [...params, safeLimit, offset];
 
-  const [stats, classes, countResult, listResult] = await Promise.all([
-    getStudentIdCardStats({ yearFilter }),
-    listStudentIdCardClasses({ yearFilter }),
-    pool.query(countSql, params),
+  const [meta, listResult] = await Promise.all([
+    getCachedListMeta(yearFilter),
     pool.query(listSql, listParams),
   ]);
 
-  const filteredTotal = countResult.rows[0]?.total ?? 0;
+  const filteredTotal = listResult.rows[0]?.total_count ?? 0;
+  const bareRows = listResult.rows.map(({ total_count, ...row }) => row);
+  const rowsWithThumbs = attachListThumbsToRows(bareRows);
 
   return {
-    rows: listResult.rows,
+    rows: rowsWithThumbs,
     total: filteredTotal,
     page: safePage,
     limit: safeLimit,
     totalPages: Math.max(1, Math.ceil(filteredTotal / safeLimit)),
-    stats,
-    classes,
+    stats: meta.stats,
+    classes: meta.classes,
   };
 }
 
@@ -292,7 +326,7 @@ async function getStudentIdCardsByIds(ids = []) {
   `,
     [numericIds]
   );
-  return rows;
+  return rows.map((row) => attachCardThumbToRow(row));
 }
 
 async function getStudentIdCardByStudentDbId(studentDbId) {
@@ -333,7 +367,9 @@ async function getStudentIdCardByStudentDbId(studentDbId) {
   `,
     [Number(studentDbId)]
   );
-  return rows[0] || null;
+  const row = rows[0] || null;
+  if (!row) return null;
+  return attachCardThumbToRow(row);
 }
 
 module.exports = {
@@ -345,4 +381,5 @@ module.exports = {
   getStudentIdCardStats,
   getStudentIdCardsByIds,
   getStudentIdCardByStudentDbId,
+  invalidateIdCardListMetaCache,
 };

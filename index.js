@@ -182,6 +182,47 @@ async function runMigrations() {
   } catch (err) {
     console.warn("⚠️ Migration (student id cards step 2):", err.message);
   }
+
+  try {
+    const {
+      run: runStudentAttendanceStep1,
+    } = require("./src/db/migrations/studentAttendance.step1");
+    await runStudentAttendanceStep1(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (student attendance step 1):", err.message);
+  }
+
+  try {
+    const {
+      run: runStudentAttendanceStep2,
+    } = require("./src/db/migrations/studentAttendance.step2");
+    await runStudentAttendanceStep2(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (student attendance step 2):", err.message);
+  }
+
+  try {
+    const {
+      run: runStudentAttendanceStep3,
+    } = require("./src/db/migrations/studentAttendance.step3");
+    await runStudentAttendanceStep3(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (student attendance step 3):", err.message);
+  }
+}
+
+async function warmupStudentPhotoThumbs() {
+  if (process.env.THUMB_WARMUP_ON_START === "0") return;
+  try {
+    const {
+      warmupMissingThumbs,
+    } = require("./src/services/studentPhotoThumb.service");
+    setTimeout(() => {
+      warmupMissingThumbs({ maxPerRun: 30 }).catch(() => {});
+    }, 5000);
+  } catch {
+    /* optional */
+  }
 }
 
 function killPort(port) {
@@ -201,6 +242,7 @@ function killPort(port) {
 async function startOnce(port) {
   await runMigrations();
   await killPort(port);
+  warmupStudentPhotoThumbs();
 
   const server = createServer(app);
   initSockets(server);

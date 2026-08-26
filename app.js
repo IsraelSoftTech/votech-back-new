@@ -122,6 +122,7 @@ const budgetHeadsRouter = require("./routes/budget-heads");
 const messagesRouter = require("./routes/messages");
 const studentsRouter = require("./routes/students");
 const studentIdCardsRouter = require("./routes/student-id-cards");
+const studentAttendanceRouter = require("./routes/student-attendance");
 const monitorRouter = require("./routes/monitor");
 const vocationalRouter = require("./routes/vocational");
 const hodsRouter = require("./routes/hods");
@@ -203,6 +204,8 @@ app.use("/api/vocational", vocationalRouter);
 app.use("/api/hods", hodsRouter);
 app.use("/api/students", studentsRouter);
 app.use("/api/student-id-cards", studentIdCardsRouter);
+app.use("/api/student-attendance", studentAttendanceRouter);
+app.use("/api/attendance", studentAttendanceRouter);
 // app.use("/api/teacher-discipline-cases", teacherDisciplineRouter);
 
 

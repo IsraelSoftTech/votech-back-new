@@ -200,19 +200,28 @@ router.post(
   }
 );
 
-// Lightweight student photo thumbnail (cached, ~120×150 JPEG)
+// Lightweight student photo thumbnail (cached JPEG — list ~48px, card ~120×150)
 router.get("/:id/photo/thumb", authenticateToken, async (req, res) => {
   try {
     const {
       getStudentPhotoThumb,
     } = require("../src/services/studentPhotoThumb.service");
     const refresh = req.query.refresh === "1" || req.query.refresh === "true";
-    const buffer = await getStudentPhotoThumb(req.params.id, { refresh });
+    const size = req.query.size === "card" ? "card" : "list";
+    const allowGenerate =
+      size === "card" ||
+      req.query.generate === "1" ||
+      req.query.generate === "true";
+    const buffer = await getStudentPhotoThumb(req.params.id, {
+      refresh,
+      size,
+      allowGenerate,
+    });
     if (!buffer) {
       return res.status(404).json({ error: "Photo not found" });
     }
     res.setHeader("Content-Type", "image/jpeg");
-    res.setHeader("Cache-Control", "public, max-age=604800");
+    res.setHeader("Cache-Control", "public, max-age=604800, immutable");
     res.send(buffer);
   } catch (e) {
     console.error("Student photo thumb error:", e);
