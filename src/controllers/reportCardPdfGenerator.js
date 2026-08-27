@@ -27,6 +27,9 @@ const catchAsync = require("../utils/catchAsync");
 const AppError = require("../utils/AppError");
 const models = require("../models/index.model");
 const { buildReportCardsFromMarks, attachAcademicRemarks } = require("./reportCard.controller");
+const { getOrCreateSettings } = require("./schoolSettings.controller");
+const { resolveClassMasterName } = require("../utils/classMaster.util");
+const { resolveStudentClassForYear } = require("../utils/studentYear.util");
 
 /* ═══════════════════════════════════════════════════════════════════
    1. FONT & PRINTER SETUP
@@ -299,6 +302,11 @@ function subjectFontSizes(totalSubjectCount) {
 // ── 9a. DOCUMENT HEADER ──────────────────────────────────────────
 
 function buildHeader(data, logoBase64) {
+  const admin = data.administration || {};
+  const schoolName = (admin.schoolName || "VOTECH S7 ACADEMY").toUpperCase();
+  const address = admin.address || "AZIRE - MANKON";
+  const motto = admin.motto || "Welfare, Productivity, Self Actualization";
+
   const frenchSide = [
     {
       text: "RÉPUBLIQUE DU CAMEROUN",
@@ -334,7 +342,7 @@ function buildHeader(data, logoBase64) {
       margin: [0, 0, 0, 0.5],
     },
     {
-      text: "VOTECH S7 ACADEMY",
+      text: schoolName,
       fontSize: 7,
       bold: true,
       color: C.primary,
@@ -343,7 +351,7 @@ function buildHeader(data, logoBase64) {
       margin: [0, 0, 0, 0.5],
     },
     {
-      text: "AZIRE - MANKON",
+      text: address,
       fontSize: 6,
       bold: true,
       color: C.light,
@@ -386,7 +394,7 @@ function buildHeader(data, logoBase64) {
       margin: [0, 0, 0, 0.5],
     },
     {
-      text: "VOTECH S7 ACADEMY",
+      text: schoolName,
       fontSize: 7,
       bold: true,
       color: C.primary,
@@ -395,7 +403,7 @@ function buildHeader(data, logoBase64) {
       margin: [0, 0, 0, 0.5],
     },
     {
-      text: "AZIRE - MANKON",
+      text: address,
       fontSize: 6,
       bold: true,
       color: C.light,
@@ -429,7 +437,7 @@ function buildHeader(data, logoBase64) {
     margin: [0, 0, 0, 1],
   });
   centerContent.push({
-    text: "Motto: Welfare, Productivity,\nSelf Actualization",
+    text: `Motto: ${motto}`,
     fontSize: 6,
     bold: true,
     italics: true,
@@ -1690,7 +1698,11 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
             // marks (measured on a 1000-student class), that fan-out was
             // the actual dominant memory cost in mass generation, not
             // rendering or merging.
-            where: { class_id: classId },
+            // academic_year_id scopes to THIS report card's own year, not
+            // "whoever teaches it now" — class_subjects is year-scoped so
+            // a reassignment since can't rewrite who this document says
+            // taught it.
+            where: { class_id: classId, academic_year_id: academicYearId },
             required: false,
             attributes: ["id", "class_id"],
             include: [
@@ -1752,15 +1764,7 @@ const bulkPdfDirect = catchAsync(async (req, res, next) => {
   const [academicYear, department, studentClass, termKey] = await Promise.all([
     models.AcademicYear.findByPk(academicYearId),
     models.Specialty.findByPk(departmentId),
-    models.Class.findByPk(classId, {
-      include: [
-        {
-          model: models.User,
-          as: "classMaster",
-          attributes: ["name", "username"],
-        },
-      ],
-    }),
+    models.Class.findByPk(classId),
     resolveTermKey(term, academicYearId),
   ]);
 
@@ -1789,12 +1793,10 @@ const bulkPdfDirect = catchAsync(async (req, res, next) => {
     );
   }
 
-  const classMaster =
-    studentClass?.classMaster?.name ||
-    studentClass?.classMaster?.username ||
-    "";
+  const classMaster = await resolveClassMasterName(classId, academicYearId);
   const termLabel = termKeyToLabel(termKey);
-  const cards = buildReportCardsFromMarks(marks, classMaster, termKey);
+  const settings = await getOrCreateSettings();
+  const cards = buildReportCardsFromMarks(marks, classMaster, termKey, settings.principal_name, settings);
   await attachAcademicRemarks(cards, academicYearId, classId, termKey);
   const gradingScale = prepareGrading(gradingRaw);
 
@@ -1855,15 +1857,7 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
   const [academicYear, department, studentClass, termKey] = await Promise.all([
     models.AcademicYear.findByPk(academicYearId),
     models.Specialty.findByPk(departmentId),
-    models.Class.findByPk(classId, {
-      include: [
-        {
-          model: models.User,
-          as: "classMaster",
-          attributes: ["name", "username"],
-        },
-      ],
-    }),
+    models.Class.findByPk(classId),
     resolveTermKey(term, academicYearId),
   ]);
 
@@ -1885,12 +1879,10 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
   if (!marks.length)
     return next(new AppError("No marks found", StatusCodes.NOT_FOUND));
 
-  const classMaster =
-    studentClass?.classMaster?.name ||
-    studentClass?.classMaster?.username ||
-    "";
+  const classMaster = await resolveClassMasterName(classId, academicYearId);
   const termLabel = termKeyToLabel(termKey);
-  const allCards = buildReportCardsFromMarks(marks, classMaster, termKey);
+  const settings = await getOrCreateSettings();
+  const allCards = buildReportCardsFromMarks(marks, classMaster, termKey, settings.principal_name, settings);
 
   const card = allCards.find((c) => String(c.student.id) === String(studentId));
   if (!card) {
@@ -1925,6 +1917,66 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
   res.status(200).end(pdfBuffer);
 });
 
+// ── SINGLE STUDENT PDF, resolved by year (Student Detail page) ──
+//
+// The caller only knows studentId + which academic year they want — not
+// necessarily the classId/departmentId that year, which may not be the
+// student's CURRENT class if that year is archived and they've since
+// been promoted. Resolves both via the same shared logic the marks
+// editor and transcript use, then delegates to singlePdfDirect's actual
+// PDF-building logic rather than duplicating it.
+const singleStudentReportCardByYear = catchAsync(async (req, res, next) => {
+  const studentId = Number(req.params.id);
+  const academicYearId = Number(req.query.academic_year_id);
+  const term = req.query.term || "term3";
+
+  if (!academicYearId) {
+    return next(
+      new AppError("academic_year_id is required", StatusCodes.BAD_REQUEST)
+    );
+  }
+
+  const student = await models.Student.findByPk(studentId, {
+    attributes: ["id", "class_id", "academic_year_id", "specialty_id"],
+  });
+  if (!student) {
+    return next(new AppError("Student not found", StatusCodes.NOT_FOUND));
+  }
+
+  const classId = await resolveStudentClassForYear(student, academicYearId);
+  if (!classId) {
+    return next(
+      new AppError(
+        "This student has no known class for that academic year.",
+        StatusCodes.NOT_FOUND
+      )
+    );
+  }
+
+  const studentClass = await models.Class.findByPk(classId, {
+    attributes: ["id", "department_id"],
+  });
+  const departmentId = studentClass?.department_id || student.specialty_id;
+  if (!departmentId) {
+    return next(
+      new AppError(
+        "Could not determine this student's department for that academic year.",
+        StatusCodes.NOT_FOUND
+      )
+    );
+  }
+
+  req.query = {
+    ...req.query,
+    studentId: String(studentId),
+    academicYearId: String(academicYearId),
+    departmentId: String(departmentId),
+    classId: String(classId),
+    term,
+  };
+  return singlePdfDirect(req, res, next);
+});
+
 /* ═══════════════════════════════════════════════════════════════════
    EXPORTS
    ═══════════════════════════════════════════════════════════════════ */
@@ -1932,15 +1984,19 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
 module.exports = {
   bulkPdfDirect,
   singlePdfDirect,
+  singleStudentReportCardByYear,
   // Reused by reportCardSession.controller.js's chunked generator, see
   // that file for why generation is split into per-chunk documents
   // instead of one document for the whole class.
   printer,
   buildDocDefinition,
+  buildStudentPage,
+  getTermConfig,
   prepareGrading,
   loadLogoBase64,
   termKeyToLabel,
   resolveTermKey,
   fetchMarksWithIncludes,
   sanitize,
+  generatePdfBuffer,
 };

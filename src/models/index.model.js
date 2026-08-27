@@ -40,6 +40,8 @@ const academic_year_grants = require("./AcademicYearGrant.model")(
   sequelize,
   DataTypes
 );
+const school_settings = require("./SchoolSetting.model")(sequelize, DataTypes);
+const class_master_assignments = require("./ClassMasterAssignment.model")(sequelize, DataTypes);
 const report_card_sessions = require("./ReportCardSession.model")(
   sequelize,
   DataTypes
@@ -682,6 +684,8 @@ const models = {
   StudentDepartmentChoice: student_department_choices,
   AcademicJobNotification: academic_job_notifications,
   AcademicYearGrant: academic_year_grants,
+  SchoolSetting: school_settings,
+  ClassMasterAssignment: class_master_assignments,
   ChangeLog: change_logs,
   SystemMode: system_mode,
   DbSwapLog: db_swap_logs,
@@ -749,5 +753,7 @@ const { attachYearLockHooks } = require("../utils/yearLock.util");
 attachYearLockHooks(models.Mark);
 attachYearLockHooks(models.Student);
 attachYearLockHooks(models.PromotionRequirement);
+attachYearLockHooks(models.ClassSubject);
+attachYearLockHooks(models.ClassMasterAssignment);
 
 module.exports = models;

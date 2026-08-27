@@ -40,6 +40,18 @@ marksRouter.route("/save").post(marksControllers.saveMarksBatch);
 marksRouter.route("/terms").get(marksControllers.readAllTerms);
 marksRouter.route("/sequences").get(marksControllers.readAllSequences);
 
+// Single-student marks editor — deliberately Admin3-only, on top of
+// whatever restriction the rest of this router has (currently none):
+// editing one student's marks directly, outside the normal per-class
+// entry flow, is powerful enough that it should never be reachable by a
+// role broader than the one already trusted with the Students page.
+marksRouter
+  .route("/student/:id")
+  .get(restrictTo("Admin3"), marksControllers.getStudentMarksForTerm);
+marksRouter
+  .route("/student/:id/save")
+  .post(restrictTo("Admin3"), marksControllers.saveStudentMarks);
+
 marksRouter
   .route("/:id")
   .get(marksControllers.readOneMark)

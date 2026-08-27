@@ -99,6 +99,15 @@ module.exports = function (sequelize, DataTypes) {
           },
         },
       },
+      // True while this student is sitting in the same class for a second
+      // (or later) year in a row, i.e. their most recent promotion outcome
+      // was "failed". Set/cleared by the promotion engine (promotion.controller.js),
+      // never edited directly.
+      is_repeating: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+      },
     },
     {
       sequelize,

@@ -14,6 +14,7 @@ const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
 const { parsePagination, buildPaginationMeta } = require("../utils/pagination.util");
 const { uploadSingleFileToFTP } = require("../services/fileStorage.service");
 const { printer, loadLogoBase64, sanitize } = require("./reportCardPdfGenerator");
+const { isClassPromotedForYear } = require("./promotion.controller");
 
 const tableName = models.Student.getTableName();
 
@@ -53,7 +54,15 @@ async function initStudents() {
 initStudents();
 
 const readOneStudent = catchAsync(async (req, res, next) => {
+  // Class + specialties included so a direct load of this student (a
+  // pasted/bookmarked URL, a page refresh — not just a click from the
+  // already-loaded list, which had this data via router state) is
+  // self-sufficient for the detail page's report-card/transcript links
+  // without a second round trip. Matches what readAllStudents already
+  // includes, see buildStudentWhere above.
   await CRUDStudentsModel.readOne(req.params.id, res, [
+    { association: models.Student.associations.Class },
+    { association: models.Student.associations.specialties },
     {
       association: models.Student.associations.department_choices,
       include: [{ association: models.StudentDepartmentChoice.associations.department }],
@@ -78,11 +87,14 @@ const STUDENT_SORT_FIELDS = {
 // silently drift apart from having two independently-maintained copies
 // of the same filter logic.
 async function buildStudentWhere(query) {
-  const { search = "", status, class_id, department_id, academic_year_id } = query;
+  const { search = "", status, class_id, department_id, academic_year_id, is_repeating } = query;
   const where = {};
   if (status) where.status = status;
   if (class_id) where.class_id = class_id;
   if (academic_year_id) where.academic_year_id = academic_year_id;
+  if (is_repeating !== undefined && is_repeating !== "") {
+    where.is_repeating = is_repeating === "true" || is_repeating === true;
+  }
 
   // Department filtering deliberately goes through class_id, not
   // students.specialty_id — checked directly against real data, only
@@ -106,6 +118,31 @@ async function buildStudentWhere(query) {
         ? class_id
         : -1
       : { [Op.in]: classIds };
+  }
+
+  // A student's own class_id/academic_year_id only ever reflect their
+  // CURRENT position, promotion moves that value forward, it doesn't
+  // version it. So filtering on those fields for an archived year finds
+  // nobody, everyone who was there has since been promoted elsewhere,
+  // even though their Mark rows for that year/class are still fully
+  // intact. Reconstruct the historical roster from those Mark rows
+  // instead, they're the one place that still remembers who was there.
+  if (academic_year_id) {
+    const year = await models.AcademicYear.findByPk(academic_year_id);
+    if (year && year.status !== "active") {
+      const markWhere = { academic_year_id };
+      if (where.class_id !== undefined) markWhere.class_id = where.class_id;
+      const markRows = await models.Mark.findAll({
+        where: markWhere,
+        attributes: ["student_id"],
+        group: ["student_id"],
+        raw: true,
+      });
+      const studentIds = markRows.map((r) => r.student_id);
+      where.id = { [Op.in]: studentIds.length ? studentIds : [-1] };
+      delete where.class_id;
+      delete where.academic_year_id;
+    }
   }
 
   const trimmedSearch = String(search || "").trim();
@@ -341,6 +378,19 @@ const createStudent = catchAsync(async (req, res, next) => {
     );
   }
 
+  // A class that's already been promoted out of this year has no path in
+  // the promotion UI to catch a student added afterward, they'd be stuck
+  // exactly the way a real one was found and manually fixed. Block the
+  // registration itself instead of leaving a straggler behind.
+  if (await isClassPromotedForYear(targetClass.id, activeAcademicYear.id)) {
+    return next(
+      new AppError(
+        `${targetClass.name} has already been promoted out of ${activeAcademicYear.name} — register this student into their actual current class instead.`,
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+
   const t = await sequelize.transaction();
   try {
     const student = await generateAndInsertStudent(data, t);
@@ -399,6 +449,26 @@ const updateStudent = catchAsync(async (req, res, next) => {
         StatusCodes.BAD_REQUEST
       )
     );
+  }
+
+  // Only relevant when this edit is actually (re)assigning class/year —
+  // leaving an already-flagged student's other fields alone (photo,
+  // contact info, etc.) shouldn't suddenly start failing because of where
+  // they happen to already sit.
+  if ("class_id" in data || "academic_year_id" in data) {
+    const effectiveAcademicYearId =
+      "academic_year_id" in data ? Number(data.academic_year_id) : student.academic_year_id;
+    if (await isClassPromotedForYear(targetClass.id, effectiveAcademicYearId)) {
+      const effectiveYear = await models.AcademicYear.findByPk(effectiveAcademicYearId);
+      return next(
+        new AppError(
+          `${targetClass.name} has already been promoted out of ${
+            effectiveYear?.name || "that academic year"
+          } — this student can't be assigned there for that year.`,
+          StatusCodes.BAD_REQUEST
+        )
+      );
+    }
   }
 
   const existingChoiceCount = await models.StudentDepartmentChoice.count({
@@ -775,4 +845,8 @@ module.exports = {
   listOrientationStudents,
   bulkSetDepartmentChoice,
   classListPdf,
+  // Reused by marksOverview.controller.js's matrix endpoint so its class
+  // roster resolves with the exact same department/class filtering rules
+  // the marks-entry page's own /students fetch already relies on.
+  buildStudentWhere,
 };

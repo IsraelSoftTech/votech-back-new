@@ -6,6 +6,9 @@ const catchAsync = require("../utils/catchAsync");
 const CRUD = require("../utils/Crud");
 const { sequelize } = require("../db");
 const { Op } = require("sequelize");
+const appResponder = require("../utils/appResponder");
+const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
+const { assertYearWritable } = require("../utils/yearLock.util");
 
 const ClassModel = models.Class;
 const TeacherModel = models.User;
@@ -47,6 +50,25 @@ async function ensureForeignKeysExist({ class_master_id, department_id }) {
         StatusCodes.BAD_REQUEST
       );
     }
+  }
+}
+
+// Keeps class_master_assignments (the year-scoped source of truth report
+// cards actually read) in sync whenever classes.class_master_id changes.
+// classes.class_master_id itself stays as-is, a denormalized "who's the
+// CURRENT master" convenience field the rest of the admin UI already
+// reads directly, this just also records it against the active year so
+// history isn't lost the next time someone gets reassigned.
+async function syncClassMasterAssignment(classId, teacherId) {
+  if (!teacherId) return;
+  const activeYear = await models.AcademicYear.findOne({ where: { status: "active" } });
+  if (!activeYear) return;
+  const [row, created] = await models.ClassMasterAssignment.findOrCreate({
+    where: { academic_year_id: activeYear.id, class_id: classId },
+    defaults: { teacher_id: teacherId },
+  });
+  if (!created && row.teacher_id !== teacherId) {
+    await row.update({ teacher_id: teacherId }, { skipYearLockCheck: true });
   }
 }
 
@@ -174,7 +196,11 @@ const createClass = catchAsync(async (req, res) => {
   const data = validateClassData(req.body);
   await ensureForeignKeysExist(data);
   await checkClassNameUnique(data.name, data.department_id);
-  await CRUDClass.create(data, res, req);
+
+  const created = await ClassModel.create(data);
+  await syncClassMasterAssignment(created.id, data.class_master_id);
+  await logChanges(tableName, created.id, ChangeTypes.create, req.user);
+  appResponder(StatusCodes.CREATED, created, res);
 });
 
 const readOneClass = catchAsync(async (req, res) => {
@@ -196,10 +222,86 @@ const updateClass = catchAsync(async (req, res) => {
     );
   }
   await CRUDClass.update(req.params.id, res, { body: data });
+  if (data.class_master_id) {
+    await syncClassMasterAssignment(req.params.id, data.class_master_id);
+  }
 });
 
 const deleteClass = catchAsync(async (req, res) => {
   await CRUDClass.delete(req.params.id, res, req);
+});
+
+// ─── Class master, by year ───────────────────────────────────────────
+//
+// classes.class_master_id is only ever "who's the master right now" —
+// class_master_assignments is the real year-scoped record every report
+// card and transcript reads. These two endpoints let admins (and, read-
+// only, teachers) see and edit that history directly, instead of the
+// only path being "edit the class, which silently only ever touches the
+// active year" (see syncClassMasterAssignment above).
+
+const getClassMasterHistory = catchAsync(async (req, res) => {
+  const rows = await models.ClassMasterAssignment.findAll({
+    where: { class_id: req.params.id },
+    include: [
+      { model: models.User, as: "teacher", attributes: ["id", "name", "username"] },
+      { model: models.AcademicYear, as: "academic_year" },
+    ],
+    order: [[{ model: models.AcademicYear, as: "academic_year" }, "start_date", "ASC"]],
+  });
+  appResponder(StatusCodes.OK, rows, res);
+});
+
+const setClassMasterForYear = catchAsync(async (req, res, next) => {
+  const classId = req.params.id;
+  const { academic_year_id, teacher_id } = req.body || {};
+
+  if (!academic_year_id || !teacher_id) {
+    return next(
+      new AppError(
+        "academic_year_id and teacher_id are both required",
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+
+  const [cls, teacher, year] = await Promise.all([
+    ClassModel.findByPk(classId),
+    TeacherModel.findByPk(teacher_id),
+    models.AcademicYear.findByPk(academic_year_id),
+  ]);
+  if (!cls) return next(new AppError("Class not found", StatusCodes.NOT_FOUND));
+  if (!teacher) return next(new AppError("Teacher not found", StatusCodes.NOT_FOUND));
+  if (!year) return next(new AppError("Academic year not found", StatusCodes.NOT_FOUND));
+
+  // Throws if this year is archived and the caller has no live grant for
+  // it — same rule an edit to class_subjects or Marks would enforce.
+  await assertYearWritable(academic_year_id);
+
+  const [row] = await models.ClassMasterAssignment.findOrCreate({
+    where: { academic_year_id, class_id: classId },
+    defaults: { teacher_id },
+    skipYearLockCheck: true,
+  });
+  if (row.teacher_id !== teacher_id) {
+    await row.update({ teacher_id }, { skipYearLockCheck: true });
+  }
+
+  // Keep the denormalized "current" field in sync only when this write
+  // actually targets the active year — an edit made under a grant to an
+  // archived year must never change who classes.class_master_id says is
+  // the master right now.
+  if (year.status === "active" && cls.class_master_id !== teacher_id) {
+    await cls.update({ class_master_id: teacher_id });
+  }
+
+  const fresh = await models.ClassMasterAssignment.findByPk(row.id, {
+    include: [
+      { model: models.User, as: "teacher", attributes: ["id", "name", "username"] },
+      { model: models.AcademicYear, as: "academic_year" },
+    ],
+  });
+  appResponder(StatusCodes.OK, fresh, res);
 });
 
 module.exports = {
@@ -209,4 +311,6 @@ module.exports = {
   updateClass,
   deleteClass,
   validateClassData,
+  getClassMasterHistory,
+  setClassMasterForYear,
 };

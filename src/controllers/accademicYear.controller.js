@@ -616,6 +616,138 @@ const switchAcademicYear = catchAsync(async (req, res, next) => {
   }
 });
 
+// ─── Carry Forward assignments (Admin1 only) ────────────────────────────
+//
+// Copies the currently active year's class_subjects + class_master_assignments
+// rows forward into a target (usually not-yet-active) year as brand new,
+// independently-editable rows. Never touches the source year's rows, never
+// touches which year is active. Idempotent-safe: rows that already exist
+// for the target year (same class/subject/department, or same class for
+// class masters) are skipped rather than duplicated, so this can be run
+// more than once without harm.
+
+const carryForwardAssignments = catchAsync(async (req, res, next) => {
+  const { target_year_id, password } = req.body || {};
+
+  await verifyPasswordAndRole(req.user.id, password, "Admin1");
+
+  if (!target_year_id) {
+    return next(
+      new AppError("target_year_id is required", StatusCodes.BAD_REQUEST)
+    );
+  }
+
+  const targetYear = await AcademicYearModel.findByPk(target_year_id);
+  if (!targetYear) {
+    return next(
+      new AppError("Target academic year not found", StatusCodes.NOT_FOUND)
+    );
+  }
+
+  const activeYear = await AcademicYearModel.findOne({
+    where: { status: "active" },
+  });
+  if (!activeYear) {
+    return next(
+      new AppError(
+        "There is no active academic year to carry forward from",
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+  if (activeYear.id === targetYear.id) {
+    return next(
+      new AppError(
+        "The target year is already the active year",
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+
+  const result = await sequelize.transaction(async (t) => {
+    // ── class_subjects ──
+    const sourceSubjects = await models.ClassSubject.findAll({
+      where: { academic_year_id: activeYear.id },
+      raw: true,
+      transaction: t,
+    });
+    const existingSubjectRows = await models.ClassSubject.findAll({
+      where: { academic_year_id: targetYear.id },
+      attributes: ["class_id", "subject_id", "department_id"],
+      raw: true,
+      transaction: t,
+    });
+    const existingSubjectKeys = new Set(
+      existingSubjectRows.map(
+        (r) => `${r.class_id}-${r.subject_id}-${r.department_id}`
+      )
+    );
+    const subjectsToCreate = sourceSubjects
+      .filter(
+        (r) =>
+          !existingSubjectKeys.has(
+            `${r.class_id}-${r.subject_id}-${r.department_id}`
+          )
+      )
+      .map((r) => ({
+        academic_year_id: targetYear.id,
+        class_id: r.class_id,
+        subject_id: r.subject_id,
+        department_id: r.department_id,
+        teacher_id: r.teacher_id,
+      }));
+    if (subjectsToCreate.length) {
+      await models.ClassSubject.bulkCreate(subjectsToCreate, {
+        transaction: t,
+        individualHooks: true,
+        skipYearLockCheck: true,
+      });
+    }
+
+    // ── class_master_assignments ──
+    const sourceMasters = await models.ClassMasterAssignment.findAll({
+      where: { academic_year_id: activeYear.id },
+      raw: true,
+      transaction: t,
+    });
+    const existingMasterRows = await models.ClassMasterAssignment.findAll({
+      where: { academic_year_id: targetYear.id },
+      attributes: ["class_id"],
+      raw: true,
+      transaction: t,
+    });
+    const existingMasterClassIds = new Set(
+      existingMasterRows.map((r) => r.class_id)
+    );
+    const mastersToCreate = sourceMasters
+      .filter((r) => !existingMasterClassIds.has(r.class_id))
+      .map((r) => ({
+        academic_year_id: targetYear.id,
+        class_id: r.class_id,
+        teacher_id: r.teacher_id,
+      }));
+    if (mastersToCreate.length) {
+      await models.ClassMasterAssignment.bulkCreate(mastersToCreate, {
+        transaction: t,
+        individualHooks: true,
+        skipYearLockCheck: true,
+      });
+    }
+
+    return {
+      source_year: { id: activeYear.id, name: activeYear.name },
+      target_year: { id: targetYear.id, name: targetYear.name },
+      class_subjects_created: subjectsToCreate.length,
+      class_subjects_skipped: sourceSubjects.length - subjectsToCreate.length,
+      class_master_assignments_created: mastersToCreate.length,
+      class_master_assignments_skipped:
+        sourceMasters.length - mastersToCreate.length,
+    };
+  });
+
+  res.status(StatusCodes.OK).json({ success: true, data: result });
+});
+
 module.exports = {
   initAcademicYear,
   createAcademicYear,
@@ -625,4 +757,5 @@ module.exports = {
   deleteAcademicYear,
   getSwitchChecklist,
   switchAcademicYear,
+  carryForwardAssignments,
 };

@@ -269,6 +269,148 @@ async function runMigrations() {
   } catch (err) {
     console.warn("⚠️ Migration (subjects.orientation_department_id):", err.message);
   }
+
+  try {
+    await pool.query(`
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS is_repeating BOOLEAN NOT NULL DEFAULT false
+    `);
+    console.log("✅ students.is_repeating column ready");
+  } catch (err) {
+    console.warn("⚠️ Migration (students.is_repeating):", err.message);
+  }
+
+  try {
+    await pool.query(`
+      ALTER TABLE student_promotions ADD COLUMN IF NOT EXISTS was_repeating BOOLEAN NOT NULL DEFAULT false
+    `);
+    // Captures whether the student was already repeating *before* this
+    // particular move, so reversing the move can restore is_repeating to
+    // exactly what it was, not just flip it off.
+    console.log("✅ student_promotions.was_repeating column ready");
+  } catch (err) {
+    console.warn("⚠️ Migration (student_promotions.was_repeating):", err.message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS academic_year_grants (
+        id SERIAL PRIMARY KEY,
+        academic_year_id INTEGER NOT NULL REFERENCES "academicYears"(id),
+        granted_by INTEGER NOT NULL REFERENCES users(id),
+        is_global BOOLEAN NOT NULL DEFAULT false,
+        admin3_user_ids INTEGER[] NOT NULL DEFAULT '{}',
+        reason TEXT,
+        granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL,
+        revoked_at TIMESTAMPTZ,
+        revoked_by INTEGER REFERENCES users(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS academic_year_grants_academic_year_id_idx ON academic_year_grants (academic_year_id)
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS academic_year_grants_granted_by_idx ON academic_year_grants (granted_by)
+    `);
+    console.log("✅ academic_year_grants table ready");
+  } catch (err) {
+    console.warn("⚠️ Migration (academic_year_grants):", err.message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS school_settings (
+        id INTEGER PRIMARY KEY DEFAULT 1,
+        school_name VARCHAR(200) NOT NULL DEFAULT 'Votech S7 Academy',
+        principal_name VARCHAR(200) NOT NULL DEFAULT '',
+        contact_phone VARCHAR(50),
+        contact_email VARCHAR(150),
+        address VARCHAR(250),
+        motto VARCHAR(250),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT school_settings_single_row CHECK (id = 1)
+      )
+    `);
+    // Seeded once with the values every document generator already
+    // hardcoded, so switching them over to read this table is a no-op
+    // until someone actually changes it via the settings page.
+    await pool.query(`
+      INSERT INTO school_settings (id, school_name, principal_name, motto)
+      VALUES (1, 'Votech S7 Academy', 'Mr. Thomas Ambe', 'Welfare, Productivity, Self Actualization')
+      ON CONFLICT (id) DO NOTHING
+    `);
+    console.log("✅ school_settings table ready");
+  } catch (err) {
+    console.warn("⚠️ Migration (school_settings):", err.message);
+  }
+
+  try {
+    // class_subjects had no year at all — a teacher reassignment silently
+    // overwrote the only row that existed, so every past report card
+    // showed whoever teaches it NOW when regenerated. Existing rows are
+    // backfilled to the CURRENT active year, that's the only year this
+    // data can be trusted for; assignment history before this migration
+    // was never recorded and can't be recovered.
+    await pool.query(`
+      ALTER TABLE class_subjects ADD COLUMN IF NOT EXISTS academic_year_id INTEGER REFERENCES "academicYears"(id)
+    `);
+    await pool.query(`
+      UPDATE class_subjects
+      SET academic_year_id = (SELECT id FROM "academicYears" WHERE status = 'active' LIMIT 1)
+      WHERE academic_year_id IS NULL
+    `);
+    await pool.query(`
+      ALTER TABLE class_subjects ALTER COLUMN academic_year_id SET NOT NULL
+    `);
+    // The table actually carries THREE overlapping unique indexes from
+    // earlier migrations (department-scoped, teacher-scoped, and a
+    // duplicate of the teacher-scoped one), none of them year-aware. Left
+    // in place, unique_class_subject_teacher alone would block the most
+    // common case going forward: the same teacher teaching the same
+    // class+subject again in a new year. Replaced with one clean,
+    // year-scoped index. The first two are real table CONSTRAINTS (not
+    // plain indexes), Postgres needs DROP CONSTRAINT for those.
+    await pool.query(`ALTER TABLE class_subjects DROP CONSTRAINT IF EXISTS unique_class_subject_department`);
+    await pool.query(`ALTER TABLE class_subjects DROP CONSTRAINT IF EXISTS unique_class_subject_teacher`);
+    await pool.query(`DROP INDEX IF EXISTS class_subjects_unique_idx`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS unique_class_subject_department_year
+      ON class_subjects (academic_year_id, class_id, subject_id, department_id)
+    `);
+    console.log("✅ class_subjects.academic_year_id column ready (backfilled + re-indexed)");
+  } catch (err) {
+    console.warn("⚠️ Migration (class_subjects.academic_year_id):", err.message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS class_master_assignments (
+        id SERIAL PRIMARY KEY,
+        academic_year_id INTEGER NOT NULL REFERENCES "academicYears"(id),
+        class_id INTEGER NOT NULL REFERENCES classes(id),
+        teacher_id INTEGER NOT NULL REFERENCES users(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (academic_year_id, class_id)
+      )
+    `);
+    // Backfill from whatever classes.class_master_id already holds today,
+    // tagged to the current active year — same "only the current year is
+    // trustworthy" reasoning as class_subjects above.
+    await pool.query(`
+      INSERT INTO class_master_assignments (academic_year_id, class_id, teacher_id)
+      SELECT (SELECT id FROM "academicYears" WHERE status = 'active' LIMIT 1), id, class_master_id
+      FROM classes
+      WHERE class_master_id IS NOT NULL
+      ON CONFLICT (academic_year_id, class_id) DO NOTHING
+    `);
+    console.log("✅ class_master_assignments table ready (backfilled from classes.class_master_id)");
+  } catch (err) {
+    console.warn("⚠️ Migration (class_master_assignments):", err.message);
+  }
 }
 
 function killPort(port) {

@@ -9,6 +9,8 @@ const puppeteer = require("puppeteer");
 const fs = require("fs");
 const path = require("path");
 const { decidePromotion } = require("../utils/promotionDecision.util");
+const { getOrCreateSettings } = require("./schoolSettings.controller");
+const { resolveClassMasterName } = require("../utils/classMaster.util");
 
 const sequencesFormat = {
   seq1: { name: "Sequence 1", weight: 1 },
@@ -22,6 +24,9 @@ const sequencesFormat = {
 const administrationFormat = {
   classMaster: "NDICHIA GLIEM",
   principal: "Mr. Thomas Ambe",
+  schoolName: "VOTECH S7 ACADEMY",
+  address: "AZIRE - MANKON",
+  motto: "Welfare, Productivity, Self Actualization",
   nextTermStarts: "",
   decision: "",
   parents: "John Snwo",
@@ -34,9 +39,16 @@ const round = (n, d = 1) => {
 };
 
 // FIXED: Shared builder with corrected calculations
-function buildReportCardsFromMarks(marks, classMaster, termKey = "term3") {
+function buildReportCardsFromMarks(marks, classMaster, termKey = "term3", principal, schoolSettings) {
   const sequences = { ...sequencesFormat };
-  const administration = { ...administrationFormat, classMaster };
+  const administration = {
+    ...administrationFormat,
+    classMaster,
+    ...(principal ? { principal } : {}),
+    ...(schoolSettings?.school_name ? { schoolName: schoolSettings.school_name } : {}),
+    ...(schoolSettings?.address ? { address: schoolSettings.address } : {}),
+    ...(schoolSettings?.motto ? { motto: schoolSettings.motto } : {}),
+  };
   // Map term keys to term labels
   const termLabels = {
     term1: "FIRST TERM",
@@ -404,20 +416,7 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
     return next(new AppError("Class not found", StatusCodes.NOT_FOUND));
   }
 
-  const reportCardClass = await models.Class.findByPk(classId, {
-    include: [
-      {
-        model: models.User,
-        as: "classMaster",
-        attributes: ["name", "username"],
-      },
-    ],
-  });
-
-  const classMaster =
-    reportCardClass?.classMaster?.name ||
-    reportCardClass?.classMaster?.username ||
-    "";
+  const classMaster = await resolveClassMasterName(classId, academicYearId);
 
   const marks = await models.Mark.findAll({
     where: {
@@ -459,13 +458,17 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
           {
             model: models.ClassSubject,
             as: "classSubjects",
-            // Without this, every Mark row joins against every class's
-            // teacher-assignment row for that subject school-wide, not
-            // just this class's, a measured 20x row multiplication at
-            // scale (400,000 rows for a class with 20,000 real marks).
-            // Same bug found and fixed identically in
+            // Without the class_id filter, every Mark row joins against
+            // every class's teacher-assignment row for that subject
+            // school-wide, not just this class's, a measured 20x row
+            // multiplication at scale (400,000 rows for a class with
+            // 20,000 real marks). Same bug found and fixed identically in
             // reportCardPdfGenerator.js and mastersheet.controller.js.
-            where: { class_id: classId },
+            // academic_year_id scopes to THIS report card's own year, not
+            // "whoever teaches it now" — class_subjects is year-scoped
+            // precisely so a reassignment since can't rewrite who this
+            // printed report card says taught it.
+            where: { class_id: classId, academic_year_id: academicYearId },
             required: false,
             attributes: ["id", "class_id"],
             include: [
@@ -507,7 +510,8 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
       )
     );
 
-  const reportCards = buildReportCardsFromMarks(marks, classMaster);
+  const settings = await getOrCreateSettings();
+  const reportCards = buildReportCardsFromMarks(marks, classMaster, "term3", settings.principal_name, settings);
 
   appResponder(
     StatusCodes.OK,
@@ -533,104 +537,99 @@ const singleReportCard = catchAsync(async (req, res, next) => {
   }
 
   // Build the full class report using the exact same query and logic as bulk
-  const marks = await models.Mark.findAll({
-    where: {
-      academic_year_id: academicYearId,
-      class_id: classId,
-    },
-    include: [
-      {
-        model: models.Student,
-        as: "student",
-        attributes: [
-          "id",
-          "full_name",
-          "student_id",
-          "date_of_birth",
-          "father_name",
-          "mother_name",
-        ],
-        include: [
-          {
-            model: models.Class,
-            as: "Class",
-            attributes: ["name"],
-            include: [
-              {
-                model: models.Specialty,
-                as: "department",
-                attributes: ["name"],
-              },
-            ],
-          },
-        ],
+  const [studentClass, marks] = await Promise.all([
+    models.Class.findByPk(classId, { attributes: ["id", "is_orientation"] }),
+    models.Mark.findAll({
+      where: {
+        academic_year_id: academicYearId,
+        class_id: classId,
       },
-      {
-        model: models.Subject,
-        as: "subject",
-        attributes: ["code", "name", "coefficient", "category", "orientation_department_id"],
-        include: [
-          {
-            model: models.ClassSubject,
-            as: "classSubjects",
-            // Without this, every Mark row joins against every class's
-            // teacher-assignment row for that subject school-wide, not
-            // just this class's, a measured 20x row multiplication at
-            // scale (400,000 rows for a class with 20,000 real marks).
-            // Same bug found and fixed identically in
-            // reportCardPdfGenerator.js and mastersheet.controller.js.
-            where: { class_id: classId },
-            required: false,
-            attributes: ["id", "class_id"],
-            include: [
-              {
-                model: models.User,
-                as: "teacher",
-                attributes: ["id", "name", "username"],
-              },
-            ],
-          },
-          {
-            model: models.Specialty,
-            as: "orientationDepartment",
-            attributes: ["id", "name"],
-          },
-        ],
-      },
-      { model: models.Term, as: "term", attributes: ["order_number", "name"] },
-      {
-        model: models.Sequence,
-        as: "sequence",
-        attributes: ["order_number", "name"],
-      },
-      { model: models.AcademicYear, as: "academic_year", attributes: ["name"] },
-    ],
-    order: [
-      [{ model: models.Student, as: "student" }, "full_name", "ASC"],
-      [{ model: models.Subject, as: "subject" }, "code", "ASC"],
-      [{ model: models.Term, as: "term" }, "order_number", "ASC"],
-      [{ model: models.Sequence, as: "sequence" }, "order_number", "ASC"],
-    ],
-  });
+      include: [
+        {
+          model: models.Student,
+          as: "student",
+          attributes: [
+            "id",
+            "full_name",
+            "student_id",
+            "date_of_birth",
+            "father_name",
+            "mother_name",
+          ],
+          include: [
+            {
+              model: models.Class,
+              as: "Class",
+              attributes: ["name"],
+              include: [
+                {
+                  model: models.Specialty,
+                  as: "department",
+                  attributes: ["name"],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          model: models.Subject,
+          as: "subject",
+          attributes: ["code", "name", "coefficient", "category", "orientation_department_id"],
+          include: [
+            {
+              model: models.ClassSubject,
+              as: "classSubjects",
+              // Without the class_id filter, every Mark row joins against
+              // every class's teacher-assignment row for that subject
+              // school-wide, not just this class's, a measured 20x row
+              // multiplication at scale (400,000 rows for a class with
+              // 20,000 real marks). Same bug found and fixed identically in
+              // reportCardPdfGenerator.js and mastersheet.controller.js.
+              // academic_year_id scopes to THIS report card's own year, not
+              // "whoever teaches it now" — class_subjects is year-scoped
+              // precisely so a reassignment since can't rewrite who this
+              // printed report card says taught it.
+              where: { class_id: classId, academic_year_id: academicYearId },
+              required: false,
+              attributes: ["id", "class_id"],
+              include: [
+                {
+                  model: models.User,
+                  as: "teacher",
+                  attributes: ["id", "name", "username"],
+                },
+              ],
+            },
+            {
+              model: models.Specialty,
+              as: "orientationDepartment",
+              attributes: ["id", "name"],
+            },
+          ],
+        },
+        { model: models.Term, as: "term", attributes: ["order_number", "name"] },
+        {
+          model: models.Sequence,
+          as: "sequence",
+          attributes: ["order_number", "name"],
+        },
+        { model: models.AcademicYear, as: "academic_year", attributes: ["name"] },
+      ],
+      order: [
+        [{ model: models.Student, as: "student" }, "full_name", "ASC"],
+        [{ model: models.Subject, as: "subject" }, "code", "ASC"],
+        [{ model: models.Term, as: "term" }, "order_number", "ASC"],
+        [{ model: models.Sequence, as: "sequence" }, "order_number", "ASC"],
+      ],
+    }),
+  ]);
 
   if (!marks.length) return next(new AppError("No data found", 404));
 
-  const reportCardClass = await models.Class.findByPk(classId, {
-    include: [
-      {
-        model: models.User,
-        as: "classMaster",
-        attributes: ["name", "username"],
-      },
-    ],
-  });
+  const classMaster = await resolveClassMasterName(classId, academicYearId);
 
-  const classMaster =
-    reportCardClass?.classMaster?.name ||
-    reportCardClass?.classMaster?.username ||
-    "";
-
-  const reportCards = buildReportCardsFromMarks(marks, classMaster);
+  const settings = await getOrCreateSettings();
+  const reportCards = buildReportCardsFromMarks(marks, classMaster, "term3", settings.principal_name, settings);
 
   const reportCard = reportCards.find(
     (rc) => String(rc.student.id) === String(studentId)
@@ -651,7 +650,7 @@ const singleReportCard = catchAsync(async (req, res, next) => {
   // tagged subject actually taken), so the on-screen Academics tab
   // matches the downloadable PDF instead of silently dropping subjects.
   const isOrientationSubject = (s) => Boolean(s.orientationDepartmentId);
-  const orientationSubjects = reportCardClass?.is_orientation
+  const orientationSubjects = studentClass?.is_orientation
     ? [
         ...(reportCard.generalSubjects || []),
         ...(reportCard.professionalSubjects || []),
@@ -1251,6 +1250,10 @@ function buildHTML(students, options = {}) {
   // ============================================================================
 
   function generateSingleCard(data) {
+    const admin = data.administration || {};
+    const schoolName = esc((admin.schoolName || "VOTECH S7 ACADEMY").toUpperCase());
+    const schoolAddress = esc(admin.address || "AZIRE - MANKON");
+    const schoolMotto = esc(admin.motto || "Welfare, Productivity, Self Actualization");
     const termData = getCurrentTermData(data.student.term);
     const cumulativeAvg = getCumulativeAverageToDate(data);
 
@@ -1329,15 +1332,15 @@ function buildHTML(students, options = {}) {
               <div class="motto">PAIX - TRAVAIL - PATRIE</div>
               <div class="ministry">MINISTÈRE DE L'EMPLOI ET DE LA FORMATION PROFESSIONNELLE</div>
               <div class="department">DIRECTION DE L'ENSEIGNEMENT PRIVÉ</div>
-              <div class="school-name-header">VOTECH S7 ACADEMY</div>
-              <div class="location">AZIRE - MANKON</div>
+              <div class="school-name-header">${schoolName}</div>
+              <div class="location">${schoolAddress}</div>
             </div>
 
             <div class="center-emblem">
               <img src="${logoUrl}" alt="School Logo" class="report-card-logo" style="width: 4rem; height: 4rem; background: #204080; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; margin-bottom: 6px;" />
               <div class="center-text">
                 <div class="igniting-text">IGNITING ''Preneurs</div>
-                <div class="center-motto">Motto: Welfare, Productivity, Self Actualization</div>
+                <div class="center-motto">Motto: ${schoolMotto}</div>
               </div>
             </div>
 
@@ -1346,8 +1349,8 @@ function buildHTML(students, options = {}) {
               <div class="motto">PEACE - WORK - FATHERLAND</div>
               <div class="ministry">MINISTRY OF EMPLOYMENT AND VOCATIONAL TRAINING</div>
               <div class="department">DEPARTMENT OF PRIVATE VOCATIONAL INSTITUTE</div>
-              <div class="school-name-header">VOTECH S7 ACADEMY</div>
-              <div class="location">AZIRE - MANKON</div>
+              <div class="school-name-header">${schoolName}</div>
+              <div class="location">${schoolAddress}</div>
             </div>
           </div>
 
@@ -2635,22 +2638,11 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
   if (!department)
     return next(new AppError("Department not found", StatusCodes.NOT_FOUND));
 
-  const studentClass = await models.Class.findByPk(classId, {
-    include: [
-      {
-        model: models.User,
-        as: "classMaster",
-        attributes: ["name", "username"],
-      },
-    ],
-  });
+  const studentClass = await models.Class.findByPk(classId);
   if (!studentClass)
     return next(new AppError("Class not found", StatusCodes.NOT_FOUND));
 
-  const classMaster =
-    studentClass?.classMaster?.name ||
-    studentClass?.classMaster?.username ||
-    "";
+  const classMaster = await resolveClassMasterName(classId, academicYearId);
 
   const termKey = await resolveTermKey(term);
 
@@ -2691,13 +2683,17 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
           {
             model: models.ClassSubject,
             as: "classSubjects",
-            // Without this, every Mark row joins against every class's
-            // teacher-assignment row for that subject school-wide, not
-            // just this class's, a measured 20x row multiplication at
-            // scale (400,000 rows for a class with 20,000 real marks).
-            // Same bug found and fixed identically in
+            // Without the class_id filter, every Mark row joins against
+            // every class's teacher-assignment row for that subject
+            // school-wide, not just this class's, a measured 20x row
+            // multiplication at scale (400,000 rows for a class with
+            // 20,000 real marks). Same bug found and fixed identically in
             // reportCardPdfGenerator.js and mastersheet.controller.js.
-            where: { class_id: classId },
+            // academic_year_id scopes to THIS report card's own year, not
+            // "whoever teaches it now" — class_subjects is year-scoped
+            // precisely so a reassignment since can't rewrite who this
+            // printed report card says taught it.
+            where: { class_id: classId, academic_year_id: academicYearId },
             required: false,
             attributes: ["id", "class_id"],
             include: [
@@ -2740,7 +2736,8 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
     );
   }
 
-  const cards = buildReportCardsFromMarks(marks, classMaster);
+  const settings = await getOrCreateSettings();
+  const cards = buildReportCardsFromMarks(marks, classMaster, "term3", settings.principal_name, settings);
   const classStats = computeClassStatsForTerm(cards, termKey);
 
   const grading = await models.academic_bands.findAll({
@@ -2845,15 +2842,7 @@ const bulkReportCardsHTML = catchAsync(async (req, res, next) => {
   const [academicYearData, department, studentClass] = await Promise.all([
     models.AcademicYear.findByPk(academicYearId),
     models.Specialty.findByPk(departmentId),
-    models.Class.findByPk(classId, {
-      include: [
-        {
-          model: models.User,
-          as: "classMaster",
-          attributes: ["name", "username"],
-        },
-      ],
-    }),
+    models.Class.findByPk(classId),
   ]);
 
   // Validation checks
@@ -2867,10 +2856,7 @@ const bulkReportCardsHTML = catchAsync(async (req, res, next) => {
     return next(new AppError("Class not found", StatusCodes.NOT_FOUND));
   }
 
-  const classMaster =
-    studentClass?.classMaster?.name ||
-    studentClass?.classMaster?.username ||
-    "";
+  const classMaster = await resolveClassMasterName(classId, academicYearId);
 
   // Resolve term key
   const resolveTermKey = async (rawTerm) => {
@@ -2937,13 +2923,17 @@ const bulkReportCardsHTML = catchAsync(async (req, res, next) => {
           {
             model: models.ClassSubject,
             as: "classSubjects",
-            // Without this, every Mark row joins against every class's
-            // teacher-assignment row for that subject school-wide, not
-            // just this class's, a measured 20x row multiplication at
-            // scale (400,000 rows for a class with 20,000 real marks).
-            // Same bug found and fixed identically in
+            // Without the class_id filter, every Mark row joins against
+            // every class's teacher-assignment row for that subject
+            // school-wide, not just this class's, a measured 20x row
+            // multiplication at scale (400,000 rows for a class with
+            // 20,000 real marks). Same bug found and fixed identically in
             // reportCardPdfGenerator.js and mastersheet.controller.js.
-            where: { class_id: classId },
+            // academic_year_id scopes to THIS report card's own year, not
+            // "whoever teaches it now" — class_subjects is year-scoped
+            // precisely so a reassignment since can't rewrite who this
+            // printed report card says taught it.
+            where: { class_id: classId, academic_year_id: academicYearId },
             required: false,
             attributes: ["id", "class_id"],
             include: [
@@ -2987,7 +2977,8 @@ const bulkReportCardsHTML = catchAsync(async (req, res, next) => {
   }
 
   // Build report cards from marks
-  const cards = buildReportCardsFromMarks(marks, classMaster, termKey);
+  const settings = await getOrCreateSettings();
+  const cards = buildReportCardsFromMarks(marks, classMaster, termKey, settings.principal_name, settings);
 
   // Fetch grading scale
   const grading = await models.academic_bands.findAll({

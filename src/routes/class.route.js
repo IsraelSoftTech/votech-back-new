@@ -18,4 +18,9 @@ classRouter
   .patch(classControllers.updateClass)
   .delete(classControllers.deleteClass);
 
+classRouter
+  .route("/:id/class-master")
+  .get(classControllers.getClassMasterHistory)
+  .post(classControllers.setClassMasterForYear);
+
 module.exports = classRouter;

@@ -21,6 +21,8 @@ const AppError = require("../utils/AppError");
 const appResponder = require("../utils/appResponder");
 const models = require("../models/index.model");
 const { buildReportCardsFromMarks, attachAcademicRemarks } = require("./reportCard.controller");
+const { getOrCreateSettings } = require("./schoolSettings.controller");
+const { resolveClassMasterName } = require("../utils/classMaster.util");
 
 /* ═══════════════════════════════════════════════════════════════════
    1. FONT AND PRINTER INITIALIZATION
@@ -2128,18 +2130,11 @@ async function getMasterSheetData({ academicYearId, departmentId, classId, term 
     throw err;
   }
 
-  const [academicYear, department, studentClass] = await Promise.all([
+  const [academicYear, department, studentClass, settings] = await Promise.all([
     models.AcademicYear.findByPk(academicYearId),
     models.Specialty.findByPk(departmentId),
-    models.Class.findByPk(classId, {
-      include: [
-        {
-          model: models.User,
-          as: "classMaster",
-          attributes: ["name", "username"],
-        },
-      ],
-    }),
+    models.Class.findByPk(classId),
+    getOrCreateSettings(),
   ]);
 
   if (!academicYear) throw new AppError("Academic year not found", StatusCodes.NOT_FOUND);
@@ -2154,10 +2149,9 @@ async function getMasterSheetData({ academicYearId, departmentId, classId, term 
     );
   }
 
-  const classMaster =
-    studentClass?.classMaster?.name || studentClass?.classMaster?.username || "";
+  const classMaster = await resolveClassMasterName(classId, academicYearId);
   const termKey = await resolveTermKey(term, academicYearId);
-  const cards = buildReportCardsFromMarks(marks, classMaster, termKey);
+  const cards = buildReportCardsFromMarks(marks, classMaster, termKey, settings.principal_name, settings);
 
   // Same decision engine (and same PromotionRequirement) that decides each
   // student's individual report-card remark — the class-wide tally below
@@ -2179,12 +2173,12 @@ async function getMasterSheetData({ academicYearId, departmentId, classId, term 
   const analysis = analyzeMasterSheet(cards, termKey, gradingScale, requirementConfigured);
 
   const meta = {
-    schoolName: "Votech S7 Academy",
+    schoolName: settings.school_name,
     className: studentClass.name,
     departmentName: department.name,
     academicYear: academicYear.name,
     classMaster,
-    principal: "Mr. Thomas Ambe",
+    principal: settings.principal_name,
   };
 
   return { meta, analysis, gradingScale };
@@ -2344,8 +2338,11 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
             // copy of this query: without this, every Mark row joins
             // against every class's teacher-assignment row for that
             // subject school-wide, not just this class's, a measured
-            // 20x row multiplication at scale.
-            where: { class_id: classId },
+            // 20x row multiplication at scale. academic_year_id scopes
+            // to THIS master sheet's own year, class_subjects is
+            // year-scoped so a reassignment since can't rewrite who this
+            // document says taught it.
+            where: { class_id: classId, academic_year_id: academicYearId },
             required: false,
             attributes: ["id", "class_id"],
             include: [

@@ -88,6 +88,14 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: false,
       },
+      // Whether the student was already repeating *before* this move was
+      // applied, captured so reversing the move can restore
+      // Student.is_repeating to exactly what it was, not just flip it off.
+      was_repeating: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+      },
       // Which compulsory subjects passed/failed, professional-pass count,
       // exact missing-mark gaps if has_incomplete_data, the full working
       // behind the decision, kept forever for audit purposes.

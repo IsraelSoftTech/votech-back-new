@@ -11,6 +11,8 @@ const {
   assertNotPromoted,
   getLockedStudentIds,
 } = require("../utils/promotionLock.util");
+const { assertYearWritable } = require("../utils/yearLock.util");
+const { resolveStudentClassForYear } = require("../utils/studentYear.util");
 
 const MarksModel = models.Mark;
 const TermsModel = models.Term;
@@ -464,6 +466,233 @@ const saveMarksBatch = catchAsync(async (req, res, next) => {
   }
 });
 
+// ─── Single-student marks editor (Admin3 only) ──────────────────────────
+//
+// A dedicated, deliberately narrow surface: one student, every subject
+// their class was assigned for a given (academic_year_id, term_id,
+// sequence_id), in one table, editable and saved through the exact same
+// Mark model/hooks as normal class-wide entry — the promotion lock, the
+// year-lock (attachYearLockHooks on Mark), and validateMarkData all apply
+// unchanged. Nothing new is bypassed; this is just a different-shaped
+// entry point onto the same protected write path.
+
+const getStudentMarksForTerm = catchAsync(async (req, res, next) => {
+  const studentId = Number(req.params.id);
+  const academicYearId = Number(req.query.academic_year_id);
+  const termId = Number(req.query.term_id);
+  const sequenceId = Number(req.query.sequence_id);
+
+  if (!academicYearId || !termId || !sequenceId) {
+    return next(
+      new AppError(
+        "academic_year_id, term_id and sequence_id are all required",
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+
+  const student = await models.Student.findByPk(studentId, {
+    attributes: ["id", "full_name", "class_id", "academic_year_id"],
+  });
+  if (!student) {
+    return next(new AppError("Student not found", StatusCodes.NOT_FOUND));
+  }
+
+  const classId = await resolveStudentClassForYear(student, academicYearId);
+  if (!classId) {
+    return next(
+      new AppError(
+        "This student has no known class for that academic year.",
+        StatusCodes.NOT_FOUND
+      )
+    );
+  }
+
+  const [classSubjects, existingMarks, yearMarkSubjectIds] = await Promise.all([
+    models.ClassSubject.findAll({
+      where: { class_id: classId, academic_year_id: academicYearId },
+      include: [
+        {
+          model: models.Subject,
+          as: "subject",
+          attributes: ["id", "name", "code", "category", "coefficient"],
+        },
+      ],
+      order: [[{ model: models.Subject, as: "subject" }, "name", "ASC"]],
+    }),
+    models.Mark.findAll({
+      where: {
+        student_id: studentId,
+        class_id: classId,
+        academic_year_id: academicYearId,
+        term_id: termId,
+        sequence_id: sequenceId,
+      },
+      raw: true,
+    }),
+    // class_subjects only reflects reality from the point this year's
+    // assignments were actually entered through the UI onward — years
+    // predating that (or any gap in it) have real Mark rows with no
+    // matching class_subjects row at all. Without this, a student with
+    // genuine historical marks would show an empty, unfixable editor.
+    // Scoped to the whole year (not just this term/sequence) so every
+    // subject the student has ever been marked on in this year shows up,
+    // even if this particular sequence has no score for it yet.
+    models.Mark.findAll({
+      where: { student_id: studentId, class_id: classId, academic_year_id: academicYearId },
+      attributes: ["subject_id"],
+      group: ["subject_id"],
+      raw: true,
+    }),
+  ]);
+
+  const markBySubject = new Map(existingMarks.map((m) => [m.subject_id, m]));
+
+  const subjectMap = new Map();
+  for (const cs of classSubjects) {
+    if (!cs.subject) continue;
+    subjectMap.set(cs.subject.id, cs.subject);
+  }
+
+  const missingSubjectIds = yearMarkSubjectIds
+    .map((r) => r.subject_id)
+    .filter((id) => !subjectMap.has(id));
+  if (missingSubjectIds.length) {
+    const missingSubjects = await models.Subject.findAll({
+      where: { id: missingSubjectIds },
+      attributes: ["id", "name", "code", "category", "coefficient"],
+      raw: true,
+    });
+    for (const s of missingSubjects) subjectMap.set(s.id, s);
+  }
+
+  const subjects = Array.from(subjectMap.values())
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+    .map((subject) => {
+      const mark = markBySubject.get(subject.id);
+      return {
+        subject_id: subject.id,
+        name: subject.name,
+        code: subject.code,
+        category: subject.category,
+        coefficient: subject.coefficient,
+        mark_id: mark?.id || null,
+        score: mark ? Number(mark.score) : null,
+      };
+    });
+
+  appResponder(
+    StatusCodes.OK,
+    {
+      student: { id: student.id, name: student.full_name },
+      class_id: classId,
+      subjects,
+    },
+    res
+  );
+});
+
+const saveStudentMarks = catchAsync(async (req, res, next) => {
+  const studentId = Number(req.params.id);
+  const academicYearId = Number(req.body?.academic_year_id);
+  const termId = Number(req.body?.term_id);
+  const sequenceId = Number(req.body?.sequence_id);
+  const marks = req.body?.marks;
+
+  if (!academicYearId || !termId || !sequenceId) {
+    return next(
+      new AppError(
+        "academic_year_id, term_id and sequence_id are all required",
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+  if (!Array.isArray(marks) || marks.length === 0) {
+    return next(
+      new AppError("marks must be a non-empty array", StatusCodes.BAD_REQUEST)
+    );
+  }
+
+  const student = await models.Student.findByPk(studentId, {
+    attributes: ["id", "class_id", "academic_year_id"],
+  });
+  if (!student) {
+    return next(new AppError("Student not found", StatusCodes.NOT_FOUND));
+  }
+
+  const classId = await resolveStudentClassForYear(student, academicYearId);
+  if (!classId) {
+    return next(
+      new AppError(
+        "This student has no known class for that academic year.",
+        StatusCodes.NOT_FOUND
+      )
+    );
+  }
+
+  await assertNotPromoted(studentId, classId, academicYearId);
+
+  // The Mark model's beforeCreate hook (attachYearLockHooks) otherwise
+  // silently force-overwrites academic_year_id to whatever year is
+  // currently active on every create — correct for the normal per-class
+  // entry flow (which only ever targets the active year in practice), but
+  // wrong here: a student can legitimately still be sitting in an
+  // archived year (not yet promoted), and this editor must be able to
+  // create marks for exactly the year requested. Checking writability
+  // explicitly and skipping the hook's own check mirrors the same
+  // pattern used for class_subjects/class_master_assignments elsewhere —
+  // throws if academicYearId is archived and the caller has no live
+  // grant for it, no-ops for the active year.
+  await assertYearWritable(academicYearId);
+
+  const results = [];
+  for (const entry of marks) {
+    const subjectId = Number(entry.subject_id);
+    const score = Number(entry.score);
+    if (!subjectId || Number.isNaN(score) || score < 0 || score > 20) {
+      return next(
+        new AppError(
+          `Invalid subject_id/score in marks array: ${JSON.stringify(entry)}`,
+          StatusCodes.BAD_REQUEST
+        )
+      );
+    }
+
+    const [mark, created] = await models.Mark.findOrCreate({
+      where: {
+        student_id: studentId,
+        subject_id: subjectId,
+        class_id: classId,
+        academic_year_id: academicYearId,
+        term_id: termId,
+        sequence_id: sequenceId,
+      },
+      defaults: {
+        score,
+        uploaded_by: req.user.id,
+      },
+      skipYearLockCheck: true,
+    });
+    if (!created && Number(mark.score) !== score) {
+      await mark.update(
+        { score, uploaded_by: req.user.id },
+        { skipYearLockCheck: true }
+      );
+    }
+    results.push({ subject_id: subjectId, mark_id: mark.id, score });
+  }
+
+  await logChanges(
+    "student_marks_edit",
+    studentId,
+    ChangeTypes.update,
+    req.user,
+    { academic_year_id: academicYearId, term_id: termId, sequence_id: sequenceId, marks: results }
+  );
+
+  appResponder(StatusCodes.OK, { saved: results }, res);
+});
+
 const readAllTerms = catchAsync(async (req, res) => {
   await CRUDTerms.readAll(res, req, "", 1, 1000000000000);
 });
@@ -481,6 +710,8 @@ module.exports = {
   deleteMark,
   validateMarkData,
   saveMarksBatch,
+  getStudentMarksForTerm,
+  saveStudentMarks,
   readAllTerms,
   readAllSequences,
 };

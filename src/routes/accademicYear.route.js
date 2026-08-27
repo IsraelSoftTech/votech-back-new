@@ -1,8 +1,10 @@
 const express = require("express");
+const { StatusCodes } = require("http-status-codes");
 
 const academicYearControllers = require("../controllers/accademicYear.controller");
 const { protect, restrictTo } = require("../controllers/auth.controller");
 const { attachRequestContext } = require("../utils/requestContext.util");
+const AppError = require("../utils/AppError");
 
 (async () => {
   try {
@@ -34,6 +36,26 @@ accademicYearRouter
 accademicYearRouter
   .route("/switch")
   .post(restrictTo("Admin3"), academicYearControllers.switchAcademicYear);
+accademicYearRouter
+  .route("/carry-forward")
+  .post(restrictTo("Admin1"), academicYearControllers.carryForwardAssignments);
+
+// These three are reserved action paths, not numeric :id lookups. Without
+// this guard, calling one of them with an unsupported verb (e.g. GET on
+// /carry-forward) falls through to the "/:id" route below and crashes
+// with a raw SequelizeDatabaseError trying to findByPk("carry-forward")
+// instead of a clean 404.
+accademicYearRouter.all(
+  ["/switch-checklist", "/switch", "/carry-forward"],
+  (req, res, next) => {
+    next(
+      new AppError(
+        `Cannot ${req.method} ${req.originalUrl}`,
+        StatusCodes.NOT_FOUND
+      )
+    );
+  }
+);
 
 accademicYearRouter.route("/:id").get(academicYearControllers.readOneAcademicYear);
 
