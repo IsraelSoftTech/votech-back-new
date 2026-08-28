@@ -26,7 +26,7 @@ const { StatusCodes } = require("http-status-codes");
 const catchAsync = require("../utils/catchAsync");
 const AppError = require("../utils/AppError");
 const models = require("../models/index.model");
-const { buildReportCardsFromMarks } = require("./reportCard.controller");
+const { buildReportCardsFromMarks, attachAcademicRemarks } = require("./reportCard.controller");
 
 /* ═══════════════════════════════════════════════════════════════════
    1. FONT & PRINTER SETUP
@@ -175,10 +175,12 @@ function getTermConfig(termLabel) {
         { key: "_termAvg", header: "TERM\nAVG", isAvg: true },
       ],
       getTermAvg: (s) => s.scores.term1Avg,
-      termTotalKey: "term1",
-      cumulativeLabel: "T1",
+      termTotalKey: "term1", // ✅
+      getCumulativeLabel: (_tt) => "T1",
       getCumulative: (tt) =>
-        typeof tt.term1?.average === "number" ? tt.term1.average : null,
+        typeof tt.term1?.average === "number" && tt.term1.average > 0
+          ? tt.term1.average
+          : null,
     };
   }
 
@@ -192,17 +194,22 @@ function getTermConfig(termLabel) {
         { key: "_yearAvg", header: "TOTAL\nAVG", isAvg: true },
       ],
       getTermAvg: (s) => s.scores.term2Avg,
+      termTotalKey: "term2", // ✅ THIS WAS MISSING
       getYearAvg: (s) => {
         const t1 = s.scores.term1Avg;
         const t2 = s.scores.term2Avg;
         if (t1 == null || t2 == null) return null;
         return round((t1 + t2) / 2);
       },
-      termTotalKey: "term2",
-      cumulativeLabel: "T1 + T2",
+      getCumulativeLabel: (tt) => {
+        const parts = [];
+        if (tt.term1?.average > 0) parts.push("T1");
+        if (tt.term2?.average > 0) parts.push("T2");
+        return parts.length ? parts.join(" + ") : "T2";
+      },
       getCumulative: (tt) => {
         const a = [tt.term1?.average, tt.term2?.average].filter(
-          (v) => typeof v === "number"
+          (v) => typeof v === "number" && v > 0
         );
         return a.length ? round(a.reduce((x, y) => x + y, 0) / a.length) : null;
       },
@@ -221,14 +228,20 @@ function getTermConfig(termLabel) {
     ],
     getTermAvg: (s) => s.scores.term3Avg,
     getFinalAvg: (s) => s.scores.finalAvg,
-    termTotalKey: "term3",
-    cumulativeLabel: "T1 + T2 + T3",
+    termTotalKey: "term3", // ✅
+    getCumulativeLabel: (tt) => {
+      const parts = [];
+      if (tt.term1?.average > 0) parts.push("T1");
+      if (tt.term2?.average > 0) parts.push("T2");
+      if (tt.term3?.average > 0) parts.push("T3");
+      return parts.length ? parts.join(" + ") : "T3";
+    },
     getCumulative: (tt) => {
       const a = [
         tt.term1?.average,
         tt.term2?.average,
         tt.term3?.average,
-      ].filter((v) => typeof v === "number");
+      ].filter((v) => typeof v === "number" && v > 0);
       return a.length ? round(a.reduce((x, y) => x + y, 0) / a.length) : null;
     },
   };
@@ -392,8 +405,14 @@ function buildHeader(data, logoBase64) {
 
   const centerContent = [];
   if (logoBase64) {
+    // Reference the image registered once in docDefinition.images (see
+    // buildDocDefinition), not the raw base64 string. Passing the same
+    // base64 string directly per page makes pdfmake embed a full,
+    // uncompressed copy of the logo on every single page, this was the
+    // single largest memory/file-size cost in mass generation, not the
+    // student count.
     centerContent.push({
-      image: logoBase64,
+      image: "reportLogo",
       width: 40,
       height: 40,
       alignment: "center",
@@ -751,6 +770,25 @@ function buildPerformanceSummary(data, termCfg) {
     decorationColor: C.primary,
   });
 
+  // Fills what used to be two always-blank trailing cells on this row.
+  // Measured against the real embedded font (see reportCardPdfGenerator
+  // remark-placement investigation): the longest possible value,
+  // "Promoted on Condition", only fits on one line at 7pt when the label
+  // and value share one merged (colSpan: 2) cell — kept as two separate
+  // cells like the rest of the row, it wraps.
+  const remark = data.academicRemark;
+  const remarkTone =
+    { good: C.excellent, bad: C.red, warn: C.fairlyGood }[remark?.tone] || C.dark;
+  const remarkCell = remark
+    ? {
+        colSpan: 2,
+        text: [
+          { text: "ACADEMIC REMARK: ", fontSize: 7, bold: true, color: C.primary },
+          { text: remark.text.toUpperCase(), fontSize: 7, bold: true, color: remarkTone },
+        ],
+      }
+    : { colSpan: 2, text: "" };
+
   return {
     unbreakable: true,
     table: {
@@ -767,10 +805,10 @@ function buildPerformanceSummary(data, termCfg) {
         [
           lbl("CLASS AVERAGE:"),
           val(cs.classAverage != null ? `${fmtAvg(cs.classAverage)}/20` : "—"),
-          lbl(`CUMUL. (${termCfg.cumulativeLabel}):`),
+          lbl(`CUMUL. (${termCfg.getCumulativeLabel(data.termTotals)}):`),
           val(cumAvg != null ? `${fmtAvg(cumAvg)}/20` : "N/A"),
-          { text: "" },
-          { text: "" },
+          remarkCell,
+          {},
         ],
       ],
     },
@@ -1017,26 +1055,6 @@ function buildBottomSection(data, gradingScale) {
       {
         columns: [
           {
-            text: "Decision:",
-            fontSize: 6.5,
-            bold: true,
-            color: C.primary,
-            width: "auto",
-          },
-          {
-            text: admin.decision || "",
-            fontSize: 6.5,
-            bold: true,
-            color: C.good,
-            alignment: "right",
-            width: "*",
-          },
-        ],
-        margin: [0, 0, 0, 1],
-      },
-      {
-        columns: [
-          {
             text: "Next Term:",
             fontSize: 6.5,
             bold: true,
@@ -1194,10 +1212,16 @@ function buildDocDefinition(cards, termLabel, gradingScale, logoBase64) {
       lineHeight: 1.08,
     },
 
+    // Registered once, referenced by name below and in buildHeader, so
+    // pdfmake embeds the logo's bytes exactly once per document instead
+    // of once per page. For a 1000-student class that's the difference
+    // between embedding it once versus 2000 times (header + watermark).
+    ...(logoBase64 ? { images: { reportLogo: logoBase64 } } : {}),
+
     ...(logoBase64
       ? {
           background: (_currentPage, pageSize) => ({
-            image: logoBase64,
+            image: "reportLogo",
             width: 380,
             height: 380,
             opacity: 0.04,
@@ -1354,6 +1378,13 @@ function termKeyToLabel(k) {
 async function fetchMarksWithIncludes(academicYearId, classId) {
   return models.Mark.findAll({
     where: { academic_year_id: academicYearId, class_id: classId },
+    // raw + nest: plain nested JS objects instead of hydrated Sequelize
+    // instances (each with its own getters/associations/dataValues
+    // machinery). Same nested shape buildReportCardsFromMarks already
+    // expects, just without the per-row hydration overhead, this was the
+    // single biggest memory cost in mass generation.
+    raw: true,
+    nest: true,
     include: [
       {
         model: models.Student,
@@ -1389,6 +1420,15 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
           {
             model: models.ClassSubject,
             as: "classSubjects",
+            // A subject is taught in many classes school-wide, without
+            // this every Mark row was being joined against every class's
+            // teacher-assignment row for that subject, not just this
+            // class's, a 400,000-row result for a class with 20,000 real
+            // marks (measured on a 1000-student class), that fan-out was
+            // the actual dominant memory cost in mass generation, not
+            // rendering or merging.
+            where: { class_id: classId },
+            required: false,
             attributes: ["id", "class_id"],
             include: [
               {
@@ -1463,7 +1503,7 @@ const bulkPdfDirect = catchAsync(async (req, res, next) => {
   // ── Fetch marks and grading in parallel ──
   const [marks, gradingRaw] = await Promise.all([
     fetchMarksWithIncludes(academicYearId, classId),
-    models.academic_bands.findAll({
+    models.AcademicBand.findAll({
       where: { academic_year_id: academicYear.id, class_id: studentClass.id },
       raw: true,
     }),
@@ -1484,6 +1524,7 @@ const bulkPdfDirect = catchAsync(async (req, res, next) => {
     "";
   const termLabel = termKeyToLabel(termKey);
   const cards = buildReportCardsFromMarks(marks, classMaster, termKey);
+  await attachAcademicRemarks(cards, academicYearId, classId, termKey);
   const gradingScale = prepareGrading(gradingRaw);
 
   // ── Load logo once (cached after first call) ──
@@ -1522,6 +1563,7 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
     departmentId,
     classId,
     term = "term3",
+    disposition = "attachment",
   } = req.query;
 
   if (!studentId || !academicYearId || !departmentId || !classId) {
@@ -1557,7 +1599,7 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
 
   const [marks, gradingRaw] = await Promise.all([
     fetchMarksWithIncludes(academicYearId, classId),
-    models.academic_bands.findAll({
+    models.AcademicBand.findAll({
       where: { academic_year_id: academicYear.id, class_id: studentClass.id },
       raw: true,
     }),
@@ -1583,6 +1625,8 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
     );
   }
 
+  await attachAcademicRemarks([card], academicYearId, classId, termKey);
+
   const gradingScale = prepareGrading(gradingRaw);
   const logoBase64 = loadLogoBase64();
   const docDef = buildDocDefinition(
@@ -1595,9 +1639,10 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
 
   const studentName = sanitize(card.student.name);
   const filename = `${studentName}-${sanitize(termLabel)}-report-card.pdf`;
+  const safeDisposition = disposition === "inline" ? "inline" : "attachment";
 
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Disposition", `${safeDisposition}; filename="${filename}"`);
   res.setHeader("Content-Length", pdfBuffer.length);
   res.status(200).end(pdfBuffer);
 });
@@ -1609,4 +1654,15 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
 module.exports = {
   bulkPdfDirect,
   singlePdfDirect,
+  // Reused by reportCardSession.controller.js's chunked generator, see
+  // that file for why generation is split into per-chunk documents
+  // instead of one document for the whole class.
+  printer,
+  buildDocDefinition,
+  prepareGrading,
+  loadLogoBase64,
+  termKeyToLabel,
+  resolveTermKey,
+  fetchMarksWithIncludes,
+  sanitize,
 };

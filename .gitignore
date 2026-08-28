@@ -3,3 +3,4 @@ node_modules
 dist
 local_uploads
 temp/db-swaps/
+sync-dumps/

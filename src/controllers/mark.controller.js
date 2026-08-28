@@ -8,6 +8,10 @@ const CRUD = require("../utils/Crud");
 const appResponder = require("../utils/appResponder");
 const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
 const { applyDefaultYearListFilter } = require("../utils/academicYearScope.util");
+const {
+  assertNotPromoted,
+  getLockedStudentIds,
+} = require("../utils/promotionLock.util");
 
 const MarksModel = models.Mark;
 const TermsModel = models.Term;
@@ -130,6 +134,11 @@ async function validateMarkData(
 
 const createMark = catchAsync(async (req, res) => {
   await validateMarkData(req.body);
+  await assertNotPromoted(
+    req.body.student_id,
+    req.body.class_id,
+    req.body.academic_year_id
+  );
   await CRUDMarks.create(req.body, res, req);
 });
 
@@ -144,6 +153,17 @@ const readAllMarks = catchAsync(async (req, res) => {
 
 const updateMark = catchAsync(async (req, res) => {
   await validateMarkData(req.body, true);
+
+  const existing = await MarksModel.findByPk(req.params.id);
+  if (!existing) {
+    throw new AppError("Invalid Id, no such resource in the database", 404);
+  }
+  await assertNotPromoted(
+    req.body.student_id ?? existing.student_id,
+    req.body.class_id ?? existing.class_id,
+    req.body.academic_year_id ?? existing.academic_year_id
+  );
+
   await CRUDMarks.update(req.params.id, res, req);
 });
 
@@ -275,6 +295,32 @@ const saveMarksBatch = catchAsync(async (req, res, next) => {
       deletedAt: null, // 🔑 Important: Reset deletedAt for upsert
     });
     seenStudents.add(studentId);
+  }
+
+  // Reject writes for any student already promoted out of this exact
+  // (class, academic_year) pair, that pair is closed until an Admin3
+  // reverses the promotion move that closed it.
+  const lockedStudentIds = await getLockedStudentIds(
+    validMarks.map((m) => m.student_id),
+    parsedIds.class_id,
+    parsedIds.academic_year_id
+  );
+  if (lockedStudentIds.size > 0) {
+    for (const studentId of lockedStudentIds) {
+      const idx = validMarks.findIndex((m) => m.student_id === studentId);
+      if (idx !== -1) {
+        validationErrors.push({
+          index: idx,
+          student_id: studentId,
+          error:
+            "Student already promoted out of this class for this academic year, reverse the promotion to edit marks here",
+        });
+      }
+    }
+    const lockedSet = lockedStudentIds;
+    for (let i = validMarks.length - 1; i >= 0; i--) {
+      if (lockedSet.has(validMarks[i].student_id)) validMarks.splice(i, 1);
+    }
   }
 
   console.log(

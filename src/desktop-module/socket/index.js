@@ -1,9 +1,11 @@
 "use strict";
 
 const { Server } = require("socket.io");
+const jwt = require("jsonwebtoken");
 
 let _io = null;
 let _syncNamespace = null;
+let _appNamespace = null;
 
 function initSockets(httpServer) {
   _io = new Server(httpServer, {
@@ -32,6 +34,33 @@ function initSockets(httpServer) {
 
   console.log("[Sockets] /sync namespace ready");
 
+  // General-purpose web app namespace — used for things like promotion
+  // run progress push. Kept separate from /sync so nothing here touches
+  // desktop sync behavior.
+  _appNamespace = _io.of("/app");
+
+  _appNamespace.use((socket, next) => {
+    const token =
+      socket.handshake.auth?.token ||
+      socket.handshake.headers.authorization?.replace("Bearer ", "");
+    if (!token) return next(new Error("Authentication error: no token"));
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      socket.userId = decoded.id;
+      socket.userRole = decoded.role;
+      next();
+    } catch (err) {
+      next(new Error("Authentication error: invalid token"));
+    }
+  });
+
+  _appNamespace.on("connection", (socket) => {
+    socket.join(`user:${socket.userId}`);
+    socket.on("disconnect", () => {});
+  });
+
+  console.log("[Sockets] /app namespace ready");
+
   return _io;
 }
 
@@ -42,4 +71,13 @@ function getSyncNamespace() {
   return _syncNamespace;
 }
 
-module.exports = { initSockets, getSyncNamespace };
+/**
+ * Emit an event to one user's browser tab(s) on the /app namespace.
+ * No-op if sockets haven't been initialized yet or the user isn't connected.
+ */
+function emitToUser(userId, event, data) {
+  if (!_appNamespace) return;
+  _appNamespace.to(`user:${userId}`).emit(event, data);
+}
+
+module.exports = { initSockets, getSyncNamespace, emitToUser };
