@@ -89,6 +89,136 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
+const ADMIN_LIST_ROLES = [
+  "Admin1",
+  "Admin2",
+  "Admin3",
+  "Admin4",
+  "admin",
+  "Dean",
+];
+const REVIEW_ROLES = ["Admin1", "Admin2", "Admin4", "admin", "Dean"];
+const ADMIN_DELETE_ROLES = ["Admin1", "Admin2", "Admin4", "admin", "Dean"];
+
+const isAdmin3 = (user) => user?.role === "Admin3";
+
+const denyAdmin3Write = (req, res, next) => {
+  if (isAdmin3(req.user)) {
+    return res.status(403).json({
+      error:
+        "Admin3 has download-only access to approved lesson plans. Upload, edit, review, and delete are not permitted.",
+    });
+  }
+  next();
+};
+
+const buildLessonPlanListQuery = (req) => {
+  const {
+    class: classFilter,
+    department,
+    specialty,
+    status,
+    search,
+    page = "1",
+    limit = "100",
+  } = req.query;
+
+  const departmentId = department || specialty;
+  const isAdmin3User = isAdmin3(req.user);
+  const params = [];
+  const conditions = [];
+
+  if (isAdmin3User) {
+    conditions.push(`lp.status = 'approved'`);
+  } else if (status && status !== "all") {
+    params.push(status);
+    conditions.push(`lp.status = $${params.length}`);
+  }
+
+  if (classFilter) {
+    const classId = parseInt(classFilter, 10);
+    if (!Number.isNaN(classId)) {
+      params.push(classId);
+      const idx = params.length;
+      conditions.push(`(
+        lp.class_id = $${idx}
+        OR EXISTS (
+          SELECT 1 FROM class_subjects cs
+          WHERE cs.teacher_id = lp.user_id AND cs.class_id = $${idx}
+        )
+      )`);
+    }
+  }
+
+  if (departmentId) {
+    const deptId = parseInt(departmentId, 10);
+    if (!Number.isNaN(deptId)) {
+      params.push(deptId);
+      const idx = params.length;
+      conditions.push(`(
+        lp.department_id = $${idx}
+        OR c.department_id = $${idx}
+        OR EXISTS (
+          SELECT 1 FROM class_subjects cs
+          WHERE cs.teacher_id = lp.user_id AND cs.department_id = $${idx}
+        )
+      )`);
+    }
+  }
+
+  if (search && String(search).trim()) {
+    params.push(`%${String(search).trim().toLowerCase()}%`);
+    const idx = params.length;
+    conditions.push(`(
+      LOWER(lp.title) LIKE $${idx}
+      OR LOWER(COALESCE(lp.file_name, '')) LIKE $${idx}
+      OR LOWER(COALESCE(lp.subject, '')) LIKE $${idx}
+      OR LOWER(COALESCE(u.name, '')) LIKE $${idx}
+      OR LOWER(COALESCE(u.username, '')) LIKE $${idx}
+    )`);
+  }
+
+  const whereClause =
+    conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(500, Math.max(1, parseInt(limit, 10) || 100));
+  const offset = (pageNum - 1) * limitNum;
+
+  params.push(limitNum);
+  const limitIdx = params.length;
+  params.push(offset);
+  const offsetIdx = params.length;
+
+  const sql = `
+    SELECT
+      lp.*,
+      u.name AS teacher_name,
+      u.username AS teacher_username,
+      u.role AS teacher_role,
+      c.name AS class_label,
+      COALESCE(sp.name, sp2.name) AS department_name
+    FROM lesson_plans lp
+    LEFT JOIN users u ON lp.user_id = u.id
+    LEFT JOIN classes c ON lp.class_id = c.id
+    LEFT JOIN specialties sp ON lp.department_id = sp.id
+    LEFT JOIN specialties sp2 ON c.department_id = sp2.id
+    ${whereClause}
+    ORDER BY lp.submitted_at DESC NULLS LAST, lp.id DESC
+    LIMIT $${limitIdx} OFFSET $${offsetIdx}
+  `;
+
+  const countSql = `
+    SELECT COUNT(*)::int AS total
+    FROM lesson_plans lp
+    LEFT JOIN users u ON lp.user_id = u.id
+    LEFT JOIN classes c ON lp.class_id = c.id
+    ${whereClause}
+  `;
+
+  return { sql, countSql, params, pageNum, limitNum };
+};
+
 // Configure multer for file uploads - using memory storage for FTP upload
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -144,6 +274,12 @@ const initializeLessonPlansTable = async () => {
       console.log("Added submitted_at column to lesson_plans table");
     }
 
+    await pool.query(`
+      ALTER TABLE lesson_plans
+        ADD COLUMN IF NOT EXISTS class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS department_id INTEGER REFERENCES specialties(id) ON DELETE SET NULL
+    `);
+
     // Lesson plans table initialized with correct schema
   } catch (error) {
     console.error("Error initializing lesson plans table:", error);
@@ -154,9 +290,9 @@ const initializeLessonPlansTable = async () => {
 initializeLessonPlansTable();
 
 // Upload a new lesson plan
-router.post("/", authenticateToken, upload.single("file"), async (req, res) => {
+router.post("/", authenticateToken, denyAdmin3Write, upload.single("file"), async (req, res) => {
   try {
-    const { title, period_type } = req.body;
+    const { title, period_type, class_id, department_id } = req.body;
     const ipAddress = req.ip || req.connection.remoteAddress;
     const userAgent = req.get("User-Agent");
 
@@ -179,9 +315,16 @@ router.post("/", authenticateToken, upload.single("file"), async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO lesson_plans (user_id, title, period_type, file_url) 
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [req.user.id, title, period_type || "weekly", fileUrl]
+      `INSERT INTO lesson_plans (user_id, title, period_type, file_url, class_id, department_id) 
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [
+        req.user.id,
+        title,
+        period_type || "weekly",
+        fileUrl,
+        class_id ? parseInt(class_id, 10) || null : null,
+        department_id ? parseInt(department_id, 10) || null : null,
+      ]
     );
 
     // Log the activity
@@ -233,32 +376,81 @@ router.get("/all", authenticateToken, async (req, res) => {
       req.user.role
     );
 
-    // Check if user is admin or dean
-    if (
-      !["Admin1", "Admin2", "Admin3", "Admin4", "admin", "Dean"].includes(
-        req.user.role
-      )
-    ) {
+    if (!ADMIN_LIST_ROLES.includes(req.user.role)) {
       return res.status(403).json({ error: "Access denied" });
     }
 
-    // Simple query to get all lesson plans with user info
-    const result = await pool.query(
-      `SELECT 
-        lp.*,
-        u.name as teacher_name,
-        u.username as teacher_username,
-        u.role as teacher_role
-       FROM lesson_plans lp 
-       LEFT JOIN users u ON lp.user_id = u.id 
-       ORDER BY lp.submitted_at DESC`
-    );
+    const { sql, countSql, params, pageNum, limitNum } =
+      buildLessonPlanListQuery(req);
+    const countParams = params.slice(0, params.length - 2);
 
-    console.log("Found", result.rows.length, "lesson plans");
-    res.json(result.rows);
+    const [result, countResult] = await Promise.all([
+      pool.query(sql, params),
+      pool.query(countSql, countParams),
+    ]);
+
+    const total = countResult.rows[0]?.total ?? result.rows.length;
+    console.log("Found", result.rows.length, "lesson plans (total:", total, ")");
+
+    res.json({
+      items: result.rows,
+      total,
+      page: pageNum,
+      limit: limitNum,
+    });
   } catch (error) {
     console.error("Error fetching all lesson plans:", error);
     res.status(500).json({ error: "Failed to fetch all lesson plans" });
+  }
+});
+
+// Download an approved lesson plan (Admin3 download-only access)
+router.get("/:id/download", authenticateToken, async (req, res) => {
+  try {
+    const lessonPlanId = parseInt(req.params.id, 10);
+    if (Number.isNaN(lessonPlanId)) {
+      return res.status(400).json({ error: "Invalid lesson plan id" });
+    }
+
+    if (!ADMIN_LIST_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const result = await pool.query(
+      `SELECT lp.*, u.name AS teacher_name
+       FROM lesson_plans lp
+       LEFT JOIN users u ON lp.user_id = u.id
+       WHERE lp.id = $1`,
+      [lessonPlanId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Lesson plan not found" });
+    }
+
+    const plan = result.rows[0];
+
+    if (isAdmin3(req.user) && plan.status !== "approved") {
+      return res.status(403).json({
+        error: "Admin3 can only download approved lesson plans.",
+      });
+    }
+
+    if (!plan.file_url) {
+      return res.status(404).json({ error: "No file available for download" });
+    }
+
+    res.json({
+      id: plan.id,
+      title: plan.title,
+      file_url: plan.file_url,
+      file_name: plan.file_name || `${plan.title || "lesson_plan"}.pdf`,
+      status: plan.status,
+      teacher_name: plan.teacher_name,
+    });
+  } catch (error) {
+    console.error("Error downloading lesson plan:", error);
+    res.status(500).json({ error: "Failed to download lesson plan" });
   }
 });
 
@@ -266,6 +458,7 @@ router.get("/all", authenticateToken, async (req, res) => {
 router.put(
   "/:id",
   authenticateToken,
+  denyAdmin3Write,
   upload.single("file"),
   async (req, res) => {
     try {
@@ -417,7 +610,7 @@ router.put(
 );
 
 // Delete a lesson plan (teacher can delete their own)
-router.delete("/:id", authenticateToken, async (req, res) => {
+router.delete("/:id", authenticateToken, denyAdmin3Write, async (req, res) => {
   try {
     const lessonPlanId = parseInt(req.params.id);
     const ipAddress = req.ip || req.connection.remoteAddress;
@@ -469,13 +662,12 @@ router.delete("/:id", authenticateToken, async (req, res) => {
 // Review lesson plan (admin only)
 router.put("/:id/review", authenticateToken, async (req, res) => {
   try {
-    // Check if user is admin or dean
-    if (
-      !["Admin1", "Admin2", "Admin3", "Admin4", "admin", "Dean"].includes(
-        req.user.role
-      )
-    ) {
-      return res.status(403).json({ error: "Access denied" });
+    if (!REVIEW_ROLES.includes(req.user.role)) {
+      return res.status(403).json({
+        error: isAdmin3(req.user)
+          ? "Admin3 cannot approve or reject lesson plans."
+          : "Access denied",
+      });
     }
 
     const lessonPlanId = parseInt(req.params.id);
@@ -553,13 +745,12 @@ router.put("/:id/review", authenticateToken, async (req, res) => {
 // Delete lesson plan (admin only)
 router.delete("/:id/admin", authenticateToken, async (req, res) => {
   try {
-    // Check if user is admin or dean
-    if (
-      !["Admin1", "Admin2", "Admin3", "Admin4", "admin", "Dean"].includes(
-        req.user.role
-      )
-    ) {
-      return res.status(403).json({ error: "Access denied" });
+    if (!ADMIN_DELETE_ROLES.includes(req.user.role)) {
+      return res.status(403).json({
+        error: isAdmin3(req.user)
+          ? "Admin3 cannot delete lesson plans."
+          : "Access denied",
+      });
     }
 
     const lessonPlanId = parseInt(req.params.id);
@@ -609,12 +800,7 @@ router.delete("/:id/admin", authenticateToken, async (req, res) => {
 // Test endpoint to check if everything is working
 router.get("/test", authenticateToken, async (req, res) => {
   try {
-    // Check if user is admin or dean
-    if (
-      !["Admin1", "Admin2", "Admin3", "Admin4", "admin", "Dean"].includes(
-        req.user.role
-      )
-    ) {
+    if (!ADMIN_LIST_ROLES.includes(req.user.role)) {
       return res.status(403).json({ error: "Access denied" });
     }
 

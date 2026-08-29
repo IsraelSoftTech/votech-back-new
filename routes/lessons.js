@@ -52,6 +52,135 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
+const ADMIN_LIST_ROLES = [
+  "Admin1",
+  "Admin2",
+  "Admin3",
+  "Admin4",
+  "admin",
+  "Dean",
+];
+const REVIEW_ROLES = ["Admin1", "Admin2", "Admin4", "admin", "Dean"];
+
+const isAdmin3 = (user) => user?.role === "Admin3";
+
+const denyAdmin3Write = (req, res, next) => {
+  if (isAdmin3(req.user)) {
+    return res.status(403).json({
+      error:
+        "Admin3 has download-only access to approved lesson plans. Upload, edit, review, and delete are not permitted.",
+    });
+  }
+  next();
+};
+
+const buildLessonListQuery = (req) => {
+  const {
+    class: classFilter,
+    department,
+    specialty,
+    status,
+    search,
+    page = "1",
+    limit = "100",
+  } = req.query;
+
+  const departmentId = department || specialty;
+  const isAdmin3User = isAdmin3(req.user);
+  const params = [];
+  const conditions = [];
+
+  if (isAdmin3User) {
+    conditions.push(`l.status = 'approved'`);
+  } else if (status && status !== "all") {
+    params.push(status);
+    conditions.push(`l.status = $${params.length}`);
+  }
+
+  if (classFilter) {
+    const classId = parseInt(classFilter, 10);
+    if (!Number.isNaN(classId)) {
+      params.push(classId);
+      const idx = params.length;
+      conditions.push(`(
+        l.class_id = $${idx}
+        OR EXISTS (
+          SELECT 1 FROM class_subjects cs
+          WHERE cs.teacher_id = l.user_id AND cs.class_id = $${idx}
+        )
+      )`);
+    }
+  }
+
+  if (departmentId) {
+    const deptId = parseInt(departmentId, 10);
+    if (!Number.isNaN(deptId)) {
+      params.push(deptId);
+      const idx = params.length;
+      conditions.push(`(
+        l.department_id = $${idx}
+        OR c.department_id = $${idx}
+        OR EXISTS (
+          SELECT 1 FROM class_subjects cs
+          WHERE cs.teacher_id = l.user_id AND cs.department_id = $${idx}
+        )
+      )`);
+    }
+  }
+
+  if (search && String(search).trim()) {
+    params.push(`%${String(search).trim().toLowerCase()}%`);
+    const idx = params.length;
+    conditions.push(`(
+      LOWER(l.title) LIKE $${idx}
+      OR LOWER(COALESCE(l.subject, '')) LIKE $${idx}
+      OR LOWER(COALESCE(l.class_name, '')) LIKE $${idx}
+      OR LOWER(COALESCE(u.name, '')) LIKE $${idx}
+      OR LOWER(COALESCE(u.username, '')) LIKE $${idx}
+    )`);
+  }
+
+  const whereClause =
+    conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(500, Math.max(1, parseInt(limit, 10) || 100));
+  const offset = (pageNum - 1) * limitNum;
+
+  params.push(limitNum);
+  const limitIdx = params.length;
+  params.push(offset);
+  const offsetIdx = params.length;
+
+  const sql = `
+    SELECT
+      l.*,
+      u.name AS teacher_name,
+      u.username AS teacher_username,
+      u.role AS teacher_role,
+      c.name AS class_label,
+      COALESCE(sp.name, sp2.name) AS department_name
+    FROM lessons l
+    LEFT JOIN users u ON l.user_id = u.id
+    LEFT JOIN classes c ON l.class_id = c.id
+    LEFT JOIN specialties sp ON l.department_id = sp.id
+    LEFT JOIN specialties sp2 ON c.department_id = sp2.id
+    ${whereClause}
+    ORDER BY l.created_at DESC NULLS LAST, l.id DESC
+    LIMIT $${limitIdx} OFFSET $${offsetIdx}
+  `;
+
+  const countSql = `
+    SELECT COUNT(*)::int AS total
+    FROM lessons l
+    LEFT JOIN users u ON l.user_id = u.id
+    LEFT JOIN classes c ON l.class_id = c.id
+    ${whereClause}
+  `;
+
+  return { sql, countSql, params, pageNum, limitNum };
+};
+
 // Initialize lessons table
 const initializeLessonsTable = async () => {
   try {
@@ -77,6 +206,13 @@ const initializeLessonsTable = async () => {
         reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
       )
     `);
+
+    await pool.query(`
+      ALTER TABLE lessons
+        ADD COLUMN IF NOT EXISTS class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS department_id INTEGER REFERENCES specialties(id) ON DELETE SET NULL
+    `);
+
     // Lessons table initialized
   } catch (error) {
     console.error("Error initializing lessons table:", error);
@@ -87,12 +223,14 @@ const initializeLessonsTable = async () => {
 initializeLessonsTable();
 
 // Create a new lesson
-router.post("/", authenticateToken, async (req, res) => {
+router.post("/", authenticateToken, denyAdmin3Write, async (req, res) => {
   try {
     const {
       title,
       subject,
       class_name,
+      class_id,
+      department_id,
       week,
       period_type,
       objectives,
@@ -108,14 +246,16 @@ router.post("/", authenticateToken, async (req, res) => {
 
     const result = await pool.query(
       `INSERT INTO lessons 
-       (user_id, title, subject, class_name, week, period_type, objectives, content, activities, assessment, resources) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) 
+       (user_id, title, subject, class_name, class_id, department_id, week, period_type, objectives, content, activities, assessment, resources) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
        RETURNING *`,
       [
         req.user.id,
         title,
         subject,
         class_name,
+        class_id ? parseInt(class_id, 10) || null : null,
+        department_id ? parseInt(department_id, 10) || null : null,
         week,
         period_type || "weekly",
         objectives,
@@ -163,28 +303,28 @@ router.get("/all", authenticateToken, async (req, res) => {
       req.user.role
     );
 
-    // Check if user is admin or dean
-    if (
-      !["Admin1", "Admin2", "Admin3", "Admin4", "admin", "Dean"].includes(
-        req.user.role
-      )
-    ) {
+    if (!ADMIN_LIST_ROLES.includes(req.user.role)) {
       return res.status(403).json({ error: "Access denied" });
     }
 
-    const result = await pool.query(
-      `SELECT 
-        l.*,
-        u.name as teacher_name,
-        u.username as teacher_username,
-        u.role as teacher_role
-       FROM lessons l 
-       LEFT JOIN users u ON l.user_id = u.id 
-       ORDER BY l.created_at DESC`
-    );
+    const { sql, countSql, params, pageNum, limitNum } =
+      buildLessonListQuery(req);
+    const countParams = params.slice(0, params.length - 2);
 
-    console.log("Found", result.rows.length, "lessons");
-    res.json(result.rows);
+    const [result, countResult] = await Promise.all([
+      pool.query(sql, params),
+      pool.query(countSql, countParams),
+    ]);
+
+    const total = countResult.rows[0]?.total ?? result.rows.length;
+    console.log("Found", result.rows.length, "lessons (total:", total, ")");
+
+    res.json({
+      items: result.rows,
+      total,
+      page: pageNum,
+      limit: limitNum,
+    });
   } catch (error) {
     console.error("Error fetching all lessons:", error);
     res.status(500).json({ error: "Failed to fetch all lessons" });
@@ -192,7 +332,7 @@ router.get("/all", authenticateToken, async (req, res) => {
 });
 
 // Update a lesson
-router.put("/:id", authenticateToken, async (req, res) => {
+router.put("/:id", authenticateToken, denyAdmin3Write, async (req, res) => {
   try {
     const lessonId = parseInt(req.params.id);
     const {
@@ -221,9 +361,7 @@ router.put("/:id", authenticateToken, async (req, res) => {
     // Only allow owner or admin to edit
     if (
       existingLesson.rows[0].user_id !== req.user.id &&
-      !["Admin1", "Admin2", "Admin3", "Admin4", "admin", "Dean"].includes(
-        req.user.role
-      )
+      !["Admin1", "Admin2", "Admin4", "admin", "Dean"].includes(req.user.role)
     ) {
       return res.status(403).json({ error: "Access denied" });
     }
@@ -306,7 +444,7 @@ router.put("/:id", authenticateToken, async (req, res) => {
 });
 
 // Delete a lesson
-router.delete("/:id", authenticateToken, async (req, res) => {
+router.delete("/:id", authenticateToken, denyAdmin3Write, async (req, res) => {
   try {
     const lessonId = parseInt(req.params.id);
 
@@ -323,9 +461,7 @@ router.delete("/:id", authenticateToken, async (req, res) => {
     // Only allow owner or admin to delete
     if (
       existingLesson.rows[0].user_id !== req.user.id &&
-      !["Admin1", "Admin2", "Admin3", "Admin4", "admin", "Dean"].includes(
-        req.user.role
-      )
+      !["Admin1", "Admin2", "Admin4", "admin", "Dean"].includes(req.user.role)
     ) {
       return res.status(403).json({ error: "Access denied" });
     }
@@ -342,13 +478,12 @@ router.delete("/:id", authenticateToken, async (req, res) => {
 // Review lesson (admin only)
 router.put("/:id/review", authenticateToken, async (req, res) => {
   try {
-    // Check if user is admin or dean
-    if (
-      !["Admin1", "Admin2", "Admin3", "Admin4", "admin", "Dean"].includes(
-        req.user.role
-      )
-    ) {
-      return res.status(403).json({ error: "Access denied" });
+    if (!REVIEW_ROLES.includes(req.user.role)) {
+      return res.status(403).json({
+        error: isAdmin3(req.user)
+          ? "Admin3 cannot approve or reject lesson plans."
+          : "Access denied",
+      });
     }
 
     const lessonId = parseInt(req.params.id);

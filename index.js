@@ -211,6 +211,15 @@ async function runMigrations() {
   }
 
   try {
+    const {
+      run: runLessonPlanManagementStep1,
+    } = require("./src/db/migrations/lessonPlanManagement.step1");
+    await runLessonPlanManagementStep1(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (lesson plan management step 1):", err.message);
+  }
+
+  try {
     await pool.query(`
       ALTER TABLE students ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'
     `);
