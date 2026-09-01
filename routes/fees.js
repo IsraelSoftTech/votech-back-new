@@ -8,47 +8,146 @@ const {
   isAdminLike,
 } = require("./utils");
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+const {
+  buildStudentFeePayload,
+  computeBaseFee,
+  parseFeeAmount,
+} = require("../src/services/feeCalculation.service");
 
 const router = express.Router();
+
+async function getActiveAcademicYearId() {
+  const result = await pool.query(`
+    SELECT id FROM "academicYears"
+    WHERE status = 'active' AND "deletedAt" IS NULL
+    ORDER BY id DESC
+    LIMIT 1
+  `);
+  return result.rows[0]?.id ?? null;
+}
+
+async function fetchDiscountForStudent(studentId, academicYearId) {
+  if (!academicYearId) return null;
+  const result = await pool.query(
+    `SELECT * FROM student_fee_discounts
+     WHERE student_id = $1 AND academic_year_id = $2
+     LIMIT 1`,
+    [studentId, academicYearId]
+  );
+  return result.rows[0] || null;
+}
+
+async function fetchDiscountMap(studentIds, academicYearId) {
+  if (!studentIds.length || !academicYearId) return {};
+  const placeholders = studentIds.map((_, i) => `$${i + 2}`).join(",");
+  const result = await pool.query(
+    `SELECT * FROM student_fee_discounts
+     WHERE academic_year_id = $1 AND student_id IN (${placeholders})`,
+    [academicYearId, ...studentIds]
+  );
+  const map = {};
+  result.rows.forEach((row) => {
+    map[row.student_id] = row;
+  });
+  return map;
+}
+
+function requireAdminFinance(req, res) {
+  if (!isAdminLike(req.user.role)) {
+    res.status(403).json({ error: "Admin access required" });
+    return false;
+  }
+  return true;
+}
 
 // Get fee totals summary (single query - fast)
 router.get("/totals/summary", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const userRole = req.user.role;
   try {
+    const academicYearId = await getActiveAcademicYearId();
     let result;
     if (isAdminLike(userRole)) {
-      result = await pool.query(`
-        SELECT 
-          COALESCE(SUM(
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.registration_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.bus_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.internship_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.remedial_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
-          ), 0) as total_expected,
-          COALESCE((SELECT SUM(f.amount) FROM fees f JOIN students st ON f.student_id = st.id WHERE st."deletedAt" IS NULL), 0) as total_paid
-        FROM students s
-        JOIN classes c ON s.class_id = c.id
-        WHERE s."deletedAt" IS NULL
-      `);
+      result = await pool.query(
+        `
+        WITH student_base AS (
+          SELECT
+            s.id,
+            (
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.registration_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.bus_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.internship_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.remedial_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
+            ) AS base_fee
+          FROM students s
+          JOIN classes c ON s.class_id = c.id
+          WHERE s."deletedAt" IS NULL
+        ),
+        discounted AS (
+          SELECT
+            sb.id,
+            GREATEST(
+              0,
+              sb.base_fee - COALESCE(LEAST(d.discount_amount, sb.base_fee), 0)
+            ) AS net_expected
+          FROM student_base sb
+          LEFT JOIN student_fee_discounts d
+            ON d.student_id = sb.id
+           AND d.academic_year_id = $1
+        )
+        SELECT
+          COALESCE((SELECT SUM(net_expected) FROM discounted), 0) AS total_expected,
+          COALESCE((
+            SELECT SUM(f.amount)
+            FROM fees f
+            JOIN students st ON f.student_id = st.id
+            WHERE st."deletedAt" IS NULL
+          ), 0) AS total_paid
+      `,
+        [academicYearId]
+      );
     } else {
       result = await pool.query(
-        `SELECT 
-          COALESCE(SUM(
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.registration_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.bus_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.internship_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.remedial_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
-          ), 0) as total_expected,
-          COALESCE((SELECT SUM(amount) FROM fees f JOIN students st ON f.student_id = st.id WHERE st.user_id = $1 AND (st."deletedAt" IS NULL)), 0) as total_paid
-        FROM students s
-        JOIN classes c ON s.class_id = c.id
-        WHERE s.user_id = $1 AND s."deletedAt" IS NULL`,
-        [userId]
+        `
+        WITH student_base AS (
+          SELECT
+            s.id,
+            (
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.registration_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.bus_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.internship_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.remedial_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
+            ) AS base_fee
+          FROM students s
+          JOIN classes c ON s.class_id = c.id
+          WHERE s.user_id = $2 AND s."deletedAt" IS NULL
+        ),
+        discounted AS (
+          SELECT
+            sb.id,
+            GREATEST(
+              0,
+              sb.base_fee - COALESCE(LEAST(d.discount_amount, sb.base_fee), 0)
+            ) AS net_expected
+          FROM student_base sb
+          LEFT JOIN student_fee_discounts d
+            ON d.student_id = sb.id
+           AND d.academic_year_id = $1
+        )
+        SELECT
+          COALESCE((SELECT SUM(net_expected) FROM discounted), 0) AS total_expected,
+          COALESCE((
+            SELECT SUM(f.amount)
+            FROM fees f
+            JOIN students st ON f.student_id = st.id
+            WHERE st.user_id = $2 AND st."deletedAt" IS NULL
+          ), 0) AS total_paid
+      `,
+        [academicYearId, userId]
       );
     }
     const row = result.rows[0];
@@ -161,20 +260,20 @@ router.get("/students/batch", authenticateToken, async (req, res) => {
       feeMap[f.student_id][f.fee_type] = parseFloat(f.paid);
     });
 
+    const academicYearId = await getActiveAcademicYearId();
+    const discountMap = await fetchDiscountMap(
+      resultStudents.rows.map((s) => s.id),
+      academicYearId
+    );
+
     const batch = {};
     resultStudents.rows.forEach((student) => {
       const fm = feeMap[student.id] || {};
-      batch[student.id] = {
+      batch[student.id] = buildStudentFeePayload(
         student,
-        balance: {
-          Registration: Math.max(0, parseFloat(student.registration_fee) - (fm["Registration"] || 0)),
-          Bus: Math.max(0, parseFloat(student.bus_fee) - (fm["Bus"] || 0)),
-          Internship: Math.max(0, parseFloat(student.internship_fee) - (fm["Internship"] || 0)),
-          Remedial: Math.max(0, parseFloat(student.remedial_fee) - (fm["Remedial"] || 0)),
-          Tuition: Math.max(0, parseFloat(student.tuition_fee) - (fm["Tuition"] || 0)),
-          PTA: Math.max(0, parseFloat(student.pta_fee) - (fm["PTA"] || 0)),
-        },
-      };
+        fm,
+        discountMap[student.id]
+      );
     });
 
     res.json(batch);
@@ -233,28 +332,11 @@ router.get("/student/:id", authenticateToken, async (req, res) => {
       resultFees.rows.map((f) => [f.fee_type, parseFloat(f.paid)])
     );
 
-    const balance = {
-      Registration: Math.max(
-        0,
-        parseFloat(student.registration_fee) - (feeMap["Registration"] || 0)
-      ),
-      Bus: Math.max(0, parseFloat(student.bus_fee) - (feeMap["Bus"] || 0)),
-      Internship: Math.max(
-        0,
-        parseFloat(student.internship_fee) - (feeMap["Internship"] || 0)
-      ),
-      Remedial: Math.max(
-        0,
-        parseFloat(student.remedial_fee) - (feeMap["Remedial"] || 0)
-      ),
-      Tuition: Math.max(
-        0,
-        parseFloat(student.tuition_fee) - (feeMap["Tuition"] || 0)
-      ),
-      PTA: Math.max(0, parseFloat(student.pta_fee) - (feeMap["PTA"] || 0)),
-    };
+    const academicYearId = await getActiveAcademicYearId();
+    const discountRow = await fetchDiscountForStudent(studentId, academicYearId);
+    const payload = buildStudentFeePayload(student, feeMap, discountRow);
 
-    res.json({ student, balance });
+    res.json(payload);
   } catch (error) {
     console.error(
       "[FEE STATS DEBUG] Error fetching student fee stats:",
@@ -559,58 +641,23 @@ router.get("/class/:classId", authenticateToken, async (req, res) => {
       feeMap[f.student_id][f.fee_type] = parseFloat(f.paid);
     }
 
-    // Calculate stats for each student
+    // Calculate stats for each student (centralized status — Point 4D)
+    const academicYearId = await getActiveAcademicYearId();
+    const discountMap = await fetchDiscountMap(studentIds, academicYearId);
+
     const stats = students.map((student) => {
       const studentFees = feeMap[student.id] || {};
-      const balance = {
-        Registration: Math.max(
-          0,
-          parseFloat(student.registration_fee) -
-            (studentFees["Registration"] || 0)
-        ),
-        Bus: Math.max(
-          0,
-          parseFloat(student.bus_fee) - (studentFees["Bus"] || 0)
-        ),
-        Internship: Math.max(
-          0,
-          parseFloat(student.internship_fee) - (studentFees["Internship"] || 0)
-        ),
-        Remedial: Math.max(
-          0,
-          parseFloat(student.remedial_fee) - (studentFees["Remedial"] || 0)
-        ),
-        Tuition: Math.max(
-          0,
-          parseFloat(student.tuition_fee) - (studentFees["Tuition"] || 0)
-        ),
-        PTA: Math.max(
-          0,
-          parseFloat(student.pta_fee) - (studentFees["PTA"] || 0)
-        ),
-      };
-
-      const totalExpected =
-        parseFloat(student.registration_fee) +
-        parseFloat(student.bus_fee) +
-        parseFloat(student.internship_fee) +
-        parseFloat(student.remedial_fee) +
-        parseFloat(student.tuition_fee) +
-        parseFloat(student.pta_fee);
-      const totalPaid = Object.values(studentFees).reduce(
-        (sum, amount) => sum + amount,
-        0
-      );
-      const totalBalance = totalExpected - totalPaid;
-
+      const payload = buildStudentFeePayload(student, studentFees, discountMap[student.id]);
       return {
         id: student.id,
         student_id: student.student_code,
         full_name: student.full_name,
-        balance,
-        total_expected: totalExpected,
-        total_paid: totalPaid,
-        total_balance: Math.max(0, totalBalance),
+        balance: payload.balance,
+        summary: payload.summary,
+        total_expected: payload.summary.netExpected,
+        total_paid: payload.summary.totalPaid,
+        total_balance: payload.summary.totalBalance,
+        status: payload.summary.status,
         paid_fees: studentFees,
       };
     });
@@ -813,5 +860,166 @@ router.get(
     }
   }
 );
+
+// --- Point 4C: Student fee discounts (persisted per student) ---
+
+router.get("/students-with-discounts", authenticateToken, async (req, res) => {
+  if (!requireAdminFinance(req, res)) return;
+  try {
+    const academicYearId = await getActiveAcademicYearId();
+    if (!academicYearId) {
+      return res.json([]);
+    }
+    const result = await pool.query(
+      `
+      SELECT
+        d.id,
+        d.student_id,
+        d.academic_year_id,
+        d.discount_amount,
+        d.reason,
+        d.set_by,
+        d.created_at,
+        d.updated_at,
+        s.full_name AS student_name,
+        s.student_id AS student_number,
+        c.name AS class_name
+      FROM student_fee_discounts d
+      JOIN students s ON s.id = d.student_id
+      LEFT JOIN classes c ON c.id = s.class_id
+      WHERE d.academic_year_id = $1
+        AND d.discount_amount > 0
+        AND s."deletedAt" IS NULL
+      ORDER BY s.full_name ASC
+    `,
+      [academicYearId]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error fetching students with discounts:", error);
+    res.status(500).json({ error: "Failed to fetch discounts", details: error.message });
+  }
+});
+
+router.get("/discount/:studentId", authenticateToken, async (req, res) => {
+  if (!requireAdminFinance(req, res)) return;
+  const studentId = parseInt(req.params.studentId, 10);
+  if (!Number.isInteger(studentId)) {
+    return res.status(400).json({ error: "Invalid student id" });
+  }
+  try {
+    const academicYearId = await getActiveAcademicYearId();
+    if (!academicYearId) {
+      return res.json({ student_id: studentId, discount_amount: 0, reason: null });
+    }
+    const discountRow = await fetchDiscountForStudent(studentId, academicYearId);
+    res.json({
+      student_id: studentId,
+      academic_year_id: academicYearId,
+      discount_amount: parseFeeAmount(discountRow?.discount_amount),
+      reason: discountRow?.reason || null,
+      id: discountRow?.id || null,
+    });
+  } catch (error) {
+    console.error("Error fetching student discount:", error);
+    res.status(500).json({ error: "Failed to fetch discount", details: error.message });
+  }
+});
+
+router.put("/discount/:studentId", authenticateToken, async (req, res) => {
+  if (!requireAdminFinance(req, res)) return;
+  const studentId = parseInt(req.params.studentId, 10);
+  if (!Number.isInteger(studentId)) {
+    return res.status(400).json({ error: "Invalid student id" });
+  }
+
+  const { discount_amount, reason } = req.body || {};
+  const amount = parseFeeAmount(discount_amount);
+  if (amount < 0) {
+    return res.status(400).json({ error: "discount_amount must be >= 0" });
+  }
+
+  try {
+    const academicYearId = await getActiveAcademicYearId();
+    if (!academicYearId) {
+      return res.status(400).json({ error: "No active academic year configured" });
+    }
+
+    const studentRes = await pool.query(
+      `SELECT s.*, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee
+       FROM students s
+       JOIN classes c ON c.id = s.class_id
+       WHERE s.id = $1 AND s."deletedAt" IS NULL`,
+      [studentId]
+    );
+    if (!studentRes.rows.length) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    const baseFee = computeBaseFee(studentRes.rows[0]);
+    const warning =
+      amount > baseFee
+        ? "Discount exceeds total class fees; net due will be zero."
+        : null;
+
+    let discountRow;
+    if (amount === 0) {
+      await pool.query(
+        `DELETE FROM student_fee_discounts
+         WHERE student_id = $1 AND academic_year_id = $2`,
+        [studentId, academicYearId]
+      );
+      discountRow = null;
+    } else {
+      const upsert = await pool.query(
+        `
+        INSERT INTO student_fee_discounts (
+          student_id, academic_year_id, discount_amount, reason, set_by, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, NOW())
+        ON CONFLICT (student_id, academic_year_id)
+        DO UPDATE SET
+          discount_amount = EXCLUDED.discount_amount,
+          reason = EXCLUDED.reason,
+          set_by = EXCLUDED.set_by,
+          updated_at = NOW()
+        RETURNING *
+      `,
+        [studentId, academicYearId, amount, reason || null, req.user.id]
+      );
+      discountRow = upsert.rows[0];
+    }
+
+    const feesRes = await pool.query(
+      `SELECT fee_type, SUM(amount) AS paid FROM fees WHERE student_id = $1 GROUP BY fee_type`,
+      [studentId]
+    );
+    const feeMap = Object.fromEntries(
+      feesRes.rows.map((f) => [f.fee_type, parseFloat(f.paid)])
+    );
+    const payload = buildStudentFeePayload(
+      studentRes.rows[0],
+      feeMap,
+      discountRow
+    );
+
+    res.json({
+      message: amount === 0 ? "Discount cleared" : "Discount saved",
+      warning,
+      discount: discountRow
+        ? {
+            id: discountRow.id,
+            student_id: discountRow.student_id,
+            academic_year_id: discountRow.academic_year_id,
+            discount_amount: parseFeeAmount(discountRow.discount_amount),
+            reason: discountRow.reason,
+          }
+        : { student_id: studentId, discount_amount: 0, reason: null },
+      feeStats: payload,
+    });
+  } catch (error) {
+    console.error("Error saving student discount:", error);
+    res.status(500).json({ error: "Failed to save discount", details: error.message });
+  }
+});
 
 module.exports = router;

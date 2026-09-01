@@ -107,6 +107,132 @@ const getMonthNumber = (monthName) => {
   return months.indexOf(monthName) + 1;
 };
 
+function getAcademicYearStart(now = new Date()) {
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+  return currentMonth >= 8 ? currentYear : currentYear - 1;
+}
+
+function resolveMonthAndYear({ month, monthNumber, year }) {
+  let monthName;
+  if (monthNumber != null && monthNumber !== "") {
+    const num = parseInt(monthNumber, 10);
+    if (num < 1 || num > 12) {
+      const err = new Error("monthNumber must be between 1 and 12");
+      err.status = 400;
+      throw err;
+    }
+    monthName = getMonthName(num);
+  } else if (month) {
+    monthName = String(month);
+    if (getMonthNumber(monthName) < 1) {
+      const err = new Error("Invalid month name");
+      err.status = 400;
+      throw err;
+    }
+  } else {
+    const err = new Error("month or monthNumber is required");
+    err.status = 400;
+    throw err;
+  }
+
+  const targetYear =
+    year != null && year !== "" ? parseInt(year, 10) : getAcademicYearStart();
+  if (!Number.isInteger(targetYear)) {
+    const err = new Error("Valid year is required");
+    err.status = 400;
+    throw err;
+  }
+
+  return { monthName, targetYear };
+}
+
+function payslipAmountSql(alias = "s") {
+  return `CASE WHEN ${alias}.paid = true THEN COALESCE(${alias}.snapshot_amount, ${alias}.amount) ELSE ${alias}.amount END`;
+}
+
+function teacherAssignmentsClassesSql(userIdExpr) {
+  return `(
+    SELECT STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name)
+    FROM teacher_assignments ta
+    JOIN classes c ON c.id = ta.class_id
+    WHERE ta.teacher_id = ${userIdExpr}
+  )`;
+}
+
+function teacherAssignmentsSubjectsSql(userIdExpr) {
+  return `(
+    SELECT STRING_AGG(DISTINCT subj.name, ', ' ORDER BY subj.name)
+    FROM teacher_assignments ta
+    JOIN subjects subj ON subj.id = ta.subject_id
+    WHERE ta.teacher_id = ${userIdExpr}
+  )`;
+}
+
+async function fetchEmployeeDetails(userId) {
+  if (!userId) return null;
+  const result = await pool.query(
+    `
+    SELECT
+      COALESCE(NULLIF(TRIM(t.full_name), ''), NULLIF(TRIM(u.name), ''), NULLIF(TRIM(u.username), '')) AS employee_name,
+      COALESCE(NULLIF(TRIM(t.contact), ''), NULLIF(TRIM(u.contact), ''), NULLIF(TRIM(u.email), '')) AS employee_contact,
+      COALESCE(
+        NULLIF(TRIM(t.classes), ''),
+        NULLIF(TRIM(${teacherAssignmentsClassesSql("u.id")}), ''),
+        ''
+      ) AS employee_classes,
+      COALESCE(
+        NULLIF(TRIM(t.subjects), ''),
+        NULLIF(TRIM(${teacherAssignmentsSubjectsSql("u.id")}), ''),
+        ''
+      ) AS employee_subjects
+    FROM users u
+    LEFT JOIN teachers t ON t.user_id = u.id
+    WHERE u.id = $1
+    LIMIT 1
+    `,
+    [userId]
+  );
+  return result.rows[0] || null;
+}
+
+const PAID_SALARY_USER_ID_SQL = "COALESCE(s.user_id, s.applicant_id)";
+const PAID_SALARY_EMPLOYEE_SQL = `
+  COALESCE(
+    NULLIF(TRIM(s.employee_name), ''),
+    NULLIF(TRIM(t.full_name), ''),
+    NULLIF(TRIM(u.name), ''),
+    NULLIF(TRIM(u.username), ''),
+    'Unknown employee'
+  ) AS user_name,
+  COALESCE(
+    NULLIF(TRIM(s.employee_name), ''),
+    NULLIF(TRIM(t.full_name), ''),
+    NULLIF(TRIM(u.name), ''),
+    NULLIF(TRIM(u.username), ''),
+    'Unknown employee'
+  ) AS applicant_name,
+  COALESCE(
+    NULLIF(TRIM(s.employee_contact), ''),
+    NULLIF(TRIM(t.contact), ''),
+    NULLIF(TRIM(u.contact), ''),
+    NULLIF(TRIM(u.email), ''),
+    ''
+  ) AS contact,
+  COALESCE(
+    NULLIF(TRIM(s.employee_classes), ''),
+    NULLIF(TRIM(t.classes), ''),
+    NULLIF(TRIM(${teacherAssignmentsClassesSql(PAID_SALARY_USER_ID_SQL)}), ''),
+    ''
+  ) AS classes,
+  COALESCE(
+    NULLIF(TRIM(s.employee_subjects), ''),
+    NULLIF(TRIM(t.subjects), ''),
+    NULLIF(TRIM(${teacherAssignmentsSubjectsSql(PAID_SALARY_USER_ID_SQL)}), ''),
+    ''
+  ) AS subjects
+`;
+
 // Get all teachers with salary information
 router.get("/approved-applications", async (req, res) => {
   try {
@@ -132,10 +258,10 @@ router.get("/approved-applications", async (req, res) => {
       `
       SELECT 
         u.id as applicant_id,
-        COALESCE(u.name, u.username) as applicant_name,
-        COALESCE(u.email, '') as contact,
-        '' as classes,
-        '' as subjects,
+        COALESCE(t.full_name, u.name, u.username) as applicant_name,
+        COALESCE(NULLIF(TRIM(t.contact), ''), NULLIF(TRIM(u.contact), ''), NULLIF(TRIM(u.email), ''), '') as contact,
+        COALESCE(t.classes, '') as classes,
+        COALESCE(t.subjects, '') as subjects,
         'approved' as status,
         COALESCE(s.amount, 0) as salary_amount,
         s.id as salary_id,
@@ -173,7 +299,8 @@ router.get("/approved-applications", async (req, res) => {
               'year', s5.year,
               'amount', s5.amount,
               'paid', s5.paid,
-              'paid_at', s5.paid_at
+              'paid_at', s5.paid_at,
+              'user_id', s5.user_id
             ) ORDER BY s5.month
           )
           FROM salaries s5
@@ -184,6 +311,7 @@ router.get("/approved-applications", async (req, res) => {
       LEFT JOIN salaries s ON u.id = s.user_id 
         AND s.month = $1
         AND s.year = $2
+      LEFT JOIN teachers t ON t.user_id = u.id
       LEFT JOIN cnps_preferences cp ON cp.user_id = u.id
       ORDER BY applicant_name
     `,
@@ -255,23 +383,27 @@ router.get("/statistics", async (req, res) => {
   }
 });
 
-// Create or update salary for a user
+// Create or update salary for a user — single month only (Point 4B fix)
 router.post("/update", authenticateToken, async (req, res) => {
   try {
-    const { userId, amount, month, year } = req.body;
+    const { userId, amount, month, monthNumber, year } = req.body;
 
-    if (!userId || !amount) {
+    if (!userId || amount == null) {
       return res.status(400).json({ error: "User ID and amount are required" });
     }
 
-    // Validate amount
-    if (amount <= 0) {
+    if (parseFloat(amount) <= 0) {
       return res
         .status(400)
         .json({ error: "Salary amount must be greater than 0" });
     }
 
-    // Check user existence (use users table so any staff can be set for salary)
+    const { monthName, targetYear } = resolveMonthAndYear({
+      month,
+      monthNumber,
+      year,
+    });
+
     const userCheck = await pool.query(`SELECT id FROM users WHERE id = $1`, [
       userId,
     ]);
@@ -280,86 +412,80 @@ router.post("/update", authenticateToken, async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Calculate academic year start (changes on August 1st)
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth() + 1; // 1-12
-    const currentDay = now.getDate();
+    const existingSalary = await pool.query(
+      `
+      SELECT * FROM salaries
+      WHERE user_id = $1 AND month = $2 AND year = $3
+    `,
+      [userId, monthName, targetYear]
+    );
 
-    // Academic year changes on August 1st
-    // If we're in August (1st or later) or September onwards, use current year as start
-    let academicYearStart;
-    if (currentMonth >= 8) {
-      academicYearStart = currentYear;
-    } else {
-      academicYearStart = currentYear - 1;
+    if (existingSalary.rows.length > 0) {
+      const existing = existingSalary.rows[0];
+      if (existing.paid === true || existing.payslip_locked === true) {
+        return res.status(403).json({
+          error: `Salary for ${monthName} ${targetYear} is locked (payslip already generated). Undo payment first to change the amount.`,
+        });
+      }
     }
 
-    // Create or update salary records for all months of the academic year
-    const results = [];
-
-    for (let monthNum = 1; monthNum <= 12; monthNum++) {
-      const monthName = getMonthName(monthNum);
-
-      // Check if salary record already exists for this month/year
-      const existingSalary = await pool.query(
+    let result;
+    if (existingSalary.rows.length > 0) {
+      const old = existingSalary.rows[0];
+      result = await pool.query(
         `
-        SELECT * FROM salaries 
-        WHERE user_id = $1 AND month = $2 AND year = $3
+        UPDATE salaries
+        SET amount = $1, updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = $2 AND month = $3 AND year = $4
+          AND paid = false
+        RETURNING *
       `,
-        [userId, monthName, academicYearStart]
+        [amount, userId, monthName, targetYear]
       );
 
-      let result;
-      if (existingSalary.rows.length > 0) {
-        // Update existing salary
-        result = await pool.query(
-          `
-          UPDATE salaries 
-          SET amount = $1, updated_at = CURRENT_TIMESTAMP
-          WHERE user_id = $2 AND month = $3 AND year = $4
-          RETURNING *
-        `,
-          [amount, userId, monthName, academicYearStart]
-        );
-        const fieldsChanged = {};
-        const old = existingSalary.rows[0];
-        const updated = result.rows[0];
-        if (old.amount !== updated.amount)
-          fieldsChanged.amount = { before: old.amount, after: updated.amount };
-        await logChanges(
-          "salaries",
-          result.rows[0].id,
-          ChangeTypes.update,
-          req.user,
-          fieldsChanged
-        );
-      } else {
-        // Create new salary record
-        result = await pool.query(
-          `
-          INSERT INTO salaries (user_id, amount, month, year, paid)
-          VALUES ($1, $2, $3, $4, false)
-          RETURNING *
-        `,
-          [userId, amount, monthName, academicYearStart]
-        );
-        await logChanges(
-          "salaries",
-          result.rows[0].id,
-          ChangeTypes.create,
-          req.user
-        );
+      if (!result.rows.length && old.paid === true) {
+        return res.status(403).json({
+          error: `Salary for ${monthName} ${targetYear} is locked and cannot be changed.`,
+        });
       }
 
-      results.push(result.rows[0]);
+      const fieldsChanged = {};
+      const updated = result.rows[0];
+      if (old.amount !== updated.amount) {
+        fieldsChanged.amount = { before: old.amount, after: updated.amount };
+      }
+      await logChanges(
+        "salaries",
+        updated.id,
+        ChangeTypes.update,
+        req.user,
+        fieldsChanged
+      );
+    } else {
+      result = await pool.query(
+        `
+        INSERT INTO salaries (user_id, amount, month, year, paid)
+        VALUES ($1, $2, $3, $4, false)
+        RETURNING *
+      `,
+        [userId, amount, monthName, targetYear]
+      );
+      await logChanges(
+        "salaries",
+        result.rows[0].id,
+        ChangeTypes.create,
+        req.user
+      );
     }
 
     res.json({
-      message: "Salary updated successfully for all months",
-      salaries: results,
+      message: `Salary updated for ${monthName} ${targetYear} only`,
+      salary: result.rows[0],
     });
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ error: error.message });
+    }
     console.error("Error updating salary:", error);
     res.status(500).json({ error: "Failed to update salary" });
   }
@@ -369,16 +495,12 @@ router.post("/update", authenticateToken, async (req, res) => {
 router.put("/mark-paid/:salaryId", authenticateToken, async (req, res) => {
   try {
     const { salaryId } = req.params;
+    const { userId: bodyUserId } = req.body || {};
 
-    // First, get the salary record to check if it's already paid
     const salaryCheck = await pool.query(
       `
-      SELECT 
-        s.*, 
-        COALESCE(t.full_name, u.name, u.username) as applicant_name
+      SELECT s.*
       FROM salaries s
-      LEFT JOIN teachers t ON s.user_id = t.user_id
-      LEFT JOIN users u ON s.user_id = u.id
       WHERE s.id = $1
     `,
       [salaryId]
@@ -388,28 +510,71 @@ router.put("/mark-paid/:salaryId", authenticateToken, async (req, res) => {
       return res.status(404).json({ error: "Salary record not found" });
     }
 
-    const salaryRecord = salaryCheck.rows[0];
+    let salaryRecord = salaryCheck.rows[0];
 
-    // Check if this specific salary record is already paid
     if (salaryRecord.paid === true) {
       return res.status(400).json({
-        error: `Salary for ${salaryRecord.applicant_name} for month ${
-          salaryRecord.month
-        }/${salaryRecord.year} has already been paid on ${new Date(
+        error: `Salary for ${salaryRecord.month}/${salaryRecord.year} has already been paid on ${new Date(
           salaryRecord.paid_at
         ).toLocaleDateString()}`,
       });
     }
 
-    // Mark salary as paid
+    let effectiveUserId =
+      salaryRecord.user_id ||
+      salaryRecord.applicant_id ||
+      (bodyUserId ? parseInt(bodyUserId, 10) : null);
+
+    if (!effectiveUserId && bodyUserId) {
+      effectiveUserId = parseInt(bodyUserId, 10);
+    }
+
+    if (!effectiveUserId) {
+      return res.status(400).json({
+        error:
+          "This salary record is not linked to an employee. Set the salary amount again from the Salary page, then pay.",
+      });
+    }
+
+    if (!salaryRecord.user_id) {
+      await pool.query(
+        `UPDATE salaries SET user_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+        [effectiveUserId, salaryId]
+      );
+      salaryRecord = { ...salaryRecord, user_id: effectiveUserId };
+    }
+
+    const employee = await fetchEmployeeDetails(effectiveUserId);
+    if (!employee?.employee_name) {
+      return res.status(400).json({
+        error: "Employee account not found. Cannot generate payslip.",
+      });
+    }
+
     const result = await pool.query(
       `
       UPDATE salaries 
-      SET paid = true, paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      SET paid = true,
+          paid_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP,
+          snapshot_amount = amount,
+          payslip_locked = true,
+          user_id = $2,
+          employee_name = $3,
+          employee_contact = $4,
+          employee_classes = $5,
+          employee_subjects = $6
       WHERE id = $1
       RETURNING *
     `,
-      [salaryId]
+      [
+        salaryId,
+        effectiveUserId,
+        employee.employee_name,
+        employee.employee_contact || "",
+        employee.employee_classes || "",
+        employee.employee_subjects || "",
+      ]
     );
 
     const fieldsChanged = {};
@@ -468,7 +633,11 @@ router.put("/undo-paid/:salaryId", async (req, res) => {
     const result = await pool.query(
       `
       UPDATE salaries 
-      SET paid = false, paid_at = NULL, updated_at = CURRENT_TIMESTAMP
+      SET paid = false,
+          paid_at = NULL,
+          updated_at = CURRENT_TIMESTAMP,
+          snapshot_amount = NULL,
+          payslip_locked = false
       WHERE id = $1
       RETURNING *
     `,
@@ -611,6 +780,7 @@ router.get("/user/:userId", async (req, res) => {
       `
       SELECT 
         s.*,
+        ${payslipAmountSql("s")} AS payslip_amount,
         COALESCE(t.full_name, u.name, u.username) as applicant_name,
         COALESCE(t.contact, u.email, '') as contact
       FROM salaries s
@@ -635,23 +805,22 @@ router.get("/paid-salaries", async (req, res) => {
     const result = await pool.query(`
       SELECT 
         s.id,
-        s.amount,
+        ${payslipAmountSql("s")} AS amount,
+        s.snapshot_amount,
+        s.amount AS current_amount,
         s.month,
         s.year,
         s.paid_at,
-        COALESCE(t.full_name, u.name, u.username) as user_name,
-        COALESCE(t.full_name, u.name, u.username) as applicant_name,
-        COALESCE(t.contact, u.email, '') as contact,
-        COALESCE(t.classes, '') as classes,
-        COALESCE(t.subjects, '') as subjects,
-        COALESCE(cp.excluded, false) as cnps_excluded,
-        s.user_id
+        s.payslip_locked,
+        s.user_id,
+        ${PAID_SALARY_EMPLOYEE_SQL},
+        COALESCE(cp.excluded, false) as cnps_excluded
       FROM salaries s
-      LEFT JOIN teachers t ON s.user_id = t.user_id
-      LEFT JOIN users u ON s.user_id = u.id
-      LEFT JOIN cnps_preferences cp ON cp.user_id = s.user_id
+      LEFT JOIN users u ON u.id = COALESCE(s.user_id, s.applicant_id)
+      LEFT JOIN teachers t ON t.user_id = u.id
+      LEFT JOIN cnps_preferences cp ON cp.user_id = COALESCE(s.user_id, s.applicant_id)
       WHERE s.paid = true
-      ORDER BY s.paid_at DESC, COALESCE(t.full_name, u.name, u.username) ASC
+      ORDER BY s.paid_at DESC, COALESCE(NULLIF(TRIM(s.employee_name), ''), u.name, u.username, '') ASC
     `);
 
     res.json(result.rows);
@@ -807,11 +976,14 @@ router.get("/my/paid", authenticateToken, async (req, res) => {
       `
       SELECT 
         s.id,
-        s.amount,
+        ${payslipAmountSql("s")} AS amount,
+        s.snapshot_amount,
+        s.amount AS current_amount,
         s.month,
         s.year,
         s.paid_at,
         s.paid,
+        s.payslip_locked,
         COALESCE(t.full_name, u.name, u.username) as user_name,
         COALESCE(t.contact, u.email, '') as contact,
         t.classes,

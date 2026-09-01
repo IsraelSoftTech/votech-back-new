@@ -17,6 +17,28 @@ const router = express.Router();
 
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
 
+async function queryWithRetry(queryFn, maxRetries = 2) {
+  let lastErr;
+  for (let i = 0; i <= maxRetries; i++) {
+    try {
+      return await queryFn();
+    } catch (err) {
+      lastErr = err;
+      const msg = `${err?.message || ""} ${err?.cause?.message || ""}`;
+      const isConnectionError =
+        /connection timeout|Connection terminated|ECONNRESET|ECONNREFUSED|not queryable/i.test(
+          msg
+        );
+      if (isConnectionError && i < maxRetries) {
+        await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
 // Test endpoint
 router.get("/test", (req, res) => {
   res.json({ message: "Auth routes working" });
@@ -72,9 +94,9 @@ router.post("/login", async (req, res) => {
     }
 
     // Find user by username
-    const result = await pool.query("SELECT * FROM users WHERE username = $1", [
-      username,
-    ]);
+    const result = await queryWithRetry(() =>
+      pool.query("SELECT * FROM users WHERE username = $1", [username])
+    );
 
     if (result.rows.length === 0) {
       return res.status(401).json({ error: "Invalid credentials" });
@@ -175,6 +197,12 @@ router.post("/register", async (req, res) => {
   try {
     const { name, username, password, role, contact, email } = req.body;
 
+    if (req.body.id != null) {
+      return res.status(400).json({
+        error: "Cannot update existing users via registration",
+      });
+    }
+
     if (!name || !username || !password || !role) {
       return res
         .status(400)
@@ -272,28 +300,6 @@ router.post("/check-user", async (req, res) => {
   }
 });
 
-// Helper: retry pool query on connection timeout/errors (for remote DB)
-async function queryWithRetry(queryFn, maxRetries = 2) {
-  let lastErr;
-  for (let i = 0; i <= maxRetries; i++) {
-    try {
-      return await queryFn();
-    } catch (err) {
-      lastErr = err;
-      const isConnectionError =
-        err?.message?.includes("connection timeout") ||
-        err?.message?.includes("Connection terminated") ||
-        err?.cause?.message?.includes("Connection terminated");
-      if (isConnectionError && i < maxRetries) {
-        await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
-        continue;
-      }
-      throw err;
-    }
-  }
-  throw lastErr;
-}
-
 // Reset password endpoint (verifies username+email when email provided)
 router.post("/reset-password", async (req, res) => {
   try {
@@ -365,7 +371,22 @@ router.post("/reset-password", async (req, res) => {
 // Change password endpoint
 router.post("/change-password", authenticateToken, async (req, res) => {
   try {
-    const { currentPassword, newPassword } = req.body;
+    const { currentPassword, newPassword, userId, id: bodyUserId } = req.body;
+    const requestedTarget = userId ?? bodyUserId;
+    if (
+      requestedTarget != null &&
+      Number(requestedTarget) !== Number(req.user.id)
+    ) {
+      if (req.user.role !== "Admin2") {
+        return res.status(403).json({
+          error: "Only Admin2 can change another user's password",
+        });
+      }
+      return res.status(400).json({
+        error:
+          "To reset another user's password, use User Passwords management",
+      });
+    }
 
     if (!currentPassword || !newPassword) {
       return res

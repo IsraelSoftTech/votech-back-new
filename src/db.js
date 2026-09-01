@@ -1,68 +1,57 @@
 require("dotenv").config();
 const { Sequelize, DataTypes } = require("sequelize");
+const {
+  getDatabaseUrl,
+  getPoolMax,
+  getPoolMin,
+  getEnvironmentLabel,
+  maskDatabaseUrl,
+  useLocalDatabase,
+} = require("./config/database");
 
-// Determine which database to use based on NODE_ENV
-const isDesktop = process.env.NODE_ENV === "desktop";
-const dbUrl = isDesktop
-  ? process.env.DATABASE_URL_LOCAL
-  : process.env.DATABASE_URL;
+const { url: dbUrl, local: isLocalDb } = getDatabaseUrl();
+const poolMax = getPoolMax();
+const poolMin = getPoolMin();
 
 console.log("\n" + "=".repeat(60));
 console.log("🔧 Database Configuration");
 console.log("=".repeat(60));
 console.log("📌 NODE_ENV:", process.env.NODE_ENV || "undefined");
-console.log(
-  "📌 Environment:",
-  isDesktop ? "DESKTOP (Local)" : "PRODUCTION (Remote)"
-);
-console.log(
-  "📌 Database URL:",
-  dbUrl ? dbUrl.replace(/:[^:@]+@/, ":****@") : "UNDEFINED"
-);
+console.log("📌 Environment:", getEnvironmentLabel(isLocalDb));
+console.log("📌 Database URL:", maskDatabaseUrl(dbUrl));
+console.log(`📌 Pool size: min=${poolMin}, max=${poolMax} (pg + Sequelize each)`);
 console.log("=".repeat(60) + "\n");
 
-// Validate database URL
 if (!dbUrl) {
   console.error("❌ ERROR: Database URL is not defined!");
   console.error(
     "💡 Expected environment variable:",
-    isDesktop ? "DATABASE_URL_LOCAL" : "DATABASE_URL"
+    isLocalDb ? "DATABASE_URL_LOCAL" : "DATABASE_URL"
   );
   console.error("💡 Current NODE_ENV:", process.env.NODE_ENV);
-  console.error("\n🔍 Available DATABASE_* variables:");
-  Object.keys(process.env)
-    .filter((key) => key.startsWith("DATABASE_") || key.startsWith("DB_"))
-    .forEach((key) => {
-      const value = process.env[key];
-      const display =
-        value && value.includes("@")
-          ? value.replace(/:[^:@]+@/, ":****@")
-          : value || "(empty)";
-      console.error(`   ${key}=${display}`);
-    });
+  console.error("💡 Tip: set NODE_ENV=desktop or USE_LOCAL_DB=1 for local Postgres");
   process.exit(1);
 }
 
-// Create Sequelize instance
 const sequelize = new Sequelize(dbUrl, {
   logging: process.env.NODE_ENV === "production" ? false : console.log,
   dialect: "postgres",
   pool: {
-    max: 20,
-    min: 2,
+    max: poolMax,
+    min: poolMin,
     acquire: 60000,
     idle: 10000,
   },
-  dialectOptions: isDesktop ? {} : {},
+  dialectOptions: isLocalDb ? {} : {},
 });
-// Test connection
-sequelize
+
+const dbReady = sequelize
   .authenticate()
   .then(() => {
     console.log("✅ Database connection successful");
     console.log(
       "📊 Connected to:",
-      isDesktop ? "Local PostgreSQL" : "Production PostgreSQL"
+      isLocalDb ? "Local PostgreSQL" : "Remote PostgreSQL"
     );
     return sequelize.query("SELECT version()");
   })
@@ -84,11 +73,13 @@ sequelize
     console.error("2. Verify database credentials in .env");
     console.error("3. Check network connectivity to database host");
     console.error("4. Ensure database exists and user has access");
-    console.error("=".repeat(60) + "\n");
-
-    if (process.env.NODE_ENV === "production") {
-      process.exit(1);
+    if (/too many clients/i.test(err.message)) {
+      console.error(
+        "5. Remote DB is full — wait 1–2 min without restarting, set DB_POOL_MAX=5, or use NODE_ENV=desktop"
+      );
     }
+    console.error("=".repeat(60) + "\n");
+    throw err;
   });
 
-module.exports = { sequelize, DataTypes };
+module.exports = { sequelize, DataTypes, useLocalDatabase, dbReady };

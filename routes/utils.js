@@ -1,20 +1,39 @@
 const { Pool } = require("pg");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
+const {
+  getDatabaseUrl,
+  getPoolMax,
+  getEnvironmentLabel,
+  maskDatabaseUrl,
+} = require("../src/config/database");
 
-const isDesktop = process.env.NODE_ENV === "desktop";
-const isDevelopment = process.env.NODE_ENV === "development";
-// Use local DB for desktop and development; remote for production
-const db = process.env.DATABASE_URL;
+const { url: db, local: isLocalDb } = getDatabaseUrl();
+
+if (!db) {
+  console.error("❌ ERROR: Database URL is not defined for pg pool!");
+  console.error(
+    "💡 Set",
+    isLocalDb ? "DATABASE_URL_LOCAL" : "DATABASE_URL",
+    "in .env"
+  );
+  process.exit(1);
+}
+
+const poolMax = getPoolMax();
+
+console.log(
+  `📦 pg pool → ${getEnvironmentLabel(isLocalDb)} | max=${poolMax} | ${maskDatabaseUrl(db)}`
+);
 
 const pool = new Pool({
   connectionString: db,
-  max: 20,
+  max: poolMax,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 30000, // 30 seconds - remote DB may be slow to respond
+  connectionTimeoutMillis: 30000,
   maxUses: 7500,
   allowExitOnIdle: true,
-  keepAlive: true, // prevent remote DB from closing idle connections
+  keepAlive: !isLocalDb,
 });
 
 // Handle pool errors to prevent crashes

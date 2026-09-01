@@ -5,6 +5,16 @@ const router = express.Router();
 
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
 
+async function getActiveAcademicYearId() {
+  const result = await pool.query(`
+    SELECT id FROM "academicYears"
+    WHERE status = 'active' AND "deletedAt" IS NULL
+    ORDER BY id DESC
+    LIMIT 1
+  `);
+  return result.rows[0]?.id ?? null;
+}
+
 // Get financial summary
 router.get("/summary", authenticateToken, async (req, res) => {
   try {
@@ -69,40 +79,90 @@ router.get("/summary", authenticateToken, async (req, res) => {
       ORDER BY total_fees_collected DESC
     `;
 
-    // Fee totals (all-time) - matches Fee component getFeeTotalsSummary logic
+    // Fee totals (discount-aware — aligned with /api/fees/totals/summary)
+    const academicYearId = await getActiveAcademicYearId();
     let feeTotalsQuery;
     if (isAdminLike(userRole)) {
-      feeTotalsQuery = pool.query(`
-        SELECT 
-          COALESCE(SUM(
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.registration_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.bus_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.internship_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.remedial_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
-          ), 0) as total_expected,
-          COALESCE((SELECT SUM(f.amount) FROM fees f JOIN students st ON f.student_id = st.id WHERE st."deletedAt" IS NULL), 0) as total_paid
-        FROM students s
-        JOIN classes c ON s.class_id = c.id
-        WHERE s."deletedAt" IS NULL
-      `);
+      feeTotalsQuery = pool.query(
+        `
+        WITH student_base AS (
+          SELECT
+            s.id,
+            (
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.registration_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.bus_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.internship_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.remedial_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
+            ) AS base_fee
+          FROM students s
+          JOIN classes c ON s.class_id = c.id
+          WHERE s."deletedAt" IS NULL
+        ),
+        discounted AS (
+          SELECT
+            sb.id,
+            GREATEST(
+              0,
+              sb.base_fee - COALESCE(LEAST(d.discount_amount, sb.base_fee), 0)
+            ) AS net_expected
+          FROM student_base sb
+          LEFT JOIN student_fee_discounts d
+            ON d.student_id = sb.id
+           AND d.academic_year_id = $1
+        )
+        SELECT
+          COALESCE((SELECT SUM(net_expected) FROM discounted), 0) AS total_expected,
+          COALESCE((
+            SELECT SUM(f.amount)
+            FROM fees f
+            JOIN students st ON f.student_id = st.id
+            WHERE st."deletedAt" IS NULL
+          ), 0) AS total_paid
+      `,
+        [academicYearId]
+      );
     } else {
       feeTotalsQuery = pool.query(
-        `SELECT 
-          COALESCE(SUM(
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.registration_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.bus_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.internship_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.remedial_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-            COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
-          ), 0) as total_expected,
-          COALESCE((SELECT SUM(amount) FROM fees f JOIN students st ON f.student_id = st.id WHERE st.user_id = $1 AND (st."deletedAt" IS NULL)), 0) as total_paid
-        FROM students s
-        JOIN classes c ON s.class_id = c.id
-        WHERE s.user_id = $1 AND s."deletedAt" IS NULL`,
-        [userId]
+        `
+        WITH student_base AS (
+          SELECT
+            s.id,
+            (
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.registration_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.bus_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.internship_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.remedial_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
+              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
+            ) AS base_fee
+          FROM students s
+          JOIN classes c ON s.class_id = c.id
+          WHERE s.user_id = $2 AND s."deletedAt" IS NULL
+        ),
+        discounted AS (
+          SELECT
+            sb.id,
+            GREATEST(
+              0,
+              sb.base_fee - COALESCE(LEAST(d.discount_amount, sb.base_fee), 0)
+            ) AS net_expected
+          FROM student_base sb
+          LEFT JOIN student_fee_discounts d
+            ON d.student_id = sb.id
+           AND d.academic_year_id = $1
+        )
+        SELECT
+          COALESCE((SELECT SUM(net_expected) FROM discounted), 0) AS total_expected,
+          COALESCE((
+            SELECT SUM(f.amount)
+            FROM fees f
+            JOIN students st ON f.student_id = st.id
+            WHERE st.user_id = $2 AND st."deletedAt" IS NULL
+          ), 0) AS total_paid
+      `,
+        [academicYearId, userId]
       );
     }
 

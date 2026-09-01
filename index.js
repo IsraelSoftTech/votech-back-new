@@ -220,6 +220,55 @@ async function runMigrations() {
   }
 
   try {
+    const { run: runDebtRecordingStep1 } = require("./src/db/migrations/debtRecording.step1");
+    await runDebtRecordingStep1(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (debt recording step 1):", err.message);
+  }
+
+  try {
+    const { run: runDebtRecordingStep2 } = require("./src/db/migrations/debtRecording.step2");
+    await runDebtRecordingStep2(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (debt recording step 2):", err.message);
+  }
+
+  try {
+    const { run: runSalaryPayslipStep1 } = require("./src/db/migrations/salaryPayslip.step1");
+    await runSalaryPayslipStep1(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (salary payslip step 1):", err.message);
+  }
+
+  try {
+    const { run: runSalaryPayslipStep2 } = require("./src/db/migrations/salaryPayslip.step2");
+    await runSalaryPayslipStep2(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (salary payslip step 2):", err.message);
+  }
+
+  try {
+    const { run: runSalaryPayslipStep3 } = require("./src/db/migrations/salaryPayslip.step3");
+    await runSalaryPayslipStep3(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (salary payslip step 3):", err.message);
+  }
+
+  try {
+    const { run: runSalaryPayslipStep4 } = require("./src/db/migrations/salaryPayslip.step4");
+    await runSalaryPayslipStep4(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (salary payslip step 4):", err.message);
+  }
+
+  try {
+    const { run: runStudentFeeDiscountStep1 } = require("./src/db/migrations/studentFeeDiscount.step1");
+    await runStudentFeeDiscountStep1(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (student fee discount step 1):", err.message);
+  }
+
+  try {
     await pool.query(`
       ALTER TABLE students ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'
     `);
@@ -346,6 +395,8 @@ function killPort(port) {
 }
 
 async function startOnce(port) {
+  const { dbReady } = require("./src/db");
+  await dbReady;
   await runMigrations();
   await killPort(port);
   warmupStudentPhotoThumbs();
@@ -373,7 +424,7 @@ async function startOnce(port) {
 }
 
 startOnce(basePort).catch((err) => {
-  console.error("Failed to start server:", err);
+  console.error("Failed to start server:", err.message || err);
   process.exit(1);
 });
 

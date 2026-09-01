@@ -231,9 +231,17 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
 
     const beforeState = existingUser.rows[0];
 
+    const wantsPasswordChange =
+      password && typeof password === "string" && password.trim().length > 0;
+    if (wantsPasswordChange && req.user.role !== "Admin2") {
+      return res.status(403).json({
+        error: "Only Admin2 can change user passwords",
+      });
+    }
+
     // Only update password when a new one is provided (non-empty)
     let result;
-    if (password && typeof password === "string" && password.trim().length > 0) {
+    if (wantsPasswordChange) {
       const hashedPassword = await bcrypt.hash(password.trim(), 10);
       result = await pool.query(
         "UPDATE users SET name = $1, username = $2, role = $3, contact = $4, email = $5, gender = $6, password = $7 WHERE id = $8 RETURNING *",

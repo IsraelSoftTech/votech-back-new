@@ -102,14 +102,12 @@ const ADMIN_DELETE_ROLES = ["Admin1", "Admin2", "Admin4", "admin", "Dean"];
 
 const isAdmin3 = (user) => user?.role === "Admin3";
 
-const denyAdmin3Write = (req, res, next) => {
-  if (isAdmin3(req.user)) {
-    return res.status(403).json({
-      error:
-        "Admin3 has download-only access to approved lesson plans. Upload, edit, review, and delete are not permitted.",
-    });
+const assertCanModifyOwnPlan = (plan, user) => {
+  if (REVIEW_ROLES.includes(user.role)) return null;
+  if (plan.status !== "pending") {
+    return "Only pending lesson plans can be edited or deleted.";
   }
-  next();
+  return null;
 };
 
 const buildLessonPlanListQuery = (req) => {
@@ -290,7 +288,7 @@ const initializeLessonPlansTable = async () => {
 initializeLessonPlansTable();
 
 // Upload a new lesson plan
-router.post("/", authenticateToken, denyAdmin3Write, upload.single("file"), async (req, res) => {
+router.post("/", authenticateToken, upload.single("file"), async (req, res) => {
   try {
     const { title, period_type, class_id, department_id } = req.body;
     const ipAddress = req.ip || req.connection.remoteAddress;
@@ -355,11 +353,32 @@ router.post("/", authenticateToken, denyAdmin3Write, upload.single("file"), asyn
 // Get my lesson plans (for teachers)
 router.get("/my", authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT * FROM lesson_plans WHERE user_id = $1 ORDER BY submitted_at DESC`,
-      [req.user.id]
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(
+      500,
+      Math.max(1, parseInt(req.query.limit, 10) || 15)
     );
-    res.json(result.rows);
+    const offset = (pageNum - 1) * limitNum;
+
+    const [result, countResult] = await Promise.all([
+      pool.query(
+        `SELECT * FROM lesson_plans WHERE user_id = $1 ORDER BY submitted_at DESC LIMIT $2 OFFSET $3`,
+        [req.user.id, limitNum, offset]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS total FROM lesson_plans WHERE user_id = $1`,
+        [req.user.id]
+      ),
+    ]);
+
+    const total = countResult.rows[0]?.total ?? result.rows.length;
+
+    res.json({
+      items: result.rows,
+      total,
+      page: pageNum,
+      limit: limitNum,
+    });
   } catch (error) {
     console.error("Error fetching my lesson plans:", error);
     res.status(500).json({ error: "Failed to fetch lesson plans" });
@@ -458,7 +477,6 @@ router.get("/:id/download", authenticateToken, async (req, res) => {
 router.put(
   "/:id",
   authenticateToken,
-  denyAdmin3Write,
   upload.single("file"),
   async (req, res) => {
     try {
@@ -487,6 +505,14 @@ router.put(
 
       if (existingPlan.rows.length === 0) {
         return res.status(404).json({ error: "Lesson plan not found" });
+      }
+
+      const modifyError = assertCanModifyOwnPlan(
+        existingPlan.rows[0],
+        req.user
+      );
+      if (modifyError) {
+        return res.status(403).json({ error: modifyError });
       }
 
       let fileUrl = existingPlan.rows[0].file_url;
@@ -610,7 +636,7 @@ router.put(
 );
 
 // Delete a lesson plan (teacher can delete their own)
-router.delete("/:id", authenticateToken, denyAdmin3Write, async (req, res) => {
+router.delete("/:id", authenticateToken, async (req, res) => {
   try {
     const lessonPlanId = parseInt(req.params.id);
     const ipAddress = req.ip || req.connection.remoteAddress;
@@ -624,6 +650,14 @@ router.delete("/:id", authenticateToken, denyAdmin3Write, async (req, res) => {
 
     if (existingPlan.rows.length === 0) {
       return res.status(404).json({ error: "Lesson plan not found" });
+    }
+
+    const modifyError = assertCanModifyOwnPlan(
+      existingPlan.rows[0],
+      req.user
+    );
+    if (modifyError) {
+      return res.status(403).json({ error: modifyError });
     }
 
     // Log the activity before deletion

@@ -282,11 +282,32 @@ router.post("/", authenticateToken, denyAdmin3Write, async (req, res) => {
 // Get my lessons (for teachers)
 router.get("/my", authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query(
-      "SELECT * FROM lessons WHERE user_id = $1 ORDER BY created_at DESC",
-      [req.user.id]
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(
+      500,
+      Math.max(1, parseInt(req.query.limit, 10) || 15)
     );
-    res.json(result.rows);
+    const offset = (pageNum - 1) * limitNum;
+
+    const [result, countResult] = await Promise.all([
+      pool.query(
+        "SELECT * FROM lessons WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+        [req.user.id, limitNum, offset]
+      ),
+      pool.query(
+        "SELECT COUNT(*)::int AS total FROM lessons WHERE user_id = $1",
+        [req.user.id]
+      ),
+    ]);
+
+    const total = countResult.rows[0]?.total ?? result.rows.length;
+
+    res.json({
+      items: result.rows,
+      total,
+      page: pageNum,
+      limit: limitNum,
+    });
   } catch (error) {
     console.error("Error fetching my lessons:", error);
     res.status(500).json({ error: "Failed to fetch lessons" });

@@ -1,5 +1,6 @@
 const express = require("express");
 const multer = require("multer");
+const ftpService = require("../ftp-service");
 const {
   pool,
   authenticateToken,
@@ -16,7 +17,7 @@ const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
+    fileSize: 5 * 1024 * 1024, // 5MB limit (client compresses before upload)
   },
 });
 
@@ -144,10 +145,29 @@ router.post(
         }
       }
 
-      // Upload file to FTP (you'll need to implement this based on your FTP service)
-      // For now, we'll store file info in the database
-      const fileUrl = `uploads/messages/${Date.now()}_${req.file.originalname}`;
-      const fileName = req.file.originalname;
+      // Upload file to FTP
+      const originalName = req.file.originalname || "file";
+      const sanitizedOriginal = originalName.replace(/[^\w\-. ]/g, "_");
+      const extension = sanitizedOriginal.includes(".")
+        ? sanitizedOriginal.split(".").pop()
+        : "";
+      const baseName = sanitizedOriginal.replace(/\.[^.]+$/, "");
+      const limitedBase =
+        baseName.length > 40 ? baseName.slice(0, 40) : baseName;
+      const fileName = `msg-${Date.now()}-${limitedBase}${
+        extension ? "." + extension : ""
+      }`;
+
+      let fileUrl;
+      try {
+        fileUrl = await ftpService.uploadBuffer(req.file.buffer, fileName);
+      } catch (ftpError) {
+        console.error("Error uploading message file to FTP:", ftpError);
+        return res.status(500).json({ error: "Failed to upload file" });
+      }
+
+      const safeFileName =
+        originalName.length > 50 ? originalName.slice(0, 50) : originalName;
       const fileType = req.file.mimetype;
 
       const result = await pool.query(
@@ -161,7 +181,7 @@ router.post(
           group_id || null,
           content || "",
           fileUrl,
-          fileName,
+          safeFileName,
           fileType,
         ]
       );
@@ -177,7 +197,7 @@ router.post(
         `Sent file message to ${receiver_id ? "user" : "group"}`,
         "message",
         message.id,
-        fileName,
+        safeFileName,
         ipAddress,
         userAgent
       );
@@ -193,6 +213,66 @@ router.post(
     }
   }
 );
+
+// Get unread message count grouped by sender (direct chats)
+router.get("/unread/count", authenticateToken, async (req, res) => {
+  try {
+    const currentUserId = req.user.id;
+
+    const result = await pool.query(
+      `SELECT 
+        sender_id,
+        COUNT(*) as unread_count
+       FROM messages 
+       WHERE receiver_id = $1 
+         AND read_at IS NULL
+         AND group_id IS NULL
+       GROUP BY sender_id`,
+      [currentUserId]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error fetching unread count:", error);
+    res.status(500).json({ error: "Failed to fetch unread count" });
+  }
+});
+
+// Total unread across direct + group chats for the logged-in user
+router.get("/unread/total", authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const [directResult, groupResult] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*)::int AS total
+         FROM messages
+         WHERE receiver_id = $1
+           AND read_at IS NULL
+           AND group_id IS NULL`,
+        [userId]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS total
+         FROM messages m
+         INNER JOIN group_participants gp
+           ON gp.group_id = m.group_id AND gp.user_id = $1
+         WHERE m.group_id IS NOT NULL
+           AND m.sender_id != $1
+           AND m.read_at IS NULL`,
+        [userId]
+      ),
+    ]);
+
+    const direct = directResult.rows[0]?.total ?? 0;
+    const group = groupResult.rows[0]?.total ?? 0;
+
+    res.json({ total: direct + group, direct, group });
+  } catch (error) {
+    console.error("Error fetching total unread count:", error);
+    res.status(500).json({ error: "Failed to fetch total unread count" });
+  }
+});
 
 // Get messages between two users
 router.get("/:userId", authenticateToken, async (req, res) => {
@@ -281,29 +361,6 @@ router.post("/:userId/read", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Error marking messages as read:", error);
     res.status(500).json({ error: "Failed to mark messages as read" });
-  }
-});
-
-// Get unread message count
-router.get("/unread/count", authenticateToken, async (req, res) => {
-  try {
-    const currentUserId = req.user.id;
-
-    const result = await pool.query(
-      `SELECT 
-        sender_id,
-        COUNT(*) as unread_count
-       FROM messages 
-       WHERE receiver_id = $1 
-         AND read_at IS NULL
-       GROUP BY sender_id`,
-      [currentUserId]
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    console.error("Error fetching unread count:", error);
-    res.status(500).json({ error: "Failed to fetch unread count" });
   }
 });
 
