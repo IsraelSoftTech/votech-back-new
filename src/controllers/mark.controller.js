@@ -73,6 +73,39 @@ initMarks();
 initTerms();
 initSequence();
 
+// Academic administrators manage marks school-wide by design (fixing a
+// teacher's mistake, filling in for an unassigned subject, etc.); every
+// other role that can reach the marks endpoints (Teacher, Admin2, Admin4,
+// Discipline, Psychosocialist) may only write marks for a class/subject/
+// year they are actually the assigned ClassSubject.teacher_id for. This
+// was previously just a TODO on the router ("hmu on whatsapp") — any
+// authenticated user could save marks for any class that merely offered
+// the subject, regardless of who taught it or which year the assignment
+// was for.
+const ACADEMIC_ADMIN_ROLES = ["Admin1", "Admin3"];
+
+async function assertMarkEntryAllowed(user, { academic_year_id, class_id, subject_id }) {
+  const assignment = await models.ClassSubject.findOne({
+    where: { academic_year_id, class_id, subject_id },
+  });
+
+  if (!assignment) {
+    throw new AppError(
+      "This subject is not assigned to this class for this academic year",
+      StatusCodes.FORBIDDEN
+    );
+  }
+
+  if (!ACADEMIC_ADMIN_ROLES.includes(user.role) && assignment.teacher_id !== user.id) {
+    throw new AppError(
+      "You are not assigned to teach this subject for this class this academic year",
+      StatusCodes.FORBIDDEN
+    );
+  }
+
+  return assignment;
+}
+
 async function validateMarkData(
   data,
   partial = false,
@@ -135,6 +168,11 @@ async function validateMarkData(
 
 const createMark = catchAsync(async (req, res) => {
   await validateMarkData(req.body);
+  await assertMarkEntryAllowed(req.user, {
+    academic_year_id: req.body.academic_year_id,
+    class_id: req.body.class_id,
+    subject_id: req.body.subject_id,
+  });
   await assertNotPromoted(
     req.body.student_id,
     req.body.class_id,
@@ -158,6 +196,11 @@ const updateMark = catchAsync(async (req, res) => {
   if (!existing) {
     throw new AppError("Invalid Id, no such resource in the database", 404);
   }
+  await assertMarkEntryAllowed(req.user, {
+    academic_year_id: req.body.academic_year_id ?? existing.academic_year_id,
+    class_id: req.body.class_id ?? existing.class_id,
+    subject_id: req.body.subject_id ?? existing.subject_id,
+  });
   await assertNotPromoted(
     req.body.student_id ?? existing.student_id,
     req.body.class_id ?? existing.class_id,
@@ -168,6 +211,15 @@ const updateMark = catchAsync(async (req, res) => {
 });
 
 const deleteMark = catchAsync(async (req, res) => {
+  const existing = await MarksModel.findByPk(req.params.id);
+  if (!existing) {
+    throw new AppError("Invalid Id, no such resource in the database", 404);
+  }
+  await assertMarkEntryAllowed(req.user, {
+    academic_year_id: existing.academic_year_id,
+    class_id: existing.class_id,
+    subject_id: existing.subject_id,
+  });
   await CRUDMarks.delete(req.params.id, res, req);
 });
 
@@ -225,16 +277,13 @@ const saveMarksBatch = catchAsync(async (req, res, next) => {
 
   console.log(`[${requestId}] Processing ${marks.length} marks`);
 
-  // Verify Class-Subject
-  const classSubjectExists = await models.ClassSubject.findOne({
-    where: { class_id: parsedIds.class_id, subject_id: parsedIds.subject_id },
+  // Verify Class-Subject: assigned for THIS academic year, and (unless
+  // an academic admin) assigned to THIS requesting teacher specifically.
+  await assertMarkEntryAllowed(req.user, {
+    academic_year_id: parsedIds.academic_year_id,
+    class_id: parsedIds.class_id,
+    subject_id: parsedIds.subject_id,
   });
-
-  if (!classSubjectExists) {
-    return next(
-      new AppError("Class not assigned to subject", StatusCodes.FORBIDDEN)
-    );
-  }
 
   // Validate marks
   const validMarks = [];

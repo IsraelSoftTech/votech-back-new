@@ -191,6 +191,24 @@ const include = [
   { model: models.User, as: "classMaster" },
 ];
 
+// Richer than `include` above on purpose: the class list (readAllClasses)
+// stays lightweight since it loads every class at once, but the single-
+// class detail page wants the subject/teacher on each classSubjects row
+// (its Subjects tab links out to each, and shows who teaches it), which
+// would be a wasteful 3-level-deep join across the whole list.
+const includeDetail = [
+  {
+    model: models.ClassSubject,
+    as: "classSubjects",
+    include: [
+      { model: models.Subject, as: "subject" },
+      { model: models.User, as: "teacher" },
+    ],
+  },
+  { model: models.Specialty, as: "department" },
+  { model: models.User, as: "classMaster" },
+];
+
 // Controller methods
 const createClass = catchAsync(async (req, res) => {
   const data = validateClassData(req.body);
@@ -204,7 +222,33 @@ const createClass = catchAsync(async (req, res) => {
 });
 
 const readOneClass = catchAsync(async (req, res) => {
-  await CRUDClass.readOne(req.params.id, res, include);
+  await CRUDClass.readOne(req.params.id, res, includeDetail);
+});
+
+// Total + gender split for the class-detail page's stat cards. A separate
+// small query rather than folding into readOneClass's response: the
+// Students tab already fetches paginated students itself for `total`
+// (pagination.total), this only needs to add the one thing pagination
+// can't give it, gender counts, without ever pulling every student row.
+const getClassStats = catchAsync(async (req, res) => {
+  const classId = req.params.id;
+  const rows = await models.Student.findAll({
+    where: { class_id: classId },
+    attributes: ["sex", [sequelize.fn("COUNT", sequelize.col("sex")), "count"]],
+    group: ["sex"],
+    raw: true,
+  });
+
+  const counts = { male: 0, female: 0 };
+  let total = 0;
+  for (const row of rows) {
+    const n = Number(row.count);
+    total += n;
+    if (String(row.sex).toUpperCase() === "M") counts.male += n;
+    else if (String(row.sex).toUpperCase() === "F") counts.female += n;
+  }
+
+  appResponder(StatusCodes.OK, { total_students: total, ...counts }, res);
 });
 
 const readAllClasses = catchAsync(async (req, res) => {
@@ -313,4 +357,5 @@ module.exports = {
   validateClassData,
   getClassMasterHistory,
   setClassMasterForYear,
+  getClassStats,
 };

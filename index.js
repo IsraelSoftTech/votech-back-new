@@ -440,6 +440,9 @@ async function startOnce(port) {
   const { startReportCardWatchdog } = require("./src/controllers/reportCardSession.controller");
   startReportCardWatchdog();
 
+  const { startQpdfWatchdog } = require("./scripts/ensureQpdf");
+  startQpdfWatchdog();
+
   server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on port ${port}`);
   });

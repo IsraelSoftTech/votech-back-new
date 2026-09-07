@@ -22,7 +22,15 @@ async function initTeachers() {
 initTeachers();
 
 const readOneTeacher = catchAsync(async (req, res, next) => {
-  await CRUDTeachersModel.readOne(req.params.id, res);
+  await CRUDTeachersModel.readOne(req.params.id, res, [
+    {
+      association: models.User.associations.teachingAssignments,
+      include: [
+        { association: models.ClassSubject.associations.class },
+        { association: models.ClassSubject.associations.subject },
+      ],
+    },
+  ]);
 });
 
 const readAllTeachers = catchAsync(async (req, res, next) => {

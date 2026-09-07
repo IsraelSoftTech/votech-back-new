@@ -16,6 +16,7 @@ const {
   getMarksMatrix,
   getMarksCoverage,
   downloadCoveragePdf,
+  downloadMarksMatrixPdf,
 } = require("../controllers/marksOverview.controller");
 
 const reportCardRouter = express.Router();
@@ -39,6 +40,7 @@ reportCardRouter.route("/master-sheet").get(classMasterSheet);
 reportCardRouter.route("/master-sheet-data").get(classMasterSheetData);
 
 reportCardRouter.route("/marks-overview/matrix").get(getMarksMatrix);
+reportCardRouter.route("/marks-overview/matrix-pdf").get(downloadMarksMatrixPdf);
 reportCardRouter.route("/marks-overview/coverage").get(getMarksCoverage);
 reportCardRouter.route("/marks-overview/coverage-pdf").get(downloadCoveragePdf);
 

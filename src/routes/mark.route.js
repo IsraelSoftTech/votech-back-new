@@ -11,11 +11,12 @@ const marksRouter = express.Router();
 
 marksRouter.use(protect);
 marksRouter.use(attachRequestContext);
-// marksRouter.use(restrictTo("Admin1", "Admin3"));
+// Left open to every authenticated role (not Admin1/Admin3-only) because
+// Teacher and the other roles that enter marks need this router too;
+// per-class/subject/year assignment is enforced inside mark.controller.js
+// (assertMarkEntryAllowed) instead, where it belongs.
 
 const validateUser = (req, res, next) => {
-  // Future improvement: validate that only the teacher assigned the subject can upload marks, just say the word, hmu on whatsapp.
-
   if (!req.user.id) {
     return next(
       new AppError(

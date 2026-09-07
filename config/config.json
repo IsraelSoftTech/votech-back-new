@@ -1,18 +1,18 @@
 {
   "development": {
-    "url": "postgresql://votech_db_user:votech_db_2025@31.97.113.198:5432/votech_db",
+    "use_env_variable": "DATABASE_URL",
     "dialect": "postgres"
   },
   "test": {
-    "url": "postgresql://votech_db_user:votech_db_2025@31.97.113.198:5432/votech_db",
+    "use_env_variable": "DATABASE_URL",
     "dialect": "postgres"
   },
   "production": {
-    "url": "postgresql://votech_db_user:votech_db_2025@31.97.113.198:5432/votech_db",
+    "use_env_variable": "DATABASE_URL",
     "dialect": "postgres"
   },
   "desktop": {
-    "url": "postgresql://SPVCEMVN@127.0.0.1:5432/votech",
+    "use_env_variable": "DATABASE_URL_LOCAL",
     "dialect": "postgres"
   }
 }

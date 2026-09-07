@@ -6,21 +6,20 @@ const { protect, restrictTo } = require("../controllers/auth.controller");
 const academicBandRouter = express.Router();
 
 academicBandRouter.use(protect);
-// academicBandRouter.use(restrictTo("Admin1", "Admin3"));
 
 academicBandRouter
   .route("/")
-  .post(academicBandControllers.createAcademicBand)
+  .post(restrictTo("Admin3"), academicBandControllers.createAcademicBand)
   .get(academicBandControllers.readAllAcademicBands);
 
 academicBandRouter
   .route("/save")
-  .post(academicBandControllers.saveAcademicBandsBatch);
+  .post(restrictTo("Admin3"), academicBandControllers.saveAcademicBandsBatch);
 
 academicBandRouter
   .route("/:id")
   .get(academicBandControllers.readOneAcademicBand)
-  .patch(academicBandControllers.updateAcademicBand)
-  .delete(academicBandControllers.deleteAcademicBand);
+  .patch(restrictTo("Admin3"), academicBandControllers.updateAcademicBand)
+  .delete(restrictTo("Admin3"), academicBandControllers.deleteAcademicBand);
 
 module.exports = academicBandRouter;

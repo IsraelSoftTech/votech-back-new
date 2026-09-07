@@ -656,6 +656,17 @@ GroupParticipant.belongsTo(Group, {
   as: "group",
 });
 
+// User (as teacher) <-> ClassSubject. ClassSubject.model.js already
+// declares the belongsTo side (`teacher`), but `users.js` is a plain
+// sequelize.define export with no static associate method for the
+// class-based auto-wiring below to call, so the reverse hasMany needs to
+// live here instead, same as the other inline-model associations above.
+// Powers the teacher detail page's "classes & subjects taught" list.
+users.hasMany(ClassSubject, {
+  foreignKey: "teacher_id",
+  as: "teachingAssignments",
+});
+
 const models = {
   // From existing model files
   Subject,
