@@ -411,6 +411,98 @@ async function runMigrations() {
   } catch (err) {
     console.warn("⚠️ Migration (class_master_assignments):", err.message);
   }
+
+  try {
+    // subjects.coefficient/category were read live by every generator, so
+    // editing a subject's coefficient silently recomputed every past
+    // year's averages, ranks and remarks the next time anything was
+    // reprinted. subjects keeps name/code as permanent identity (every FK
+    // in the system points at subjects.id); this holds the values that are
+    // allowed to differ per year. Backfilled from the current live values
+    // against the active year, the only year they can be trusted for.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS subject_year_settings (
+        id SERIAL PRIMARY KEY,
+        academic_year_id INTEGER NOT NULL REFERENCES "academicYears"(id),
+        subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+        coefficient INTEGER NOT NULL DEFAULT 1,
+        category VARCHAR(20) NOT NULL DEFAULT 'general',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (academic_year_id, subject_id)
+      )
+    `);
+    await pool.query(`
+      INSERT INTO subject_year_settings (academic_year_id, subject_id, coefficient, category)
+      SELECT (SELECT id FROM "academicYears" WHERE status = 'active' LIMIT 1), id, coefficient, category
+      FROM subjects
+      WHERE (SELECT id FROM "academicYears" WHERE status = 'active' LIMIT 1) IS NOT NULL
+      ON CONFLICT (academic_year_id, subject_id) DO NOTHING
+    `);
+    console.log("✅ subject_year_settings table ready (backfilled from subjects)");
+  } catch (err) {
+    console.warn("⚠️ Migration (subject_year_settings):", err.message);
+  }
+
+  try {
+    // Same problem as subjects: classes.name/department_id were read live
+    // when rendering a report card header, so renaming a class or moving
+    // it to another department retroactively rewrote every past document
+    // for that class. classes.id stays the permanent identity every mark,
+    // promotion and assignment row references.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS class_year_settings (
+        id SERIAL PRIMARY KEY,
+        academic_year_id INTEGER NOT NULL REFERENCES "academicYears"(id),
+        class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+        name VARCHAR(100) NOT NULL,
+        department_id INTEGER REFERENCES specialties(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (academic_year_id, class_id)
+      )
+    `);
+    await pool.query(`
+      INSERT INTO class_year_settings (academic_year_id, class_id, name, department_id)
+      SELECT (SELECT id FROM "academicYears" WHERE status = 'active' LIMIT 1), id, name, department_id
+      FROM classes
+      WHERE (SELECT id FROM "academicYears" WHERE status = 'active' LIMIT 1) IS NOT NULL
+      ON CONFLICT (academic_year_id, class_id) DO NOTHING
+    `);
+    console.log("✅ class_year_settings table ready (backfilled from classes)");
+  } catch (err) {
+    console.warn("⚠️ Migration (class_year_settings):", err.message);
+  }
+
+  try {
+    // Only the two identity fields that get printed on documents are
+    // year-scoped. Change the principal today and a reprint of a report
+    // card from three years ago used to show the new principal's name on
+    // the signature line. Contact phone/email/address/motto stay on the
+    // single school_settings row, they aren't part of a document's
+    // historical record in the same way.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS school_setting_years (
+        id SERIAL PRIMARY KEY,
+        academic_year_id INTEGER NOT NULL UNIQUE REFERENCES "academicYears"(id),
+        school_name VARCHAR(200) NOT NULL DEFAULT '',
+        principal_name VARCHAR(200) NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      INSERT INTO school_setting_years (academic_year_id, school_name, principal_name)
+      SELECT ay.id, s.school_name, s.principal_name
+      FROM "academicYears" ay
+      CROSS JOIN school_settings s
+      WHERE ay.status = 'active' AND s.id = 1
+      ON CONFLICT (academic_year_id) DO NOTHING
+    `);
+    console.log("✅ school_setting_years table ready (backfilled from school_settings)");
+  } catch (err) {
+    console.warn("⚠️ Migration (school_setting_years):", err.message);
+  }
 }
 
 function killPort(port) {

@@ -21,7 +21,11 @@ const AppError = require("../utils/AppError");
 const appResponder = require("../utils/appResponder");
 const models = require("../models/index.model");
 const { buildReportCardsFromMarks, attachAcademicRemarks } = require("./reportCard.controller");
-const { getOrCreateSettings } = require("./schoolSettings.controller");
+const {
+  applySubjectSettingsForYear,
+  resolveClassForYear,
+  resolveSchoolSettingsForYear,
+} = require("../utils/yearScopedSettings.util");
 const { resolveClassMasterName } = require("../utils/classMaster.util");
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2130,12 +2134,14 @@ async function getMasterSheetData({ academicYearId, departmentId, classId, term 
     throw err;
   }
 
-  const [academicYear, department, studentClass, settings] = await Promise.all([
-    models.AcademicYear.findByPk(academicYearId),
-    models.Specialty.findByPk(departmentId),
-    models.Class.findByPk(classId),
-    getOrCreateSettings(),
-  ]);
+  const [academicYear, department, studentClass, settings, classForYear] =
+    await Promise.all([
+      models.AcademicYear.findByPk(academicYearId),
+      models.Specialty.findByPk(departmentId),
+      models.Class.findByPk(classId),
+      resolveSchoolSettingsForYear(academicYearId),
+      resolveClassForYear(classId, academicYearId),
+    ]);
 
   if (!academicYear) throw new AppError("Academic year not found", StatusCodes.NOT_FOUND);
   if (!department) throw new AppError("Department not found", StatusCodes.NOT_FOUND);
@@ -2172,10 +2178,14 @@ async function getMasterSheetData({ academicYearId, departmentId, classId, term 
   const gradingScale = prepareGrading(rawBands);
   const analysis = analyzeMasterSheet(cards, termKey, gradingScale, requirementConfigured);
 
+  // Class name/department come from what this class was called IN this
+  // year, not what it is called now — renaming a class or moving it to
+  // another department must not rewrite the header of a sheet for a year
+  // that already closed.
   const meta = {
     schoolName: settings.school_name,
-    className: studentClass.name,
-    departmentName: department.name,
+    className: classForYear.name || studentClass.name,
+    departmentName: classForYear.department_name || department.name,
     academicYear: academicYear.name,
     classMaster,
     principal: settings.principal_name,
@@ -2297,7 +2307,7 @@ async function resolveTermKey(rawTerm, academicYearId) {
 }
 
 async function fetchMarksWithIncludes(academicYearId, classId) {
-  return models.Mark.findAll({
+  const marks = await models.Mark.findAll({
     where: { academic_year_id: academicYearId, class_id: classId },
     include: [
       {
@@ -2370,6 +2380,11 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
       [{ model: models.Sequence, as: "sequence" }, "order_number", "ASC"],
     ],
   });
+
+  // Overlays the coefficient/category this year actually used, rather
+  // than whatever subjects.* says today — see the same call in
+  // reportCardPdfGenerator.js.
+  return applySubjectSettingsForYear(marks, academicYearId);
 }
 
 function streamPdfToResponse(docDefinition, res) {

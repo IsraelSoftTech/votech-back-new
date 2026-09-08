@@ -36,9 +36,13 @@ accademicYearRouter
 accademicYearRouter
   .route("/switch")
   .post(restrictTo("Admin3"), academicYearControllers.switchAcademicYear);
+// Admin3, not Admin1: carrying values into a new year is part of moving
+// the school into that year, which is Admin3's job (same role that owns
+// /switch above). It is offered as a step of the switch flow rather than
+// as a standalone action.
 accademicYearRouter
   .route("/carry-forward")
-  .post(restrictTo("Admin1"), academicYearControllers.carryForwardAssignments);
+  .post(restrictTo("Admin3"), academicYearControllers.carryForwardAssignments);
 
 // These three are reserved action paths, not numeric :id lookups. Without
 // this guard, calling one of them with an unsupported verb (e.g. GET on

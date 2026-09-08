@@ -2,10 +2,15 @@ const express = require("express");
 
 const academicBandControllers = require("../controllers/accademicBand.controller");
 const { protect, restrictTo } = require("../controllers/auth.controller");
+const { attachRequestContext } = require("../utils/requestContext.util");
 
 const academicBandRouter = express.Router();
 
 academicBandRouter.use(protect);
+// AcademicBand is year-locked (index.model.js). Without this the lock's
+// grant check sees no request context and waves every caller through as
+// a trusted internal script.
+academicBandRouter.use(attachRequestContext);
 
 academicBandRouter
   .route("/")

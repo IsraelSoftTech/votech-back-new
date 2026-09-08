@@ -27,8 +27,11 @@ const catchAsync = require("../utils/catchAsync");
 const AppError = require("../utils/AppError");
 const models = require("../models/index.model");
 const { buildReportCardsFromMarks, attachAcademicRemarks } = require("./reportCard.controller");
-const { getOrCreateSettings } = require("./schoolSettings.controller");
 const { resolveClassMasterName } = require("../utils/classMaster.util");
+const {
+  applySubjectSettingsForYear,
+  resolveSchoolSettingsForYear,
+} = require("../utils/yearScopedSettings.util");
 const { resolveStudentClassForYear } = require("../utils/studentYear.util");
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1647,7 +1650,7 @@ function termKeyToLabel(k) {
 }
 
 async function fetchMarksWithIncludes(academicYearId, classId) {
-  return models.Mark.findAll({
+  const marks = await models.Mark.findAll({
     where: { academic_year_id: academicYearId, class_id: classId },
     // raw + nest: plain nested JS objects instead of hydrated Sequelize
     // instances (each with its own getters/associations/dataValues
@@ -1738,6 +1741,12 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
       [{ model: models.Sequence, as: "sequence" }, "order_number", "ASC"],
     ],
   });
+
+  // subjects.coefficient/category are the CURRENT values; this overlays
+  // whatever they were in the year being generated, so raising a
+  // coefficient today cannot silently recompute a past year's averages,
+  // ranks and remarks the next time it is reprinted.
+  return applySubjectSettingsForYear(marks, academicYearId);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1795,7 +1804,7 @@ const bulkPdfDirect = catchAsync(async (req, res, next) => {
 
   const classMaster = await resolveClassMasterName(classId, academicYearId);
   const termLabel = termKeyToLabel(termKey);
-  const settings = await getOrCreateSettings();
+  const settings = await resolveSchoolSettingsForYear(academicYearId);
   const cards = buildReportCardsFromMarks(marks, classMaster, termKey, settings.principal_name, settings);
   await attachAcademicRemarks(cards, academicYearId, classId, termKey);
   const gradingScale = prepareGrading(gradingRaw);
@@ -1881,7 +1890,7 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
 
   const classMaster = await resolveClassMasterName(classId, academicYearId);
   const termLabel = termKeyToLabel(termKey);
-  const settings = await getOrCreateSettings();
+  const settings = await resolveSchoolSettingsForYear(academicYearId);
   const allCards = buildReportCardsFromMarks(marks, classMaster, termKey, settings.principal_name, settings);
 
   const card = allCards.find((c) => String(c.student.id) === String(studentId));

@@ -20,7 +20,12 @@ const catchAsync = require("../utils/catchAsync");
 const AppError = require("../utils/AppError");
 const appResponder = require("../utils/appResponder");
 const { resolveClassMasterName } = require("../utils/classMaster.util");
+// A transcript is issued and signed TODAY, spanning many years, so it
+// keeps the current school identity on its cover rather than resolving a
+// per-year principal. Only the per-year academic content (class names,
+// coefficients via fetchMarksWithIncludes) is year-scoped.
 const { getOrCreateSettings } = require("./schoolSettings.controller");
+const { resolveClassForYear } = require("../utils/yearScopedSettings.util");
 const {
   buildReportCardsFromMarks,
   attachAcademicRemarks,
@@ -155,6 +160,18 @@ async function buildTranscriptSections(student) {
   }
 
   sections.sort((a, b) => new Date(a.start_date || 0) - new Date(b.start_date || 0));
+
+  // Both branches above read classes.name, which is only ever the class's
+  // CURRENT name — on a document that spans several years that is exactly
+  // the wrong value. Each section is relabelled with what the class was
+  // called in that section's own year, falling back to the live name for
+  // years with no record of their own.
+  for (const section of sections) {
+    if (!section.class_id) continue;
+    const forYear = await resolveClassForYear(section.class_id, section.academic_year_id);
+    if (forYear.name) section.class_name = forYear.name;
+  }
+
   return sections;
 }
 

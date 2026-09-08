@@ -9,7 +9,10 @@ const puppeteer = require("puppeteer");
 const fs = require("fs");
 const path = require("path");
 const { decidePromotion } = require("../utils/promotionDecision.util");
-const { getOrCreateSettings } = require("./schoolSettings.controller");
+const {
+  applySubjectSettingsForYear,
+  resolveSchoolSettingsForYear,
+} = require("../utils/yearScopedSettings.util");
 const { resolveClassMasterName } = require("../utils/classMaster.util");
 
 const sequencesFormat = {
@@ -510,7 +513,8 @@ const bulkReportCards = catchAsync(async (req, res, next) => {
       )
     );
 
-  const settings = await getOrCreateSettings();
+  await applySubjectSettingsForYear(marks, academicYearId);
+  const settings = await resolveSchoolSettingsForYear(academicYearId);
   const reportCards = buildReportCardsFromMarks(marks, classMaster, "term3", settings.principal_name, settings);
 
   appResponder(
@@ -628,7 +632,8 @@ const singleReportCard = catchAsync(async (req, res, next) => {
 
   const classMaster = await resolveClassMasterName(classId, academicYearId);
 
-  const settings = await getOrCreateSettings();
+  await applySubjectSettingsForYear(marks, academicYearId);
+  const settings = await resolveSchoolSettingsForYear(academicYearId);
   const reportCards = buildReportCardsFromMarks(marks, classMaster, "term3", settings.principal_name, settings);
 
   const reportCard = reportCards.find(
@@ -2736,7 +2741,8 @@ const bulkReportCardsPdf = catchAsync(async (req, res, next) => {
     );
   }
 
-  const settings = await getOrCreateSettings();
+  await applySubjectSettingsForYear(marks, academicYearId);
+  const settings = await resolveSchoolSettingsForYear(academicYearId);
   const cards = buildReportCardsFromMarks(marks, classMaster, "term3", settings.principal_name, settings);
   const classStats = computeClassStatsForTerm(cards, termKey);
 
@@ -2977,7 +2983,8 @@ const bulkReportCardsHTML = catchAsync(async (req, res, next) => {
   }
 
   // Build report cards from marks
-  const settings = await getOrCreateSettings();
+  await applySubjectSettingsForYear(marks, academicYearId);
+  const settings = await resolveSchoolSettingsForYear(academicYearId);
   const cards = buildReportCardsFromMarks(marks, classMaster, termKey, settings.principal_name, settings);
 
   // Fetch grading scale

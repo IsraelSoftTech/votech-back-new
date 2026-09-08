@@ -2,10 +2,14 @@ const express = require("express");
 
 const { getSchoolSettings, updateSchoolSettings } = require("../controllers/schoolSettings.controller");
 const { protect, restrictTo } = require("../controllers/auth.controller");
+const { attachRequestContext } = require("../utils/requestContext.util");
 
 const schoolSettingsRouter = express.Router();
 
 schoolSettingsRouter.use(protect);
+// Saving settings mirrors school name/principal onto the active year's
+// school_setting_years row, which is year-locked.
+schoolSettingsRouter.use(attachRequestContext);
 
 // Every document generator (report cards, transcripts, etc.) reads
 // settings through the exported getOrCreateSettings() function directly,

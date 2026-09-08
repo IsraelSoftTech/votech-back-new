@@ -26,7 +26,12 @@ const models = require("../models/index.model");
 const { buildReportCardsFromMarks } = require("./reportCard.controller");
 const { buildStudentWhere } = require("./student.controller");
 const { printer, loadLogoBase64, prepareGrading } = require("./reportCardPdfGenerator");
-const { getOrCreateSettings } = require("./schoolSettings.controller");
+const {
+  applySubjectSettingsForYear,
+  getSubjectSettingsForYear,
+  resolveClassForYear,
+  resolveSchoolSettingsForYear,
+} = require("../utils/yearScopedSettings.util");
 const { resolveClassMasterName } = require("../utils/classMaster.util");
 
 const emptySubjectScores = () => ({
@@ -74,7 +79,7 @@ async function buildMarksMatrixCards({ academicYearId, departmentId, classId }) 
         { model: models.User, as: "teacher", attributes: ["id", "name", "username"] },
       ],
     }),
-    getOrCreateSettings(),
+    resolveSchoolSettingsForYear(academicYearId),
     // Same grading bands a report card/transcript for this class/year
     // would color its averages by — passed through so the PDF (not the
     // on-screen table, which keeps its own simpler <10 rule) can use the
@@ -108,6 +113,15 @@ async function buildMarksMatrixCards({ academicYearId, departmentId, classId }) 
     );
   }
 
+  // Coefficient/category as they stood in THIS year, not whatever
+  // subjects.* holds today — the same overlay every report card and
+  // master sheet applies, done here by subject id because this list is
+  // built from class_subjects rather than from marks.
+  const subjectYearSettings = await getSubjectSettingsForYear(
+    academicYearId,
+    classSubjects.map((cs) => cs.subject_id).filter(Boolean)
+  );
+
   // De-dup by subject code — a subject can appear once per department on
   // an orientation class when no departmentId filter is supplied.
   const subjectDefs = [];
@@ -115,14 +129,16 @@ async function buildMarksMatrixCards({ academicYearId, departmentId, classId }) 
   for (const cs of classSubjects) {
     if (!cs.subject || seenCodes.has(cs.subject.code)) continue;
     seenCodes.add(cs.subject.code);
+    const forYear = subjectYearSettings.get(cs.subject_id);
+    const category = forYear?.category ?? cs.subject.category;
     subjectDefs.push({
       code: cs.subject.code,
       title: cs.subject.name,
-      coef: cs.subject.coefficient,
+      coef: forYear?.coefficient ?? cs.subject.coefficient,
       category:
-        cs.subject.category === "professional"
+        category === "professional"
           ? "professional"
-          : cs.subject.category === "general"
+          : category === "general"
           ? "general"
           : "practical",
       teacher: cs.teacher?.name || cs.teacher?.username || "Unassigned",
@@ -139,16 +155,19 @@ async function buildMarksMatrixCards({ academicYearId, departmentId, classId }) 
     ],
   });
 
+  await applySubjectSettingsForYear(marks, academicYearId);
+
   const classMasterName = await resolveClassMasterName(classId, academicYearId);
   const cards = marks.length
     ? buildReportCardsFromMarks(marks, classMasterName, "annual", settings.principal_name, settings)
     : [];
   const cardsByStudent = new Map(cards.map((c) => [c.student.id, c]));
 
+  const classForYear = await resolveClassForYear(classId, academicYearId);
   const meta = {
     schoolName: settings.school_name,
-    className: studentClass.name,
-    departmentName: studentClass.department?.name || "",
+    className: classForYear.name || studentClass.name,
+    departmentName: classForYear.department_name || studentClass.department?.name || "",
     academicYear: academicYear.name,
     // Only used by the PDF letterhead (downloadMarksMatrixPdf), the JSON
     // endpoint's own consumer (MasterSheet.component.jsx) never reads
@@ -499,7 +518,7 @@ const downloadCoveragePdf = catchAsync(async (req, res, next) => {
     [data, academicYear, settings] = await Promise.all([
       computeCoverage({ academicYearId, sequenceId, termId }),
       models.AcademicYear.findByPk(academicYearId),
-      getOrCreateSettings(),
+      resolveSchoolSettingsForYear(academicYearId),
     ]);
   } catch (err) {
     return next(err);
