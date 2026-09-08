@@ -17,11 +17,6 @@ console.log("\n" + "=".repeat(60));
 console.log("🔧 Database Configuration");
 console.log("=".repeat(60));
 console.log("📌 NODE_ENV:", process.env.NODE_ENV || "undefined");
-<<<<<<< HEAD
-console.log("📌 Environment:", getEnvironmentLabel(isLocalDb));
-console.log("📌 Database URL:", maskDatabaseUrl(dbUrl));
-console.log(`📌 Pool size: min=${poolMin}, max=${poolMax} (pg + Sequelize each)`);
-=======
 // The label used to just mirror isDesktop (NODE_ENV === "desktop"), so it
 // kept printing "PRODUCTION (Remote)" even after pointing DATABASE_URL at
 // a local Postgres instance for testing, since NODE_ENV stayed
@@ -36,7 +31,6 @@ console.log(
   "📌 Database URL:",
   dbUrl ? dbUrl.replace(/:[^:@]+@/, ":****@") : "UNDEFINED"
 );
->>>>>>> feature/student-promotion-and-academic-year-updates
 console.log("=".repeat(60) + "\n");
 
 if (!dbUrl) {
@@ -46,7 +40,9 @@ if (!dbUrl) {
     isLocalDb ? "DATABASE_URL_LOCAL" : "DATABASE_URL"
   );
   console.error("💡 Current NODE_ENV:", process.env.NODE_ENV);
-  console.error("💡 Tip: set NODE_ENV=desktop or USE_LOCAL_DB=1 for local Postgres");
+  console.error(
+    "💡 Tip: set NODE_ENV=desktop or USE_LOCAL_DB=1 for local Postgres"
+  );
   process.exit(1);
 }
 
