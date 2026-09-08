@@ -98,6 +98,33 @@ function attachYearLockHooks(Model, { yearField = "academic_year_id" } = {}) {
     await assertYearWritable(instance[yearField]);
   });
 
+  // bulkCreate does NOT run beforeCreate unless the caller passes
+  // individualHooks, so without this a "delete the year's rows then
+  // bulkCreate the new set" save (the shape academic_bands and
+  // class_subjects both use) wrote straight into an archived year with no
+  // check at all — the delete half passes silently whenever that year has
+  // no rows yet, leaving the insert half completely unguarded.
+  //
+  // This rejects rather than silently re-tagging the rows to the active
+  // year the way beforeCreate does: a bulk write is a whole set, and
+  // quietly redirecting it would overwrite the ACTIVE year's data with
+  // something the caller meant for a different year. Every legitimate
+  // cross-year writer (carry-forward, the save endpoints, migrations)
+  // already passes skipYearLockCheck.
+  Model.addHook("beforeBulkCreate", async (instances, options) => {
+    if (options.skipYearLockCheck) return;
+    if (!(yearField in Model.rawAttributes)) return;
+
+    const years = new Set();
+    for (const instance of instances || []) {
+      const year = instance?.[yearField];
+      if (year) years.add(year);
+    }
+    for (const year of years) {
+      await assertYearWritable(year);
+    }
+  });
+
   Model.addHook("beforeBulkUpdate", async (options) => {
     if (options.skipYearLockCheck) return;
     if (!(yearField in Model.rawAttributes)) return;

@@ -66,9 +66,14 @@ function emitProgress(userId, event, payload) {
 // strains the production VPS, and promotion can run at a bigger scope than
 // any single report-card request ever does) ────────────────────────────
 
-async function buildSubjectMeta(classId) {
+async function buildSubjectMeta(classId, academicYearId) {
+  // Scoped to the year being evaluated — class_subjects now holds one row
+  // per year, so an unscoped query would start mixing in subjects from
+  // OTHER years (e.g. one since dropped from this class) as soon as more
+  // than one year's assignments exist, silently corrupting the
+  // "does this class still teach its compulsory subjects" check.
   const rows = await models.ClassSubject.findAll({
-    where: { class_id: classId },
+    where: academicYearId ? { class_id: classId, academic_year_id: academicYearId } : { class_id: classId },
     include: [
       {
         association: models.ClassSubject.associations.subject,
@@ -242,7 +247,7 @@ const previewMove = catchAsync(async (req, res, next) => {
   if (!requirement) {
     return next(
       new AppError(
-        "No promotion requirements configured for this class and academic year",
+        `No promotion requirements configured for ${sourceClass.name} in this academic year`,
         StatusCodes.BAD_REQUEST
       )
     );
@@ -279,7 +284,7 @@ const previewMove = catchAsync(async (req, res, next) => {
     }
   }
 
-  const subjectMeta = await buildSubjectMeta(source_class_id);
+  const subjectMeta = await buildSubjectMeta(source_class_id, academic_year_from_id);
   const configurationErrors = checkRequirementDrift(requirement, subjectMeta);
 
   if (configurationErrors.length) {
@@ -552,7 +557,7 @@ const startRun = catchAsync(async (req, res, next) => {
     const isSplit = requirement.promotion_mode === "split";
     const isManual = requirement.decision_mode === "manual";
 
-    const subjectMeta = await buildSubjectMeta(move.source_class_id);
+    const subjectMeta = await buildSubjectMeta(move.source_class_id, academic_year_from_id);
     const configErrors = checkRequirementDrift(requirement, subjectMeta);
     if (configErrors.length) {
       return next(
@@ -787,7 +792,7 @@ async function processMove(run, move) {
   });
 
   const requirement = move.requirement_snapshot;
-  const subjectMeta = await buildSubjectMeta(move.source_class_id);
+  const subjectMeta = await buildSubjectMeta(move.source_class_id, run.academic_year_from_id);
   const manualDecisions = move.manual_decisions || null;
   const destinationOverrides = move.destination_overrides || null;
 
@@ -808,6 +813,16 @@ async function processMove(run, move) {
       chunk,
       move.source_class_id,
       run.academic_year_from_id
+    );
+
+    // Whether each student was already repeating *before* this move, so
+    // the new StudentPromotion row can record it for correct reversal.
+    const studentsInChunk = await models.Student.findAll({
+      where: { id: { [Op.in]: chunk } },
+      attributes: ["id", "is_repeating"],
+    });
+    const wasRepeatingByStudent = new Map(
+      studentsInChunk.map((s) => [s.id, !!s.is_repeating])
     );
 
     const t = await models.PromotionRun.sequelize.transaction();
@@ -838,8 +853,14 @@ async function processMove(run, move) {
           toClassId = move.source_class_id;
           toAcademicYearId = run.academic_year_to_id;
         } else if (move.is_graduation) {
+          // students.academic_year_id is NOT NULL at the DB level (despite
+          // the Sequelize model allowing null — a schema/model mismatch),
+          // so a graduate can't be left yearless. They land in the run's
+          // destination year with no class, same "current year" every
+          // other promoted student in this run gets, just with
+          // status: "graduated" and no class_id marking they're inactive.
           toClassId = null;
-          toAcademicYearId = null;
+          toAcademicYearId = run.academic_year_to_id;
           newStatus = "graduated";
         } else {
           // A split class (fans out into different destination classes,
@@ -864,6 +885,7 @@ async function processMove(run, move) {
             decision,
             overall_average: outcome.annualAverage,
             has_incomplete_data: outcome.hasIncompleteData,
+            was_repeating: wasRepeatingByStudent.get(studentId) || false,
             detail_snapshot: {
               reasons: outcome.reasons,
               gaps: outcome.gaps,
@@ -875,7 +897,12 @@ async function processMove(run, move) {
         );
 
         await models.Student.update(
-          { class_id: toClassId, academic_year_id: toAcademicYearId, status: newStatus },
+          {
+            class_id: toClassId,
+            academic_year_id: toAcademicYearId,
+            status: newStatus,
+            is_repeating: !isPromotingOut,
+          },
           { where: { id: studentId }, transaction: t, skipYearLockCheck: true }
         );
       }
@@ -1006,6 +1033,26 @@ function startWatchdog() {
 }
 
 // ─── Read endpoints ──────────────────────────────────────────────────
+
+// Same "does this class already have a live (non-reversed) promotion move
+// for this year" check the setup page and run-creation guard both use,
+// exposed so student registration/editing can block a new student landing
+// in a class that's already been promoted out from under it — the
+// straggler problem otherwise has no path through the UI to fix later.
+async function isClassPromotedForYear(classId, academicYearId) {
+  const existing = await models.PromotionRunMove.findOne({
+    where: { source_class_id: classId, status: { [Op.ne]: "reversed" } },
+    include: [
+      {
+        association: models.PromotionRunMove.associations.run,
+        where: { academic_year_from_id: academicYearId },
+        attributes: [],
+        required: true,
+      },
+    ],
+  });
+  return !!existing;
+}
 
 // Lets the frontend grey out / exclude classes that already have a live
 // (non-reversed) promotion move for a given source year, so the admin
@@ -1322,7 +1369,9 @@ const overrideStudentDecision = catchAsync(async (req, res, next) => {
   await assertYearWritable(run.academic_year_from_id);
 
   const toClassId = move.is_graduation ? null : move.destination_class_id;
-  const toAcademicYearId = move.is_graduation ? null : run.academic_year_to_id;
+  // Same NOT NULL reasoning as processMove's graduation branch — a
+  // graduate still needs a valid academic_year_id, just no class.
+  const toAcademicYearId = run.academic_year_to_id;
   const newStatus = move.is_graduation ? "graduated" : "active";
 
   const t = await models.PromotionRun.sequelize.transaction();
@@ -1340,6 +1389,9 @@ const overrideStudentDecision = catchAsync(async (req, res, next) => {
         decision: "promoted_on_condition",
         overall_average: original.overall_average,
         has_incomplete_data: original.has_incomplete_data,
+        // Only a "failed" record can be overridden (checked above), so
+        // the student was necessarily repeating before this override.
+        was_repeating: true,
         detail_snapshot: {
           ...original.detail_snapshot,
           manual_override: true,
@@ -1357,6 +1409,7 @@ const overrideStudentDecision = catchAsync(async (req, res, next) => {
         class_id: toClassId,
         academic_year_id: toAcademicYearId,
         status: newStatus,
+        is_repeating: false,
       },
       {
         where: { id: original.student_id },
@@ -1468,6 +1521,11 @@ const reverseMove = catchAsync(async (req, res, next) => {
           class_id: d.from_class_id,
           academic_year_id: d.from_academic_year_id,
           status: "active",
+          // Restore to whatever it was immediately before this move, not
+          // just false — a student who was already repeating before this
+          // move (e.g. repeating a second year running) stays marked as
+          // repeating once this move is undone.
+          is_repeating: d.was_repeating,
         },
         {
           where: { id: d.student_id },
@@ -1514,6 +1572,7 @@ module.exports = {
   getRun,
   listRuns,
   getPromotedClasses,
+  isClassPromotedForYear,
   getMoveStudents,
   overrideStudentDecision,
   reverseMove,

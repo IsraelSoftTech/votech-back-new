@@ -20,7 +20,13 @@ const catchAsync = require("../utils/catchAsync");
 const AppError = require("../utils/AppError");
 const appResponder = require("../utils/appResponder");
 const models = require("../models/index.model");
-const { buildReportCardsFromMarks } = require("./reportCard.controller");
+const { buildReportCardsFromMarks, attachAcademicRemarks } = require("./reportCard.controller");
+const {
+  applySubjectSettingsForYear,
+  resolveClassForYear,
+  resolveSchoolSettingsForYear,
+} = require("../utils/yearScopedSettings.util");
+const { resolveClassMasterName } = require("../utils/classMaster.util");
 
 /* ═══════════════════════════════════════════════════════════════════
    1. FONT AND PRINTER INITIALIZATION
@@ -174,7 +180,53 @@ function getTermInfo(termKey) {
    5. DATA ANALYSIS ENGINE
    ═══════════════════════════════════════════════════════════════════ */
 
-function analyzeMasterSheet(cards, termKey, gradingScale) {
+// Tallies the same decision `computeAcademicRemark` already put on each
+// card (Satisfactory/Academic Warning for Term 1–2, Promoted/Promoted on
+// Condition/Failed for Term 3/Annual) — deliberately separate from
+// `overallStats.passed/failed` above, which is a simpler flat-average-≥10
+// proxy used for the grade-distribution chapters and stays unchanged.
+function computeDecisionStats(cards, isEndOfYear, requirementConfigured) {
+  const counts = {};
+  let recorded = 0;
+  for (const card of cards) {
+    const text = card.academicRemark?.text;
+    if (!text) continue;
+    counts[text] = (counts[text] || 0) + 1;
+    recorded++;
+  }
+  const pct = (n) => (recorded ? roundNum((n / recorded) * 100) : 0);
+
+  if (isEndOfYear) {
+    const promoted = counts["Promoted"] || 0;
+    const promotedOnCondition = counts["Promoted on Condition"] || 0;
+    const repeated = counts["Failed"] || 0;
+    return {
+      mode: "promotion",
+      configured: requirementConfigured,
+      recorded,
+      promoted,
+      promotedOnCondition,
+      repeated,
+      promotedRate: pct(promoted),
+      promotedOnConditionRate: pct(promotedOnCondition),
+      repeatedRate: pct(repeated),
+    };
+  }
+
+  const satisfactory = counts["Satisfactory"] || 0;
+  const warning = counts["Academic Warning"] || 0;
+  return {
+    mode: "warning",
+    configured: requirementConfigured,
+    recorded,
+    satisfactory,
+    warning,
+    satisfactoryRate: pct(satisfactory),
+    warningRate: pct(warning),
+  };
+}
+
+function analyzeMasterSheet(cards, termKey, gradingScale, requirementConfigured = false) {
   const ti = getTermInfo(termKey);
   const genSubjects = [],
     profSubjects = [],
@@ -374,6 +426,14 @@ function analyzeMasterSheet(cards, termKey, gradingScale) {
     };
   };
 
+  // Matches computeAcademicRemark's own end-of-year definition exactly
+  // (term3 OR annual) — ti.totalKey alone would miss term3.
+  const decisionStats = computeDecisionStats(
+    cards,
+    termKey === "term3" || termKey === "annual",
+    requirementConfigured
+  );
+
   return {
     genSubjects,
     profSubjects,
@@ -384,6 +444,7 @@ function analyzeMasterSheet(cards, termKey, gradingScale) {
     overallStats,
     distribution,
     failingStudents,
+    decisionStats,
     genStats: computeCategoryAverages(
       subjectStats.filter((s) => s.category === "general")
     ),
@@ -652,6 +713,82 @@ function layoutCoverPage(meta, analysis, logoBase64) {
    CHAPTER 2: TERM SUMMARY & GENERAL ANALYSIS
    ═══════════════════════════════════════════════════════════════════ */
 
+// Separate from the pass/fail stat cards above — those use a flat
+// average≥10 proxy for the grade-distribution chapters, this reads the
+// real per-student promotion decision (same one printed on each report
+// card), so it's a distinct, deliberately-labeled block rather than a
+// replacement.
+function makeDecisionStatsBlock(analysis) {
+  const ds = analysis.decisionStats;
+  const heading = {
+    text: "PROMOTION DECISION SUMMARY",
+    fontSize: 8.5,
+    bold: true,
+    color: C.navy,
+    margin: [0, 0, 0, 5],
+  };
+
+  if (!ds.configured) {
+    return [
+      heading,
+      {
+        text: "No promotion requirement is configured for this class/academic year — decision statistics unavailable.",
+        fontSize: 8,
+        italics: true,
+        color: C.slate,
+        margin: [0, 0, 0, 15],
+      },
+    ];
+  }
+
+  const cards =
+    ds.mode === "promotion"
+      ? [
+          makeStatCard("Promoted", `${ds.promoted} (${fmtPct(ds.promotedRate)})`, C.passGreen),
+          makeStatCard(
+            "Promoted on Condition",
+            `${ds.promotedOnCondition} (${fmtPct(ds.promotedOnConditionRate)})`,
+            C.warnOrange
+          ),
+          makeStatCard("Repeated", `${ds.repeated} (${fmtPct(ds.repeatedRate)})`, C.failRed),
+        ]
+      : [
+          makeStatCard(
+            "Satisfactory",
+            `${ds.satisfactory} (${fmtPct(ds.satisfactoryRate)})`,
+            C.passGreen
+          ),
+          makeStatCard(
+            "Academic Warning",
+            `${ds.warning} (${fmtPct(ds.warningRate)})`,
+            C.failRed
+          ),
+        ];
+
+  return [
+    heading,
+    {
+      table: {
+        dontBreakRows: true,
+        widths: cards.map(() => "*"),
+        body: [cards],
+      },
+      layout: {
+        hLineWidth: () => 1.5,
+        vLineWidth: () => 1,
+        hLineColor: () => C.navy,
+        vLineColor: () => C.navy,
+        fillColor: () => C.bgCard,
+        paddingLeft: () => 6,
+        paddingRight: () => 6,
+        paddingTop: () => 6,
+        paddingBottom: () => 6,
+      },
+      margin: [0, 0, 0, 15],
+    },
+  ];
+}
+
 function layoutExecutiveSummary(analysis) {
   const { overallStats: os, students } = analysis;
 
@@ -861,6 +998,7 @@ function layoutExecutiveSummary(analysis) {
     },
     statRow1,
     statRow2,
+    ...makeDecisionStatsBlock(analysis),
     ...makeLeaderTable(top3Rows, "TOP 3 BEST PERFORMING STUDENTS", C.passGreen),
     ...makeLeaderTable(bot3Rows, "BOTTOM 3 STUDENTS WHO NEED HELP", C.failRed),
     {
@@ -1996,19 +2134,14 @@ async function getMasterSheetData({ academicYearId, departmentId, classId, term 
     throw err;
   }
 
-  const [academicYear, department, studentClass] = await Promise.all([
-    models.AcademicYear.findByPk(academicYearId),
-    models.Specialty.findByPk(departmentId),
-    models.Class.findByPk(classId, {
-      include: [
-        {
-          model: models.User,
-          as: "classMaster",
-          attributes: ["name", "username"],
-        },
-      ],
-    }),
-  ]);
+  const [academicYear, department, studentClass, settings, classForYear] =
+    await Promise.all([
+      models.AcademicYear.findByPk(academicYearId),
+      models.Specialty.findByPk(departmentId),
+      models.Class.findByPk(classId),
+      resolveSchoolSettingsForYear(academicYearId),
+      resolveClassForYear(classId, academicYearId),
+    ]);
 
   if (!academicYear) throw new AppError("Academic year not found", StatusCodes.NOT_FOUND);
   if (!department) throw new AppError("Department not found", StatusCodes.NOT_FOUND);
@@ -2022,25 +2155,40 @@ async function getMasterSheetData({ academicYearId, departmentId, classId, term 
     );
   }
 
-  const classMaster =
-    studentClass?.classMaster?.name || studentClass?.classMaster?.username || "";
+  const classMaster = await resolveClassMasterName(classId, academicYearId);
   const termKey = await resolveTermKey(term, academicYearId);
-  const cards = buildReportCardsFromMarks(marks, classMaster, termKey);
+  const cards = buildReportCardsFromMarks(marks, classMaster, termKey, settings.principal_name, settings);
+
+  // Same decision engine (and same PromotionRequirement) that decides each
+  // student's individual report-card remark — the class-wide tally below
+  // reads straight off `card.academicRemark` so it can never disagree with
+  // what's printed on the report cards themselves.
+  await attachAcademicRemarks(cards, academicYearId, classId, termKey);
+  const requirement = await models.PromotionRequirement.findOne({
+    where: { academic_year_id: academicYearId, class_id: classId },
+    attributes: ["id", "decision_mode"],
+    raw: true,
+  });
+  const requirementConfigured = Boolean(requirement && requirement.decision_mode !== "manual");
 
   const rawBands = await models.AcademicBand.findAll({
     where: { academic_year_id: academicYear.id, class_id: studentClass.id },
     raw: true,
   });
   const gradingScale = prepareGrading(rawBands);
-  const analysis = analyzeMasterSheet(cards, termKey, gradingScale);
+  const analysis = analyzeMasterSheet(cards, termKey, gradingScale, requirementConfigured);
 
+  // Class name/department come from what this class was called IN this
+  // year, not what it is called now — renaming a class or moving it to
+  // another department must not rewrite the header of a sheet for a year
+  // that already closed.
   const meta = {
-    schoolName: "Votech S7 Academy",
-    className: studentClass.name,
-    departmentName: department.name,
+    schoolName: settings.school_name,
+    className: classForYear.name || studentClass.name,
+    departmentName: classForYear.department_name || department.name,
     academicYear: academicYear.name,
     classMaster,
-    principal: "Mr. Thomas Ambe",
+    principal: settings.principal_name,
   };
 
   return { meta, analysis, gradingScale };
@@ -2159,7 +2307,7 @@ async function resolveTermKey(rawTerm, academicYearId) {
 }
 
 async function fetchMarksWithIncludes(academicYearId, classId) {
-  return models.Mark.findAll({
+  const marks = await models.Mark.findAll({
     where: { academic_year_id: academicYearId, class_id: classId },
     include: [
       {
@@ -2200,8 +2348,11 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
             // copy of this query: without this, every Mark row joins
             // against every class's teacher-assignment row for that
             // subject school-wide, not just this class's, a measured
-            // 20x row multiplication at scale.
-            where: { class_id: classId },
+            // 20x row multiplication at scale. academic_year_id scopes
+            // to THIS master sheet's own year, class_subjects is
+            // year-scoped so a reassignment since can't rewrite who this
+            // document says taught it.
+            where: { class_id: classId, academic_year_id: academicYearId },
             required: false,
             attributes: ["id", "class_id"],
             include: [
@@ -2229,6 +2380,11 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
       [{ model: models.Sequence, as: "sequence" }, "order_number", "ASC"],
     ],
   });
+
+  // Overlays the coefficient/category this year actually used, rather
+  // than whatever subjects.* says today — see the same call in
+  // reportCardPdfGenerator.js.
+  return applySubjectSettingsForYear(marks, academicYearId);
 }
 
 function streamPdfToResponse(docDefinition, res) {

@@ -8,9 +8,9 @@ const CRUD = require("../utils/Crud");
 const appResponder = require("../utils/appResponder");
 const { Op } = require("sequelize");
 const Joi = require("joi");
-const { specialties, users } = require("../models/index.model");
 const models = require("../models/index.model");
 const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
+const { assertYearWritable } = require("../utils/yearLock.util");
 
 const ClassSubjectModel = require("../models/ClassSubject.model")(
   sequelize,
@@ -40,6 +40,7 @@ async function initClassSubject() {
 initClassSubject();
 
 const classSubjectSchema = Joi.object({
+  academic_year_id: Joi.number().integer().min(1).required(),
   class_id: Joi.number().integer().min(1).required(),
   subject_id: Joi.number().integer().min(1).required(),
   teacher_id: Joi.number().integer().min(1).required(),
@@ -135,6 +136,8 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
   // Validate numeric fields
   for (const [index, a] of assignments.entries()) {
     if (
+      !a.academic_year_id ||
+      typeof a.academic_year_id !== "number" ||
       !a.class_id ||
       typeof a.class_id !== "number" ||
       !a.subject_id ||
@@ -146,14 +149,16 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
     ) {
       return next(
         new AppError(
-          `Invalid data at index ${index}: class_id, subject_id, teacher_id, and department_id are required and must be numbers.`,
+          `Invalid data at index ${index}: academic_year_id, class_id, subject_id, teacher_id, and department_id are required and must be numbers.`,
           StatusCodes.BAD_REQUEST
         )
       );
     }
   }
 
-  // All assignments must refer to the same subject
+  // All assignments must refer to the same subject and the same year —
+  // this whole endpoint replaces "this subject's assignments" as one
+  // batch, and that replacement must never cross a year boundary.
   const uniqueSubjectIds = [...new Set(assignments.map((a) => a.subject_id))];
   if (uniqueSubjectIds.length !== 1) {
     return next(
@@ -164,6 +169,18 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
     );
   }
   const subject_id = uniqueSubjectIds[0];
+
+  const uniqueYearIds = [...new Set(assignments.map((a) => a.academic_year_id))];
+  if (uniqueYearIds.length !== 1) {
+    return next(
+      new AppError(
+        "All assignments in a single request must have the same academic_year_id.",
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+  const academic_year_id = uniqueYearIds[0];
+  await assertYearWritable(academic_year_id);
 
   // Validate class existence
   const class_ids = [...new Set(assignments.map((a) => a.class_id))];
@@ -193,7 +210,7 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
 
   // Validate teacher existence
   const teacher_ids = [...new Set(assignments.map((a) => a.teacher_id))];
-  const existingTeachers = await users.findAll({ where: { id: teacher_ids } });
+  const existingTeachers = await User.findAll({ where: { id: teacher_ids } });
   if (existingTeachers.length !== teacher_ids.length) {
     const missing = teacher_ids.filter(
       (id) => !existingTeachers.some((t) => t.id === id)
@@ -208,7 +225,7 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
 
   // Validate department existence
   const department_ids = [...new Set(assignments.map((a) => a.department_id))];
-  const existingDepartments = await specialties.findAll({
+  const existingDepartments = await models.Specialty.findAll({
     where: { id: department_ids },
   });
   if (existingDepartments.length !== department_ids.length) {
@@ -226,16 +243,19 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
   // Now apply changes with full logging
   const transaction = await sequelize.transaction();
   try {
-    // Fetch existing assignments BEFORE deleting (needed for logging)
+    // Fetch existing assignments BEFORE deleting (needed for logging) —
+    // scoped to this subject AND this year only, another year's rows for
+    // the same subject are a different, untouched slate.
     const oldAssignments = await ClassSubjectModel.findAll({
-      where: { subject_id },
+      where: { subject_id, academic_year_id },
       transaction,
     });
 
-    // Delete existing assignments
+    // Delete existing assignments for this subject IN THIS YEAR ONLY.
     await ClassSubjectModel.destroy({
-      where: { subject_id },
+      where: { subject_id, academic_year_id },
       transaction,
+      skipYearLockCheck: true, // already checked via assertYearWritable above
     });
 
     // Log each deletion
@@ -249,10 +269,15 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
       );
     }
 
-    // Insert new assignments
+    // Insert new assignments. individualHooks is required here so each
+    // row actually gets skipYearLockCheck applied — without it, bulkCreate
+    // skips per-row hooks entirely (fine for the active year, but would
+    // silently drop the flag for an archived-year write under a grant).
     const createdAssignments = await ClassSubjectModel.bulkCreate(assignments, {
       transaction,
       returning: true,
+      individualHooks: true,
+      skipYearLockCheck: true,
     });
 
     // Log each creation
@@ -279,7 +304,7 @@ const saveClassSubjects = catchAsync(async (req, res, next) => {
 });
 
 const unassignSubject = catchAsync(async (req, res, next) => {
-  const { subject_id, class_ids } = req.body;
+  const { subject_id, class_ids, academic_year_id } = req.body;
 
   if (!subject_id || typeof subject_id !== "number") {
     return next(
@@ -289,9 +314,19 @@ const unassignSubject = catchAsync(async (req, res, next) => {
       )
     );
   }
+  if (!academic_year_id || typeof academic_year_id !== "number") {
+    return next(
+      new AppError(
+        "academic_year_id is required and must be a number.",
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+  await assertYearWritable(academic_year_id);
 
-  // Build the where clause
-  const whereClause = { subject_id };
+  // Build the where clause — always scoped to this year, unassigning
+  // "today's" teacher must never touch another year's row.
+  const whereClause = { subject_id, academic_year_id };
   if (Array.isArray(class_ids) && class_ids.length > 0) {
     whereClause.class_id = class_ids;
   }
@@ -310,6 +345,7 @@ const unassignSubject = catchAsync(async (req, res, next) => {
     const deletedCount = await ClassSubjectModel.destroy({
       where: whereClause,
       transaction,
+      skipYearLockCheck: true, // already checked via assertYearWritable above
     });
 
     await transaction.commit();

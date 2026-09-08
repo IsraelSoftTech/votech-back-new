@@ -21,11 +21,24 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "department_id",
         as: "department",
       });
+      ClassSubject.belongsTo(models.AcademicYear, {
+        foreignKey: "academic_year_id",
+        as: "academic_year",
+      });
     }
   }
 
   ClassSubject.init(
     {
+      // Which year this assignment is for. Editing "this year's" teacher
+      // never touches another year's row, they're independent rows, not
+      // one mutable field, that's the whole point: a report card printed
+      // for an archived year always joins against the row tagged with
+      // that year, so reassigning a teacher today can't rewrite history.
+      academic_year_id: {
+        type: Sequelize.DataTypes.INTEGER,
+        allowNull: false,
+      },
       class_id: {
         type: Sequelize.DataTypes.INTEGER,
         allowNull: false,
@@ -50,14 +63,15 @@ module.exports = (sequelize, DataTypes) => {
       indexes: [
         {
           unique: true,
-          fields: ["class_id", "subject_id", "department_id"],
-          name: "unique_class_subject_department",
+          fields: ["academic_year_id", "class_id", "subject_id", "department_id"],
+          name: "unique_class_subject_department_year",
         },
       ],
       validate: {
-        async oneTeacherPerClassSubjectDepartment() {
+        async oneTeacherPerClassSubjectDepartmentYear() {
           const exists = await ClassSubject.findOne({
             where: {
+              academic_year_id: this.academic_year_id,
               class_id: this.class_id,
               subject_id: this.subject_id,
               department_id: this.department_id,
@@ -66,7 +80,7 @@ module.exports = (sequelize, DataTypes) => {
 
           if (exists && exists.teacher_id !== this.teacher_id) {
             throw new Error(
-              "Only one teacher can be assigned to the same class, subject, and department."
+              "Only one teacher can be assigned to the same class, subject, and department in a given academic year."
             );
           }
         },

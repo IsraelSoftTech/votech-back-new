@@ -17,9 +17,26 @@ console.log("\n" + "=".repeat(60));
 console.log("🔧 Database Configuration");
 console.log("=".repeat(60));
 console.log("📌 NODE_ENV:", process.env.NODE_ENV || "undefined");
+<<<<<<< HEAD
 console.log("📌 Environment:", getEnvironmentLabel(isLocalDb));
 console.log("📌 Database URL:", maskDatabaseUrl(dbUrl));
 console.log(`📌 Pool size: min=${poolMin}, max=${poolMax} (pg + Sequelize each)`);
+=======
+// The label used to just mirror isDesktop (NODE_ENV === "desktop"), so it
+// kept printing "PRODUCTION (Remote)" even after pointing DATABASE_URL at
+// a local Postgres instance for testing, since NODE_ENV stayed
+// "development". Read it off the actual host instead so the label can't
+// lie about which database is live.
+const isLocalHost = /@(localhost|127\.0\.0\.1)[:/]/.test(dbUrl || "");
+console.log(
+  "📌 Environment:",
+  isLocalHost ? `LOCAL (${isDesktop ? "desktop" : "dev"})` : "REMOTE"
+);
+console.log(
+  "📌 Database URL:",
+  dbUrl ? dbUrl.replace(/:[^:@]+@/, ":****@") : "UNDEFINED"
+);
+>>>>>>> feature/student-promotion-and-academic-year-updates
 console.log("=".repeat(60) + "\n");
 
 if (!dbUrl) {

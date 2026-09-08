@@ -9,6 +9,16 @@ module.exports = (sequelize, DataTypes) => {
         as: "classSubjects",
       });
       Subject.hasMany(models.Mark, { foreignKey: "subject_id", as: "marks" });
+      // Marks this subject as the representative "sampler" subject for a
+      // department on orientation-class report cards (see
+      // reportCard.controller.js's buildOrientationPlacementSection).
+      // Null means "not an orientation placement subject" — the default,
+      // untouched-existing-behavior state for every subject already in
+      // the system.
+      Subject.belongsTo(models.Specialty, {
+        foreignKey: "orientation_department_id",
+        as: "orientationDepartment",
+      });
     }
   }
 
@@ -60,6 +70,10 @@ module.exports = (sequelize, DataTypes) => {
             msg: "Category must be either 'general', 'practical' or 'professional'",
           },
         },
+      },
+      orientation_department_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
       },
     },
     {

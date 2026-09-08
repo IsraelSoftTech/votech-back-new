@@ -7,7 +7,10 @@
 // directly from qpdf's own GitHub releases (not a third-party wrapper,
 // see the qpdf-compress dead end this replaced), verifies it against a
 // pinned SHA256 before ever extracting or executing anything, and skips
-// entirely if already present, safe to re-run on every deploy.
+// entirely if already present AND working (see verifyQpdfWorks), safe to
+// re-run on every deploy. Also called at server startup and on a periodic
+// timer (see index.js) so a corrupted/missing binary self-heals without
+// needing a manual redeploy or restart, not just a fresh `npm install`.
 
 const fs = require("fs");
 const path = require("path");
@@ -88,6 +91,27 @@ function sha256Of(filePath) {
   return hash.digest("hex");
 }
 
+// Existence alone isn't proof qpdf still works: a partial deploy, a
+// container/ephemeral-disk event, or a permissions reset can all leave the
+// file sitting at binaryPath but unable to run (spawn ENOENT/EACCES, or the
+// Linux build finding its bundled lib/ directory gone). This is what let
+// "already present" silently keep trusting a broken install indefinitely,
+// see ensureQpdf()'s fast path below, actually running `--version` is the
+// only real check.
+function verifyQpdfWorks(binaryPath) {
+  if (!fs.existsSync(binaryPath)) return false;
+  try {
+    const libDir = getLibDir();
+    const env = libDir
+      ? { ...process.env, LD_LIBRARY_PATH: [libDir, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":") }
+      : process.env;
+    execFileSync(binaryPath, ["--version"], { env, stdio: ["ignore", "ignore", "ignore"] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function ensureQpdf() {
   const target = TARGETS[process.platform];
   if (!target) {
@@ -98,9 +122,26 @@ async function ensureQpdf() {
   }
 
   const binaryPath = path.join(INSTALL_DIR, target.finalBinaryName);
-  if (fs.existsSync(binaryPath)) {
-    console.log(`[ensureQpdf] Already present at ${binaryPath}, skipping.`);
+  if (verifyQpdfWorks(binaryPath)) {
+    console.log(`[ensureQpdf] Already present and working at ${binaryPath}, skipping.`);
     return;
+  }
+  if (fs.existsSync(binaryPath)) {
+    console.warn(
+      `[ensureQpdf] Found at ${binaryPath} but it failed to run (corrupted install, missing lib/ deps, or bad permissions), re-provisioning.`
+    );
+    // Only remove this platform's own files, INSTALL_DIR is shared by both
+    // platforms' committed artifacts (this repo carries prebuilt binaries
+    // for both Windows dev machines and the Linux VPS side by side), a
+    // blanket rmSync(INSTALL_DIR) here would also delete the other
+    // platform's untouched, perfectly fine files as collateral damage.
+    fs.rmSync(binaryPath, { force: true });
+    for (const extra of target.extraFilesInZip || []) {
+      fs.rmSync(path.join(INSTALL_DIR, path.basename(extra)), { force: true });
+    }
+    if (target.libDirInZip) {
+      fs.rmSync(path.join(INSTALL_DIR, "lib"), { recursive: true, force: true });
+    }
   }
 
   fs.mkdirSync(INSTALL_DIR, { recursive: true });
@@ -165,7 +206,38 @@ async function ensureQpdf() {
   console.log(`[ensureQpdf] Installed and verified working: ${version}`);
 }
 
-module.exports = { ensureQpdf, getBinaryPath, getLibDir, INSTALL_DIR };
+// Catches the "ran for a long time, then it started failing" case, which a
+// startup-only check can't: something (a disk event, a permissions change,
+// anything short of the process itself dying) corrupts or removes the
+// binary mid-uptime, and nothing re-checks it again until the next
+// restart, which on a long-lived VPS process could be weeks away. Same
+// start-once-then-setInterval shape as startWatchdog/startReportCardWatchdog
+// in src/controllers, see index.js for where this is called.
+const QPDF_HEALTHCHECK_INTERVAL_MS =
+  Number(process.env.QPDF_HEALTHCHECK_INTERVAL_MS) || 6 * 60 * 60 * 1000; // 6h
+
+let qpdfWatchdogStarted = false;
+function startQpdfWatchdog() {
+  if (qpdfWatchdogStarted) return;
+  qpdfWatchdogStarted = true;
+  const tick = () => {
+    ensureQpdf().catch((err) => {
+      console.error("[ensureQpdf] Health check / re-provision failed:", err.message);
+    });
+  };
+  tick();
+  const timer = setInterval(tick, QPDF_HEALTHCHECK_INTERVAL_MS);
+  if (timer.unref) timer.unref();
+}
+
+module.exports = {
+  ensureQpdf,
+  verifyQpdfWorks,
+  startQpdfWatchdog,
+  getBinaryPath,
+  getLibDir,
+  INSTALL_DIR,
+};
 
 if (require.main === module) {
   ensureQpdf().catch((err) => {

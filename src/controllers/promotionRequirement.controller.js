@@ -202,6 +202,19 @@ const savePromotionRequirement = catchAsync(async (req, res, next) => {
     decision_mode,
   } = req.body;
 
+  // Orientation classes fan out into multiple departments by definition,
+  // so promotion_mode must stay "split" for as long as the class is
+  // flagged is_orientation — enforced here, not just in the UI, so a
+  // direct API call can't silently put an orientation class back into
+  // same-department "single" mode. The only way to change it is to turn
+  // off Orientation on the class itself first.
+  const targetClass = class_id
+    ? await models.Class.findByPk(class_id, { attributes: ["id", "is_orientation"] })
+    : null;
+  const resolvedPromotionMode = targetClass?.is_orientation
+    ? "split"
+    : promotion_mode || "single";
+
   const payload = {
     academic_year_id,
     class_id,
@@ -210,7 +223,7 @@ const savePromotionRequirement = catchAsync(async (req, res, next) => {
     compulsory_general_subject_ids: compulsory_general_subject_ids || [],
     compulsory_professional_subject_ids: compulsory_professional_subject_ids || [],
     min_professional_subjects_passed: min_professional_subjects_passed || 0,
-    promotion_mode: promotion_mode || "single",
+    promotion_mode: resolvedPromotionMode,
     decision_mode: decision_mode || "automatic",
   };
 

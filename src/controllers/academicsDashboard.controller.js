@@ -8,11 +8,12 @@ const catchAsync = require("../utils/catchAsync");
 const appResponder = require("../utils/appResponder");
 
 // Admin3's dedicated dashboard — everything here is real, already-existing
-// data, no new tables. The time period only scopes ACTIVITY (student
-// registrations, promotion runs, report-card sessions) — structural
-// counts (classes/subjects/departments/academic years) are "what
-// currently exists," not something that happened within a period, so
-// they're always current-state totals regardless of the selected period.
+// data, no new tables. The time period scopes ACTIVITY (the registration
+// trend chart, promotion runs, report-card sessions) — structural counts
+// (classes/subjects/departments/academic years) and the student
+// population snapshot (total/gender/status/class/department) are "what's
+// true right now," not something that happened within a period, so they
+// stay current-state totals regardless of the selected period.
 
 const PERIODS = ["this_month", "last_3_months", "this_academic_year", "all_time"];
 
@@ -39,25 +40,40 @@ const getDashboardSummary = catchAsync(async (req, res) => {
   const range = await resolvePeriodRange(period, activeAcademicYear);
   const dateWhere = range ? { [Op.between]: [range.start, range.end] } : undefined;
 
-  // ── Student population (activity-scoped by registration_date) ──
+  // ── Student population ──
+  // This is a "who's actually here right now" snapshot, not a registration
+  // activity count — scoped to the current academic year, not the period
+  // dropdown (a continuing student's registration_date sits in whatever
+  // year they first enrolled, often years ago, so filtering population by
+  // registration_date within "this academic year" wrongly showed 0 for
+  // every returning student and only counted brand-new registrations).
+  const yearWhere = activeAcademicYear ? { academic_year_id: activeAcademicYear.id } : {};
+  // Total/gender/class/department are "who's currently enrolled" — a
+  // graduated or withdrawn student shouldn't inflate them. byStatus is the
+  // one exception: its whole purpose is showing the active/graduated/
+  // withdrawn split, so it stays unfiltered by status within the year.
+  const activeYearWhere = { ...yearWhere, status: "active" };
+  // Registration Trend (below) is the one part of this section that's
+  // still genuinely a registration-activity metric, so it keeps using the
+  // period-scoped registration_date filter.
   const studentWhere = dateWhere ? { registration_date: dateWhere } : {};
 
   const [total, byGenderRaw, byStatusRaw, byClassRaw] = await Promise.all([
-    models.Student.count({ where: studentWhere }),
+    models.Student.count({ where: activeYearWhere }),
     models.Student.findAll({
-      where: studentWhere,
+      where: activeYearWhere,
       attributes: ["sex", [sequelize.fn("COUNT", sequelize.col("students.id")), "count"]],
       group: ["sex"],
       raw: true,
     }),
     models.Student.findAll({
-      where: studentWhere,
+      where: yearWhere,
       attributes: ["status", [sequelize.fn("COUNT", sequelize.col("students.id")), "count"]],
       group: ["status"],
       raw: true,
     }),
     models.Student.findAll({
-      where: studentWhere,
+      where: activeYearWhere,
       attributes: [
         "class_id",
         [sequelize.fn("COUNT", sequelize.col("students.id")), "count"],

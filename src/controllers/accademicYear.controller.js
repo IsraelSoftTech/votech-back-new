@@ -1044,6 +1044,218 @@ const getAcademicYearSwitchLogs = catchAsync(async (req, res) => {
   res.status(StatusCodes.OK).json({ success: true, data });
 });
 
+// ─── Carry Forward year-scoped values (Admin3) ──────────────────────────
+//
+// Copies everything the school would otherwise have to set up again from
+// scratch in a new year, from the currently active year into a target
+// year, as brand new independently-editable rows:
+//
+//   • class_subjects            (which teacher teaches what, per class)
+//   • class_master_assignments  (who is class master of each class)
+//   • academic_bands            (grading bands and their comments)
+//   • subject_year_settings     (subject coefficients and categories)
+//   • class_year_settings       (class names and departments)
+//   • school_setting_years      (school name and principal)
+//
+// Never touches the source year's rows, never touches which year is
+// active. Idempotent-safe: anything that already exists for the target
+// year is skipped rather than duplicated, so running it twice is
+// harmless. Offered to Admin3 as a step of the switch-year flow.
+
+const carryForwardAssignments = catchAsync(async (req, res, next) => {
+  const { target_year_id, password } = req.body || {};
+
+  await verifyPasswordAndRole(req.user.id, password, "Admin3");
+
+  if (!target_year_id) {
+    return next(
+      new AppError("target_year_id is required", StatusCodes.BAD_REQUEST)
+    );
+  }
+
+  const targetYear = await AcademicYearModel.findByPk(target_year_id);
+  if (!targetYear) {
+    return next(
+      new AppError("Target academic year not found", StatusCodes.NOT_FOUND)
+    );
+  }
+
+  const activeYear = await AcademicYearModel.findOne({
+    where: { status: "active" },
+  });
+  if (!activeYear) {
+    return next(
+      new AppError(
+        "There is no active academic year to carry forward from",
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+  if (activeYear.id === targetYear.id) {
+    return next(
+      new AppError(
+        "The target year is already the active year",
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+
+  const result = await sequelize.transaction(async (t) => {
+    // ── class_subjects ──
+    const sourceSubjects = await models.ClassSubject.findAll({
+      where: { academic_year_id: activeYear.id },
+      raw: true,
+      transaction: t,
+    });
+    const existingSubjectRows = await models.ClassSubject.findAll({
+      where: { academic_year_id: targetYear.id },
+      attributes: ["class_id", "subject_id", "department_id"],
+      raw: true,
+      transaction: t,
+    });
+    const existingSubjectKeys = new Set(
+      existingSubjectRows.map(
+        (r) => `${r.class_id}-${r.subject_id}-${r.department_id}`
+      )
+    );
+    const subjectsToCreate = sourceSubjects
+      .filter(
+        (r) =>
+          !existingSubjectKeys.has(
+            `${r.class_id}-${r.subject_id}-${r.department_id}`
+          )
+      )
+      .map((r) => ({
+        academic_year_id: targetYear.id,
+        class_id: r.class_id,
+        subject_id: r.subject_id,
+        department_id: r.department_id,
+        teacher_id: r.teacher_id,
+      }));
+    if (subjectsToCreate.length) {
+      await models.ClassSubject.bulkCreate(subjectsToCreate, {
+        transaction: t,
+        individualHooks: true,
+        skipYearLockCheck: true,
+      });
+    }
+
+    // ── class_master_assignments ──
+    const sourceMasters = await models.ClassMasterAssignment.findAll({
+      where: { academic_year_id: activeYear.id },
+      raw: true,
+      transaction: t,
+    });
+    const existingMasterRows = await models.ClassMasterAssignment.findAll({
+      where: { academic_year_id: targetYear.id },
+      attributes: ["class_id"],
+      raw: true,
+      transaction: t,
+    });
+    const existingMasterClassIds = new Set(
+      existingMasterRows.map((r) => r.class_id)
+    );
+    const mastersToCreate = sourceMasters
+      .filter((r) => !existingMasterClassIds.has(r.class_id))
+      .map((r) => ({
+        academic_year_id: targetYear.id,
+        class_id: r.class_id,
+        teacher_id: r.teacher_id,
+      }));
+    if (mastersToCreate.length) {
+      await models.ClassMasterAssignment.bulkCreate(mastersToCreate, {
+        transaction: t,
+        individualHooks: true,
+        skipYearLockCheck: true,
+      });
+    }
+
+    // ── the remaining year-scoped tables ──
+    //
+    // All four follow the same shape as the two above: read the active
+    // year's rows, work out which of them the target year doesn't have
+    // yet using that table's own uniqueness key, and create only those.
+    // Driven off a table rather than four more copy-pasted blocks so a
+    // future year-scoped table is one entry, not another 30 lines.
+    const copyPlans = [
+      {
+        key: "academic_bands",
+        model: models.AcademicBand,
+        // A class can define several bands, so identity here is the whole
+        // band, not just the class.
+        identity: (r) => `${r.class_id}-${r.band_min}-${r.band_max}`,
+        fields: ["class_id", "band_min", "band_max", "comment"],
+      },
+      {
+        key: "subject_year_settings",
+        model: models.SubjectYearSetting,
+        identity: (r) => String(r.subject_id),
+        fields: ["subject_id", "coefficient", "category"],
+      },
+      {
+        key: "class_year_settings",
+        model: models.ClassYearSetting,
+        identity: (r) => String(r.class_id),
+        fields: ["class_id", "name", "department_id"],
+      },
+      {
+        key: "school_setting_years",
+        model: models.SchoolSettingYear,
+        // One row per year, so every source row maps to the same slot.
+        identity: () => "school",
+        fields: ["school_name", "principal_name"],
+      },
+    ];
+
+    const counts = {};
+    for (const plan of copyPlans) {
+      const sourceRows = await plan.model.findAll({
+        where: { academic_year_id: activeYear.id },
+        raw: true,
+        transaction: t,
+      });
+      const existingRows = await plan.model.findAll({
+        where: { academic_year_id: targetYear.id },
+        raw: true,
+        transaction: t,
+      });
+      const existingKeys = new Set(existingRows.map(plan.identity));
+
+      const toCreate = sourceRows
+        .filter((r) => !existingKeys.has(plan.identity(r)))
+        .map((r) => {
+          const row = { academic_year_id: targetYear.id };
+          for (const field of plan.fields) row[field] = r[field];
+          return row;
+        });
+
+      if (toCreate.length) {
+        await plan.model.bulkCreate(toCreate, {
+          transaction: t,
+          individualHooks: true,
+          skipYearLockCheck: true,
+        });
+      }
+
+      counts[`${plan.key}_created`] = toCreate.length;
+      counts[`${plan.key}_skipped`] = sourceRows.length - toCreate.length;
+    }
+
+    return {
+      source_year: { id: activeYear.id, name: activeYear.name },
+      target_year: { id: targetYear.id, name: targetYear.name },
+      class_subjects_created: subjectsToCreate.length,
+      class_subjects_skipped: sourceSubjects.length - subjectsToCreate.length,
+      class_master_assignments_created: mastersToCreate.length,
+      class_master_assignments_skipped:
+        sourceMasters.length - mastersToCreate.length,
+      ...counts,
+    };
+  });
+
+  res.status(StatusCodes.OK).json({ success: true, data: result });
+});
+
 module.exports = {
   initAcademicYear,
   createAcademicYear,
@@ -1052,9 +1264,13 @@ module.exports = {
   updateAcademicYear,
   deleteAcademicYear,
   switchAcademicYear,
+<<<<<<< HEAD
   rolloverAcademicYear,
   reactivateAcademicYear,
   getActiveAcademicYear,
   getAcademicYearContext,
   getAcademicYearSwitchLogs,
+=======
+  carryForwardAssignments,
+>>>>>>> feature/student-promotion-and-academic-year-updates
 };

@@ -11,6 +11,7 @@ const allowedOrigins = [
   "https://www.votechs7academygroup.com",
   "https://votech-latest-front.onrender.com",
   "http://localhost:3000",
+  "http://localhost:3001",
   "http://localhost:3004",
   "http://192.168.1.201:3000",
   "http://192.168.1.200:3000",
@@ -153,6 +154,8 @@ const contentRouter = require("./src/routes/content.route");
 const globalErrorController = require("./src/controllers/error.controller");
 const departmentRouter = require("./src/routes/department.route");
 const academicsDashboardRouter = require("./src/routes/academicsDashboard.route");
+const teacherDashboardRouter = require("./src/routes/teacherDashboard.route");
+const schoolSettingsRouter = require("./src/routes/schoolSettings.route");
 const { readOnlyGate } = require("./src/controllers/contextSwitch.controller");
 const {
   enforceActiveYearWrites,
@@ -244,6 +247,8 @@ app.use("/api/v1/academic-notifications", academicNotificationRouter);
 app.use("/api/v1/content", contentRouter);
 app.use("/api/v1/departments", departmentRouter);
 app.use("/api/v1/academics-dashboard", academicsDashboardRouter);
+app.use("/api/v1/teacher-dashboard", teacherDashboardRouter);
+app.use("/api/v1/school-settings", schoolSettingsRouter);
 app.use("/api/v1/desktop", desktopRouter);
 
 console.log("✅ Server routes mounted successfully");

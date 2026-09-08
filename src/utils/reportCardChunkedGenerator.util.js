@@ -60,11 +60,17 @@ function tempFilePath(prefix) {
   return path.join(TEMP_DIR, `${prefix}-${crypto.randomBytes(6).toString("hex")}.pdf`);
 }
 
-function renderChunkToFile(chunkCards, termLabel, gradingScale, logoBase64) {
+function renderChunkToFile(chunkCards, termLabel, gradingScale, logoBase64, isOrientationClass) {
   return new Promise((resolve, reject) => {
     const filePath = tempFilePath("chunk");
     try {
-      const docDef = buildDocDefinition(chunkCards, termLabel, gradingScale, logoBase64);
+      const docDef = buildDocDefinition(
+        chunkCards,
+        termLabel,
+        gradingScale,
+        logoBase64,
+        isOrientationClass
+      );
       const doc = printer.createPdfKitDocument(docDef);
       const stream = fs.createWriteStream(filePath);
       doc.on("error", (err) => {
@@ -107,12 +113,30 @@ function mergeChunksToFile(chunkPaths, finalPath) {
       : process.env;
 
     const args = ["--empty", "--pages", ...chunkPaths, "--", finalPath];
-    execFile(qpdfPath, args, { env }, (err, _stdout, stderr) => {
+    execFile(qpdfPath, args, { env }, (err, stdout, stderr) => {
       // qpdf's own docs: exit code 3 means "succeeded with warnings"
       // (e.g. a minor structural quirk in an input), the output is still
       // valid, only exit codes >= 2 other than 3 are real failures.
       if (err && err.code !== 3) {
-        return reject(new Error(`qpdf merge failed: ${stderr || err.message}`));
+        // err.message alone was "Command failed: <cmd>" with nothing
+        // else useful whenever stderr came back empty — this surfaces
+        // err.code/errno/signal/syscall too (Node sets these on the
+        // error object but execFile's own message doesn't include them),
+        // which is the difference between "a real qpdf error" and "the
+        // process never actually ran" (ENOENT/EACCES/a signal kill).
+        const diagnostics = [
+          err.code !== undefined ? `code=${err.code}` : null,
+          err.errno !== undefined ? `errno=${err.errno}` : null,
+          err.syscall ? `syscall=${err.syscall}` : null,
+          err.signal ? `signal=${err.signal}` : null,
+          err.path ? `path=${err.path}` : null,
+        ]
+          .filter(Boolean)
+          .join(" ");
+        const detail = stderr || stdout || "(no stdout/stderr captured)";
+        return reject(
+          new Error(`qpdf merge failed: ${detail} [${diagnostics || err.message}]`)
+        );
       }
       for (const p of chunkPaths) fs.unlink(p, () => {});
       resolve();
@@ -188,7 +212,13 @@ async function generateClassReportCardsToFile(academicYearId, classId, term, onP
   try {
     for (let i = 0; i < cards.length; i += CHUNK_SIZE) {
       const chunk = cards.slice(i, i + CHUNK_SIZE);
-      const chunkPath = await renderChunkToFile(chunk, termLabel, gradingScale, logoBase64);
+      const chunkPath = await renderChunkToFile(
+        chunk,
+        termLabel,
+        gradingScale,
+        logoBase64,
+        studentClass.is_orientation
+      );
       chunkPaths.push(chunkPath);
       processed += chunk.length;
       if (onProgress) onProgress(processed, cards.length);

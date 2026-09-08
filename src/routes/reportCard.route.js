@@ -12,6 +12,13 @@ const {
   classMasterSheetData,
 } = require("../controllers/mastersheet.controller");
 
+const {
+  getMarksMatrix,
+  getMarksCoverage,
+  downloadCoveragePdf,
+  downloadMarksMatrixPdf,
+} = require("../controllers/marksOverview.controller");
+
 const reportCardRouter = express.Router();
 
 reportCardRouter.use(protect);
@@ -31,5 +38,10 @@ reportCardRouter.route("/bulk-html-direct").get(bulkPdfDirect);
 reportCardRouter.route("/single-pdf-direct").get(singlePdfDirect);
 reportCardRouter.route("/master-sheet").get(classMasterSheet);
 reportCardRouter.route("/master-sheet-data").get(classMasterSheetData);
+
+reportCardRouter.route("/marks-overview/matrix").get(getMarksMatrix);
+reportCardRouter.route("/marks-overview/matrix-pdf").get(downloadMarksMatrixPdf);
+reportCardRouter.route("/marks-overview/coverage").get(getMarksCoverage);
+reportCardRouter.route("/marks-overview/coverage-pdf").get(downloadCoveragePdf);
 
 module.exports = reportCardRouter;

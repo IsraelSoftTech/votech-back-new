@@ -27,6 +27,12 @@ const catchAsync = require("../utils/catchAsync");
 const AppError = require("../utils/AppError");
 const models = require("../models/index.model");
 const { buildReportCardsFromMarks, attachAcademicRemarks } = require("./reportCard.controller");
+const { resolveClassMasterName } = require("../utils/classMaster.util");
+const {
+  applySubjectSettingsForYear,
+  resolveSchoolSettingsForYear,
+} = require("../utils/yearScopedSettings.util");
+const { resolveStudentClassForYear } = require("../utils/studentYear.util");
 
 /* ═══════════════════════════════════════════════════════════════════
    1. FONT & PRINTER SETUP
@@ -299,6 +305,11 @@ function subjectFontSizes(totalSubjectCount) {
 // ── 9a. DOCUMENT HEADER ──────────────────────────────────────────
 
 function buildHeader(data, logoBase64) {
+  const admin = data.administration || {};
+  const schoolName = (admin.schoolName || "VOTECH S7 ACADEMY").toUpperCase();
+  const address = admin.address || "AZIRE - MANKON";
+  const motto = admin.motto || "Welfare, Productivity, Self Actualization";
+
   const frenchSide = [
     {
       text: "RÉPUBLIQUE DU CAMEROUN",
@@ -334,7 +345,7 @@ function buildHeader(data, logoBase64) {
       margin: [0, 0, 0, 0.5],
     },
     {
-      text: "VOTECH S7 ACADEMY",
+      text: schoolName,
       fontSize: 7,
       bold: true,
       color: C.primary,
@@ -343,7 +354,7 @@ function buildHeader(data, logoBase64) {
       margin: [0, 0, 0, 0.5],
     },
     {
-      text: "AZIRE - MANKON",
+      text: address,
       fontSize: 6,
       bold: true,
       color: C.light,
@@ -386,7 +397,7 @@ function buildHeader(data, logoBase64) {
       margin: [0, 0, 0, 0.5],
     },
     {
-      text: "VOTECH S7 ACADEMY",
+      text: schoolName,
       fontSize: 7,
       bold: true,
       color: C.primary,
@@ -395,7 +406,7 @@ function buildHeader(data, logoBase64) {
       margin: [0, 0, 0, 0.5],
     },
     {
-      text: "AZIRE - MANKON",
+      text: address,
       fontSize: 6,
       bold: true,
       color: C.light,
@@ -429,7 +440,7 @@ function buildHeader(data, logoBase64) {
     margin: [0, 0, 0, 1],
   });
   centerContent.push({
-    text: "Motto: Welfare, Productivity,\nSelf Actualization",
+    text: `Motto: ${motto}`,
     fontSize: 6,
     bold: true,
     italics: true,
@@ -719,6 +730,236 @@ function buildSubjectSection(
           headerRows: 1,
           widths,
           body: [headerRow, ...bodyRows, subtotalRow],
+        },
+        layout: {
+          hLineWidth: (i, node) => {
+            if (i === 0 || i === node.table.body.length) return 1;
+            if (i === 1) return 1;
+            if (i === node.table.body.length - 1) return 2;
+            return 0.5;
+          },
+          vLineWidth: () => 0.5,
+          hLineColor: () => C.primary,
+          vLineColor: () => C.primary,
+          paddingLeft: () => 2,
+          paddingRight: () => 2,
+          paddingTop: () => 1.5,
+          paddingBottom: () => 1.5,
+          fillColor: (rowIndex) => (rowIndex === 0 ? C.headerBg : null),
+        },
+      },
+    ],
+    margin: [0, 0, 0, 2],
+  };
+}
+
+// ── 9c-orientation. ORIENTATION PLACEMENT SUBJECTS ──────────────
+//
+// A parallel, self-contained table, deliberately NOT built by threading
+// extra options through buildSubjectSection above, so General/
+// Professional/Practical stay entirely untouched by this feature. Only
+// called by buildStudentPage when the class is actually flagged
+// is_orientation AND the student has at least one subject an admin has
+// tagged with orientation_department_id on the Subjects page — every
+// other class/subject renders exactly as it always has.
+function buildOrientationPlacementSection(subjects, termCfg, gradingScale, fs_) {
+  const scoreCols = termCfg.scoreColumns;
+  const colCount = scoreCols.length;
+
+  const scoreW = colCount <= 3 ? 32 : colCount <= 5 ? 28 : 26;
+  const widths = [35, "*", ...Array(colCount).fill(scoreW), 22, 30, 42, 50];
+
+  const headerRow = [
+    hdrCell("CODE"),
+    hdrCell("SUBJECT TITLE"),
+    ...scoreCols.map((c) => hdrCell(c.header)),
+    hdrCell("COEF"),
+    hdrCell("TOTAL"),
+    hdrCell("REMARK"),
+    hdrCell("TEACHER"),
+  ];
+
+  const bodyRows = subjects.map((subj) => {
+    const termAvg = termCfg.getTermAvg(subj);
+    const remark = termAvg != null ? getRemark(termAvg, gradingScale) : "N/A";
+    const rColor = remarkColor(remark);
+
+    const scoreCells = scoreCols.map((col) => {
+      const val = resolveCellValue(subj, col, termCfg);
+      const display =
+        val == null || isNaN(Number(val))
+          ? "-"
+          : col.isAvg
+          ? fmtAvg(val)
+          : fmtScore(val);
+      const isLow = val != null && !isNaN(Number(val)) && Number(val) < 10;
+      return {
+        text: display,
+        fontSize: fs_.row,
+        alignment: "center",
+        color: isLow ? C.red : col.isAvg ? C.primary : C.dark,
+        bold: true,
+      };
+    });
+
+    const total =
+      termAvg != null && !isNaN(Number(termAvg))
+        ? (Number(termAvg) * subj.coef).toFixed(1)
+        : "-";
+
+    return [
+      { text: subj.code, fontSize: fs_.code, bold: true, color: C.primary, alignment: "center" },
+      { text: subj.title, fontSize: fs_.title, color: C.dark, alignment: "left" },
+      ...scoreCells,
+      { text: String(subj.coef), fontSize: fs_.row, bold: true, alignment: "center", color: C.dark },
+      { text: total, fontSize: fs_.row, bold: true, alignment: "center", color: C.primary },
+      { text: remark, fontSize: fs_.remark, bold: true, alignment: "center", color: rColor },
+      { text: formatTeacherName(subj.teacher), fontSize: fs_.teacher, color: C.light, alignment: "left" },
+    ];
+  });
+
+  // ── the two summary rows: which of the six placement subjects is
+  // ahead, this term alone and cumulatively so far. Reuses the exact
+  // same _termAvg/_yearAvg/_finalAvg columns the table already computes
+  // per subject (via resolveCellValue) rather than recomputing anything.
+  const pickBest = (colKey) => {
+    const col = scoreCols.find((c) => c.key === colKey);
+    if (!col) return null;
+    let best = null;
+    for (const subj of subjects) {
+      const val = resolveCellValue(subj, col, termCfg);
+      if (val == null || isNaN(Number(val))) continue;
+      if (!best || Number(val) > best.value) best = { subject: subj, value: Number(val) };
+    }
+    return best;
+  };
+
+  const makeSummaryRow = (label, colKey, best) => {
+    const remark = getRemark(best.value, gradingScale);
+    const row = [
+      { text: "-", fontSize: fs_.code, color: C.light, alignment: "center", fillColor: C.headerBg },
+      {
+        text: `${label}: ${best.subject.title}`,
+        fontSize: fs_.title,
+        bold: true,
+        color: C.primary,
+        alignment: "left",
+        fillColor: C.headerBg,
+      },
+    ];
+    scoreCols.forEach((col) => {
+      row.push(
+        col.key === colKey
+          ? { text: fmtAvg(best.value), fontSize: fs_.row, bold: true, alignment: "center", color: C.primary, fillColor: C.headerBg }
+          : { text: "-", fontSize: fs_.row, color: C.light, alignment: "center", fillColor: C.headerBg }
+      );
+    });
+    row.push(
+      { text: "-", fontSize: fs_.row, color: C.light, alignment: "center", fillColor: C.headerBg },
+      { text: "-", fontSize: fs_.row, color: C.light, alignment: "center", fillColor: C.headerBg },
+      { text: remark, fontSize: fs_.remark, bold: true, alignment: "center", color: remarkColor(remark), fillColor: C.headerBg },
+      { text: "-", fontSize: fs_.teacher, color: C.light, alignment: "left", fillColor: C.headerBg }
+    );
+    return row;
+  };
+
+  const summaryRows = [];
+  const thisTermBest = pickBest("_termAvg");
+  if (thisTermBest) {
+    summaryRows.push(makeSummaryRow("Best Placement Subject This Term", "_termAvg", thisTermBest));
+  }
+  // No _yearAvg/_finalAvg column exists on the Term 1 config at all, so
+  // this naturally yields no "so far" row there, there's nothing prior
+  // to combine with yet.
+  const soFarKey = scoreCols.some((c) => c.key === "_yearAvg")
+    ? "_yearAvg"
+    : scoreCols.some((c) => c.key === "_finalAvg")
+    ? "_finalAvg"
+    : null;
+  if (soFarKey) {
+    const soFarBest = pickBest(soFarKey);
+    const soFarLabel =
+      soFarKey === "_yearAvg"
+        ? "Best Placement Subject So Far (T1 + T2)"
+        : "Best Placement Subject So Far (T1 + T2 + T3)";
+    if (soFarBest) summaryRows.push(makeSummaryRow(soFarLabel, soFarKey, soFarBest));
+  }
+
+  // Subtotal — identical math to buildSubjectSection, scoped to just
+  // these subjects, so it's the true total of what this table lists.
+  const { totalWeighted, totalCoef } = subjects.reduce(
+    (acc, subj) => {
+      const avg = termCfg.getTermAvg(subj);
+      if (avg != null && !isNaN(Number(avg))) {
+        acc.totalWeighted += Number(avg) * subj.coef;
+        acc.totalCoef += subj.coef;
+      }
+      return acc;
+    },
+    { totalWeighted: 0, totalCoef: 0 }
+  );
+  const subAvg = totalCoef > 0 ? totalWeighted / totalCoef : 0;
+  const subRemark = getRemark(subAvg, gradingScale);
+  const subRemarkColor = remarkColor(subRemark);
+  const subtotalSpan = colCount + 3;
+
+  const subtotalRow = [
+    {
+      text: "SUB TOTAL:",
+      colSpan: subtotalSpan,
+      fontSize: 8,
+      bold: true,
+      color: C.primary,
+      alignment: "right",
+      fillColor: C.headerBg,
+    },
+    ...Array(subtotalSpan - 1).fill({ text: "", fillColor: C.headerBg }),
+    {
+      text: totalWeighted.toFixed(0),
+      fontSize: 8.5,
+      bold: true,
+      color: C.primary,
+      alignment: "center",
+      fillColor: C.headerBg,
+    },
+    {
+      text: subRemark,
+      fontSize: fs_.remark,
+      bold: true,
+      color: subRemarkColor,
+      alignment: "center",
+      fillColor: C.headerBg,
+    },
+    { text: "", fillColor: C.headerBg },
+  ];
+
+  return {
+    unbreakable: true,
+    stack: [
+      {
+        table: {
+          widths: ["*"],
+          body: [
+            [
+              {
+                text: "ORIENTATION PLACEMENT SUBJECTS",
+                fontSize: 8,
+                bold: true,
+                color: C.white,
+                alignment: "center",
+                fillColor: C.primary,
+                margin: [0, 1.5, 0, 1.5],
+              },
+            ],
+          ],
+        },
+        layout: { hLineWidth: () => 0, vLineWidth: () => 0 },
+      },
+      {
+        table: {
+          headerRows: 1,
+          widths,
+          body: [headerRow, ...bodyRows, ...summaryRows, subtotalRow],
         },
         layout: {
           hLineWidth: (i, node) => {
@@ -1188,12 +1429,12 @@ function buildFooter() {
    10. ASSEMBLE FULL DOCUMENT
    ═══════════════════════════════════════════════════════════════════ */
 
-function buildDocDefinition(cards, termLabel, gradingScale, logoBase64) {
+function buildDocDefinition(cards, termLabel, gradingScale, logoBase64, isOrientationClass = false) {
   const termCfg = getTermConfig(termLabel);
   const content = [];
 
   cards.forEach((card, idx) => {
-    const page = buildStudentPage(card, termCfg, gradingScale, logoBase64);
+    const page = buildStudentPage(card, termCfg, gradingScale, logoBase64, isOrientationClass);
 
     if (idx > 0) {
       page[0] = { ...page[0], pageBreak: "before" };
@@ -1241,7 +1482,7 @@ function buildDocDefinition(cards, termLabel, gradingScale, logoBase64) {
   };
 }
 
-function buildStudentPage(card, termCfg, gradingScale, logoBase64) {
+function buildStudentPage(card, termCfg, gradingScale, logoBase64, isOrientationClass = false) {
   const totalSubjects =
     (card.generalSubjects?.length || 0) +
     (card.professionalSubjects?.length || 0) +
@@ -1249,36 +1490,69 @@ function buildStudentPage(card, termCfg, gradingScale, logoBase64) {
 
   const fs_ = subjectFontSizes(totalSubjects);
 
+  // Orientation Placement Subjects is its own genuine category table,
+  // same shape as General/Professional/Practical, not a tag layered onto
+  // those tables — so a subject pulled in here is REMOVED from wherever
+  // it'd normally render, not duplicated. Gated on both conditions the
+  // feature was scoped to: the class itself must be flagged
+  // is_orientation, AND at least one subject the student is actually
+  // taking must be admin-tagged with orientation_department_id. Neither
+  // condition alone is enough — an orientation class with no tagged
+  // subjects yet renders exactly as before, and a tagged subject in a
+  // non-orientation class stays in its normal table untouched.
+  const isOrientationSubject = (s) => Boolean(s.orientationDepartmentId);
+  const orientationSubjects = isOrientationClass
+    ? [
+        ...(card.generalSubjects || []),
+        ...(card.professionalSubjects || []),
+        ...(card.practicalSubjects || []),
+      ].filter(isOrientationSubject)
+    : [];
+  const hasOrientationSection = orientationSubjects.length > 0;
+
+  const generalSubjects = hasOrientationSection
+    ? (card.generalSubjects || []).filter((s) => !isOrientationSubject(s))
+    : card.generalSubjects;
+  const professionalSubjects = hasOrientationSection
+    ? (card.professionalSubjects || []).filter((s) => !isOrientationSubject(s))
+    : card.professionalSubjects;
+  const practicalSubjects = hasOrientationSection
+    ? (card.practicalSubjects || []).filter((s) => !isOrientationSubject(s))
+    : card.practicalSubjects;
+
   return [
     buildHeader(card, logoBase64),
     buildStudentInfo(card),
-    ...(card.generalSubjects?.length
+    ...(generalSubjects?.length
       ? [
           buildSubjectSection(
             "GENERAL SUBJECTS",
-            card.generalSubjects,
+            generalSubjects,
             termCfg,
             gradingScale,
             fs_
           ),
         ]
       : []),
-    ...(card.professionalSubjects?.length
+    ...(hasOrientationSection
+      ? [buildOrientationPlacementSection(orientationSubjects, termCfg, gradingScale, fs_)]
+      : []),
+    ...(professionalSubjects?.length
       ? [
           buildSubjectSection(
             "PROFESSIONAL SUBJECTS",
-            card.professionalSubjects,
+            professionalSubjects,
             termCfg,
             gradingScale,
             fs_
           ),
         ]
       : []),
-    ...(card.practicalSubjects?.length
+    ...(practicalSubjects?.length
       ? [
           buildSubjectSection(
             "PRACTICAL SUBJECTS",
-            card.practicalSubjects,
+            practicalSubjects,
             termCfg,
             gradingScale,
             fs_
@@ -1376,7 +1650,7 @@ function termKeyToLabel(k) {
 }
 
 async function fetchMarksWithIncludes(academicYearId, classId) {
-  return models.Mark.findAll({
+  const marks = await models.Mark.findAll({
     where: { academic_year_id: academicYearId, class_id: classId },
     // raw + nest: plain nested JS objects instead of hydrated Sequelize
     // instances (each with its own getters/associations/dataValues
@@ -1415,7 +1689,7 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
       {
         model: models.Subject,
         as: "subject",
-        attributes: ["code", "name", "coefficient", "category"],
+        attributes: ["code", "name", "coefficient", "category", "orientation_department_id"],
         include: [
           {
             model: models.ClassSubject,
@@ -1427,7 +1701,11 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
             // marks (measured on a 1000-student class), that fan-out was
             // the actual dominant memory cost in mass generation, not
             // rendering or merging.
-            where: { class_id: classId },
+            // academic_year_id scopes to THIS report card's own year, not
+            // "whoever teaches it now" — class_subjects is year-scoped so
+            // a reassignment since can't rewrite who this document says
+            // taught it.
+            where: { class_id: classId, academic_year_id: academicYearId },
             required: false,
             attributes: ["id", "class_id"],
             include: [
@@ -1437,6 +1715,14 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
                 attributes: ["id", "name", "username"],
               },
             ],
+          },
+          {
+            // belongsTo, so this nests as a single plain object under
+            // both raw+nest and hydrated modes, unlike classSubjects
+            // above, no shape-normalization needed for this one.
+            model: models.Specialty,
+            as: "orientationDepartment",
+            attributes: ["id", "name"],
           },
         ],
       },
@@ -1455,6 +1741,12 @@ async function fetchMarksWithIncludes(academicYearId, classId) {
       [{ model: models.Sequence, as: "sequence" }, "order_number", "ASC"],
     ],
   });
+
+  // subjects.coefficient/category are the CURRENT values; this overlays
+  // whatever they were in the year being generated, so raising a
+  // coefficient today cannot silently recompute a past year's averages,
+  // ranks and remarks the next time it is reprinted.
+  return applySubjectSettingsForYear(marks, academicYearId);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1481,15 +1773,7 @@ const bulkPdfDirect = catchAsync(async (req, res, next) => {
   const [academicYear, department, studentClass, termKey] = await Promise.all([
     models.AcademicYear.findByPk(academicYearId),
     models.Specialty.findByPk(departmentId),
-    models.Class.findByPk(classId, {
-      include: [
-        {
-          model: models.User,
-          as: "classMaster",
-          attributes: ["name", "username"],
-        },
-      ],
-    }),
+    models.Class.findByPk(classId),
     resolveTermKey(term, academicYearId),
   ]);
 
@@ -1518,12 +1802,10 @@ const bulkPdfDirect = catchAsync(async (req, res, next) => {
     );
   }
 
-  const classMaster =
-    studentClass?.classMaster?.name ||
-    studentClass?.classMaster?.username ||
-    "";
+  const classMaster = await resolveClassMasterName(classId, academicYearId);
   const termLabel = termKeyToLabel(termKey);
-  const cards = buildReportCardsFromMarks(marks, classMaster, termKey);
+  const settings = await resolveSchoolSettingsForYear(academicYearId);
+  const cards = buildReportCardsFromMarks(marks, classMaster, termKey, settings.principal_name, settings);
   await attachAcademicRemarks(cards, academicYearId, classId, termKey);
   const gradingScale = prepareGrading(gradingRaw);
 
@@ -1531,7 +1813,13 @@ const bulkPdfDirect = catchAsync(async (req, res, next) => {
   const logoBase64 = loadLogoBase64();
 
   // ── Build doc definition ──
-  const docDef = buildDocDefinition(cards, termLabel, gradingScale, logoBase64);
+  const docDef = buildDocDefinition(
+    cards,
+    termLabel,
+    gradingScale,
+    logoBase64,
+    studentClass.is_orientation
+  );
 
   const filename = `${sanitize(academicYear.name)}-${sanitize(
     department.name
@@ -1578,15 +1866,7 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
   const [academicYear, department, studentClass, termKey] = await Promise.all([
     models.AcademicYear.findByPk(academicYearId),
     models.Specialty.findByPk(departmentId),
-    models.Class.findByPk(classId, {
-      include: [
-        {
-          model: models.User,
-          as: "classMaster",
-          attributes: ["name", "username"],
-        },
-      ],
-    }),
+    models.Class.findByPk(classId),
     resolveTermKey(term, academicYearId),
   ]);
 
@@ -1608,12 +1888,10 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
   if (!marks.length)
     return next(new AppError("No marks found", StatusCodes.NOT_FOUND));
 
-  const classMaster =
-    studentClass?.classMaster?.name ||
-    studentClass?.classMaster?.username ||
-    "";
+  const classMaster = await resolveClassMasterName(classId, academicYearId);
   const termLabel = termKeyToLabel(termKey);
-  const allCards = buildReportCardsFromMarks(marks, classMaster, termKey);
+  const settings = await resolveSchoolSettingsForYear(academicYearId);
+  const allCards = buildReportCardsFromMarks(marks, classMaster, termKey, settings.principal_name, settings);
 
   const card = allCards.find((c) => String(c.student.id) === String(studentId));
   if (!card) {
@@ -1633,7 +1911,8 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
     [card],
     termLabel,
     gradingScale,
-    logoBase64
+    logoBase64,
+    studentClass.is_orientation
   );
   const pdfBuffer = await generatePdfBuffer(docDef);
 
@@ -1647,6 +1926,66 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
   res.status(200).end(pdfBuffer);
 });
 
+// ── SINGLE STUDENT PDF, resolved by year (Student Detail page) ──
+//
+// The caller only knows studentId + which academic year they want — not
+// necessarily the classId/departmentId that year, which may not be the
+// student's CURRENT class if that year is archived and they've since
+// been promoted. Resolves both via the same shared logic the marks
+// editor and transcript use, then delegates to singlePdfDirect's actual
+// PDF-building logic rather than duplicating it.
+const singleStudentReportCardByYear = catchAsync(async (req, res, next) => {
+  const studentId = Number(req.params.id);
+  const academicYearId = Number(req.query.academic_year_id);
+  const term = req.query.term || "term3";
+
+  if (!academicYearId) {
+    return next(
+      new AppError("academic_year_id is required", StatusCodes.BAD_REQUEST)
+    );
+  }
+
+  const student = await models.Student.findByPk(studentId, {
+    attributes: ["id", "class_id", "academic_year_id", "specialty_id"],
+  });
+  if (!student) {
+    return next(new AppError("Student not found", StatusCodes.NOT_FOUND));
+  }
+
+  const classId = await resolveStudentClassForYear(student, academicYearId);
+  if (!classId) {
+    return next(
+      new AppError(
+        "This student has no known class for that academic year.",
+        StatusCodes.NOT_FOUND
+      )
+    );
+  }
+
+  const studentClass = await models.Class.findByPk(classId, {
+    attributes: ["id", "department_id"],
+  });
+  const departmentId = studentClass?.department_id || student.specialty_id;
+  if (!departmentId) {
+    return next(
+      new AppError(
+        "Could not determine this student's department for that academic year.",
+        StatusCodes.NOT_FOUND
+      )
+    );
+  }
+
+  req.query = {
+    ...req.query,
+    studentId: String(studentId),
+    academicYearId: String(academicYearId),
+    departmentId: String(departmentId),
+    classId: String(classId),
+    term,
+  };
+  return singlePdfDirect(req, res, next);
+});
+
 /* ═══════════════════════════════════════════════════════════════════
    EXPORTS
    ═══════════════════════════════════════════════════════════════════ */
@@ -1654,15 +1993,19 @@ const singlePdfDirect = catchAsync(async (req, res, next) => {
 module.exports = {
   bulkPdfDirect,
   singlePdfDirect,
+  singleStudentReportCardByYear,
   // Reused by reportCardSession.controller.js's chunked generator, see
   // that file for why generation is split into per-chunk documents
   // instead of one document for the whole class.
   printer,
   buildDocDefinition,
+  buildStudentPage,
+  getTermConfig,
   prepareGrading,
   loadLogoBase64,
   termKeyToLabel,
   resolveTermKey,
   fetchMarksWithIncludes,
   sanitize,
+  generatePdfBuffer,
 };

@@ -70,6 +70,21 @@ function validateSubjectData(data, partial = false) {
     }
   }
 
+  if (
+    "orientation_department_id" in data &&
+    data.orientation_department_id !== null &&
+    data.orientation_department_id !== undefined &&
+    data.orientation_department_id !== ""
+  ) {
+    if (!Number.isInteger(Number(data.orientation_department_id))) {
+      errors.push("orientation_department_id must be a valid department id or null");
+    }
+  }
+  // Normalize "" (a cleared react-select value serialized through a plain
+  // form) to null so the update actually clears the column instead of
+  // Sequelize rejecting an empty string against an INTEGER column.
+  if (data.orientation_department_id === "") data.orientation_department_id = null;
+
   if (errors.length > 0) {
     throw new AppError(errors.join("; "), StatusCodes.BAD_REQUEST);
   }
@@ -85,6 +100,7 @@ const include = [
       { association: ClassSubjectModel.associations.department },
     ],
   },
+  { association: SubjectModel.associations.orientationDepartment },
 ];
 
 // Controller methods

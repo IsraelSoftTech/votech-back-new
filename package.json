@@ -8,7 +8,9 @@
     "dev": "cross-env NODE_ENV=development PORT=5000 nodemon index.js",
     "load-schema": "node load-schema.js",
     "create-admin": "node create-admin.js",
-    "postinstall": "node scripts/ensureQpdf.js"
+    "postinstall": "node scripts/ensureQpdf.js",
+    "db:migrate": "node -r dotenv/config node_modules/sequelize-cli/lib/sequelize db:migrate",
+    "db:migrate:status": "node -r dotenv/config node_modules/sequelize-cli/lib/sequelize db:migrate:status"
   },
   "dependencies": {
     "20": "^3.1.9",

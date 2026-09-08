@@ -44,6 +44,11 @@ const academic_year_grants = require("./AcademicYearGrant.model")(
   sequelize,
   DataTypes
 );
+const school_settings = require("./SchoolSetting.model")(sequelize, DataTypes);
+const school_setting_years = require("./SchoolSettingYear.model")(sequelize, DataTypes);
+const class_master_assignments = require("./ClassMasterAssignment.model")(sequelize, DataTypes);
+const subject_year_settings = require("./SubjectYearSetting.model")(sequelize, DataTypes);
+const class_year_settings = require("./ClassYearSetting.model")(sequelize, DataTypes);
 const report_card_sessions = require("./ReportCardSession.model")(
   sequelize,
   DataTypes
@@ -658,6 +663,17 @@ GroupParticipant.belongsTo(Group, {
   as: "group",
 });
 
+// User (as teacher) <-> ClassSubject. ClassSubject.model.js already
+// declares the belongsTo side (`teacher`), but `users.js` is a plain
+// sequelize.define export with no static associate method for the
+// class-based auto-wiring below to call, so the reverse hasMany needs to
+// live here instead, same as the other inline-model associations above.
+// Powers the teacher detail page's "classes & subjects taught" list.
+users.hasMany(ClassSubject, {
+  foreignKey: "teacher_id",
+  as: "teachingAssignments",
+});
+
 const models = {
   // From existing model files
   Subject,
@@ -687,6 +703,11 @@ const models = {
   StudentDepartmentChoice: student_department_choices,
   AcademicJobNotification: academic_job_notifications,
   AcademicYearGrant: academic_year_grants,
+  SchoolSetting: school_settings,
+  SchoolSettingYear: school_setting_years,
+  ClassMasterAssignment: class_master_assignments,
+  SubjectYearSetting: subject_year_settings,
+  ClassYearSetting: class_year_settings,
   ChangeLog: change_logs,
   SystemMode: system_mode,
   DbSwapLog: db_swap_logs,
@@ -754,5 +775,71 @@ const { attachYearLockHooks } = require("../utils/yearLock.util");
 attachYearLockHooks(models.Mark);
 attachYearLockHooks(models.Student);
 attachYearLockHooks(models.PromotionRequirement);
+attachYearLockHooks(models.ClassSubject);
+attachYearLockHooks(models.ClassMasterAssignment);
+// AcademicBand carries an academic_year_id but was never locked, so an
+// archived year's grading bands and their comments could be rewritten
+// without a grant while the marks they grade could not. Same rule now.
+attachYearLockHooks(models.AcademicBand);
+attachYearLockHooks(models.SubjectYearSetting);
+attachYearLockHooks(models.ClassYearSetting);
+attachYearLockHooks(models.SchoolSettingYear);
+
+// Keep the active year's scoped record in step with the live "current
+// value" fields. Attached as model hooks rather than inside each
+// controller so every write path is covered (the shared CRUD helper, the
+// promotion engine, a migration, a console script), the same way
+// class.controller.js keeps class_master_assignments in sync when
+// classes.class_master_id changes.
+//
+// Only ever writes the ACTIVE year. Editing an archived year stays the
+// exclusive job of that year's own editor, under a grant.
+const { syncActiveYearSetting } = require("../utils/yearScopedSettings.util");
+
+function attachActiveYearSync(Model, buildSync) {
+  const run = async (instance, options) => {
+    if (options?.skipActiveYearSync) return;
+    try {
+      await buildSync(instance);
+    } catch (err) {
+      // A failed mirror must never fail the user's actual edit — the
+      // resolvers all fall back to the live value when a year has no
+      // scoped row, so the worst case is this year keeps using the live
+      // value until the next successful write.
+      console.warn(
+        `[activeYearSync] ${Model.name} #${instance?.id}: ${err.message}`
+      );
+    }
+  };
+  Model.addHook("afterCreate", run);
+  Model.addHook("afterUpdate", run);
+}
+
+attachActiveYearSync(models.Subject, (subject) =>
+  syncActiveYearSetting(
+    models.SubjectYearSetting,
+    { subject_id: subject.id },
+    { coefficient: subject.coefficient, category: subject.category }
+  )
+);
+
+attachActiveYearSync(models.Class, (cls) =>
+  syncActiveYearSetting(
+    models.ClassYearSetting,
+    { class_id: cls.id },
+    { name: cls.name, department_id: cls.department_id }
+  )
+);
+
+attachActiveYearSync(models.SchoolSetting, (settings) =>
+  syncActiveYearSetting(
+    models.SchoolSettingYear,
+    {},
+    {
+      school_name: settings.school_name,
+      principal_name: settings.principal_name,
+    }
+  )
+);
 
 module.exports = models;
