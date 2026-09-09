@@ -12,6 +12,7 @@ const {
   JWT_SECRET,
 } = require("./utils");
 const { getActiveYear } = require("../src/services/activeAcademicYear.service");
+const { getHodAssignment } = require("../src/services/hodStatus.service");
 
 const router = express.Router();
 
@@ -147,6 +148,26 @@ router.post("/login", async (req, res) => {
       console.warn("Login: could not resolve active academic year", activeYearError.message);
     }
 
+    let hodAssignment = {
+      hod_status: "none",
+      is_hod: false,
+      hod_id: null,
+      hod_department_name: null,
+      hod_department_id: null,
+    };
+    try {
+      const hod = await getHodAssignment(pool, user.id);
+      hodAssignment = {
+        hod_status: hod.hod_status,
+        is_hod: hod.is_hod,
+        hod_id: hod.hod_id,
+        hod_department_name: hod.department_name,
+        hod_department_id: hod.department_id,
+      };
+    } catch (hodError) {
+      console.warn("Login: could not resolve HOD status", hodError.message);
+    }
+
     res.json({
       token,
       user: {
@@ -157,6 +178,7 @@ router.post("/login", async (req, res) => {
         contact: user.contact,
         email: user.email,
         active_year_id: activeYearId,
+        ...hodAssignment,
       },
     });
   } catch (error) {

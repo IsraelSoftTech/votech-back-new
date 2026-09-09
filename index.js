@@ -185,6 +185,15 @@ async function runMigrations() {
 
   try {
     const {
+      run: runStudentIdCardsStep3,
+    } = require("./src/db/migrations/studentIdCards.step3");
+    await runStudentIdCardsStep3(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (student id cards step 3):", err.message);
+  }
+
+  try {
+    const {
       run: runStudentAttendanceStep1,
     } = require("./src/db/migrations/studentAttendance.step1");
     await runStudentAttendanceStep1(pool);
