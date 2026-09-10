@@ -1264,13 +1264,10 @@ module.exports = {
   updateAcademicYear,
   deleteAcademicYear,
   switchAcademicYear,
-<<<<<<< HEAD
   rolloverAcademicYear,
   reactivateAcademicYear,
   getActiveAcademicYear,
   getAcademicYearContext,
   getAcademicYearSwitchLogs,
-=======
   carryForwardAssignments,
->>>>>>> feature/student-promotion-and-academic-year-updates
 };

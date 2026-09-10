@@ -5,6 +5,9 @@ const academicYearControllers = require("../controllers/accademicYear.controller
 
 const { protect, restrictTo } = require("../controllers/auth.controller");
 const { attachRequestContext } = require("../utils/requestContext.util");
+const {
+  academicYearSwitchRateLimit,
+} = require("../middleware/academicYearSwitchRateLimit.middleware");
 const AppError = require("../utils/AppError");
 
 (async () => {

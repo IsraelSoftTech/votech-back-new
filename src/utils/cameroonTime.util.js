@@ -63,14 +63,29 @@ function formatTime12h(date, timeZone = CAMEROON_TZ) {
 }
 
 function formatDateDisplay(dateStr) {
-  if (!dateStr) return "—";
-  const d = new Date(`${dateStr}T12:00:00`);
-  if (Number.isNaN(d.getTime())) return dateStr;
-  return d.toLocaleDateString("en-GB", {
+  if (dateStr == null || dateStr === "") return "—";
+
+  let d;
+  if (dateStr instanceof Date) {
+    d = dateStr;
+  } else {
+    const s = String(dateStr).trim();
+    const day = s.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (day && !s.includes("T") && s.length <= 10) {
+      d = new Date(`${day[1]}T12:00:00`);
+    } else {
+      d = new Date(s);
+    }
+  }
+
+  if (Number.isNaN(d.getTime())) return String(dateStr);
+
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: CAMEROON_TZ,
     day: "2-digit",
     month: "short",
     year: "numeric",
-  });
+  }).format(d);
 }
 
 /** Minutes since midnight in Cameroon for the given instant. */
