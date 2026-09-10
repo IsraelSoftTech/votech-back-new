@@ -3,8 +3,67 @@ const router = express.Router();
 
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
 
+const ALL_SENTINEL = "__ALL__";
+
+function parseSelectAllFlag(body) {
+  if (!body) return false;
+  if (body.selectAllUsers === true || body.selectAllUsers === "true") {
+    return true;
+  }
+  const participants = body.participants;
+  if (participants === ALL_SENTINEL) return true;
+  if (
+    Array.isArray(participants) &&
+    participants.length === 1 &&
+    participants[0] === ALL_SENTINEL
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function participantsToCsv(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .join(", ");
+  }
+  return value == null ? "" : String(value);
+}
+
+async function resolveParticipantsCsv(pool, body) {
+  // Snapshot at create/update time. Users added later are not auto-included.
+  if (parseSelectAllFlag(body)) {
+    const { rows } = await pool.query(`
+      SELECT username
+      FROM users
+      WHERE COALESCE(suspended, false) = false
+        AND username IS NOT NULL
+        AND TRIM(username) <> ''
+      ORDER BY username
+    `);
+    return rows.map((row) => row.username).join(", ");
+  }
+  return participantsToCsv(body?.participants);
+}
+
+function decorateEvent(row) {
+  if (!row) return row;
+  const list = row.participants
+    ? String(row.participants)
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean)
+    : [];
+  return {
+    ...row,
+    participant_count: list.length,
+    participants_list: list,
+  };
+}
+
 function createEventsRouter(pool, authenticateToken) {
-  // Get all events
   router.get("/", authenticateToken, async (req, res) => {
     try {
       const result = await pool.query(`
@@ -13,14 +72,52 @@ function createEventsRouter(pool, authenticateToken) {
         LEFT JOIN users u ON e.created_by = u.id 
         ORDER BY e.event_date DESC, e.event_time DESC
       `);
-      res.json(result.rows);
+      res.json(result.rows.map(decorateEvent));
     } catch (error) {
       console.error("Error fetching events:", error);
       res.status(500).json({ error: "Failed to fetch events" });
     }
   });
 
-  // Get events by date range
+  router.get("/users", authenticateToken, async (req, res) => {
+    try {
+      const allowedRoles = [
+        "Admin1",
+        "Admin2",
+        "Admin3",
+        "Admin4",
+        "Discipline",
+      ];
+      if (!allowedRoles.includes(req.user.role)) {
+        return res
+          .status(403)
+          .json({ error: "You are not authorized to list event users" });
+      }
+
+      const search = String(req.query.q || "").trim();
+      const params = [];
+      let where = "WHERE COALESCE(suspended, false) = false";
+      if (search) {
+        params.push(`%${search}%`);
+        where += ` AND (name ILIKE $${params.length} OR username ILIKE $${params.length} OR COALESCE(role, '') ILIKE $${params.length})`;
+      }
+
+      const result = await pool.query(
+        `
+        SELECT id, name, username, role
+        FROM users
+        ${where}
+        ORDER BY name, username
+        `,
+        params
+      );
+      res.json(result.rows);
+    } catch (error) {
+      console.error("Error fetching event users:", error);
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
   router.get("/range", authenticateToken, async (req, res) => {
     try {
       const { start_date, end_date } = req.query;
@@ -41,20 +138,15 @@ function createEventsRouter(pool, authenticateToken) {
       `,
         [start_date, end_date]
       );
-
-      res.json(result.rows);
+      res.json(result.rows.map(decorateEvent));
     } catch (error) {
       console.error("Error fetching events by range:", error);
       res.status(500).json({ error: "Failed to fetch events" });
     }
   });
 
-  // Get events for a specific user (participant)
   router.get("/my-events", authenticateToken, async (req, res) => {
     try {
-      const userId = req.user.id;
-
-      // Get events where the user is a participant
       const result = await pool.query(
         `
         SELECT e.*, u.username as created_by_name 
@@ -70,14 +162,13 @@ function createEventsRouter(pool, authenticateToken) {
         ]
       );
 
-      res.json(result.rows);
+      res.json(result.rows.map(decorateEvent));
     } catch (error) {
       console.error("Error fetching user events:", error);
       res.status(500).json({ error: "Failed to fetch user events" });
     }
   });
 
-  // Get upcoming events
   router.get("/upcoming", authenticateToken, async (req, res) => {
     try {
       const result = await pool.query(`
@@ -88,14 +179,13 @@ function createEventsRouter(pool, authenticateToken) {
         ORDER BY e.event_date ASC, e.event_time ASC
         LIMIT 10
       `);
-      res.json(result.rows);
+      res.json(result.rows.map(decorateEvent));
     } catch (error) {
       console.error("Error fetching upcoming events:", error);
       res.status(500).json({ error: "Failed to fetch upcoming events" });
     }
   });
 
-  // Get event statistics
   router.get("/stats", authenticateToken, async (req, res) => {
     try {
       const totalResult = await pool.query(
@@ -117,10 +207,8 @@ function createEventsRouter(pool, authenticateToken) {
     }
   });
 
-  // Create a new event
   router.post("/", authenticateToken, async (req, res) => {
     try {
-      // Allow only Admin1-Admin4 and Discipline to create events
       const allowedRoles = [
         "Admin1",
         "Admin2",
@@ -134,34 +222,24 @@ function createEventsRouter(pool, authenticateToken) {
           .json({ error: "You are not authorized to create events" });
       }
 
-      const {
-        title,
-        description,
-        event_type,
-        event_date,
-        event_time,
-        participants,
-      } = req.body;
+      const { title, description, event_type, event_date, event_time } =
+        req.body;
       const created_by = req.user.id;
+      const participants = await resolveParticipantsCsv(pool, req.body);
 
-      // Validate required fields
       if (!title || !event_type || !event_date || !event_time) {
         return res
           .status(400)
           .json({ error: "Title, event type, date, and time are required" });
       }
 
-      // Validate event type
       const validTypes = ["Meeting", "Class", "Others"];
       if (!validTypes.includes(event_type)) {
-        return res
-          .status(400)
-          .json({
-            error: "Invalid event type. Must be Meeting, Class, or Others",
-          });
+        return res.status(400).json({
+          error: "Invalid event type. Must be Meeting, Class, or Others",
+        });
       }
 
-      // Check if an event already exists on this date
       const existingEvent = await pool.query(
         `
         SELECT id, title FROM events WHERE event_date = $1
@@ -200,27 +278,20 @@ function createEventsRouter(pool, authenticateToken) {
         ChangeTypes.create,
         req.user
       );
-      res.status(201).json(result.rows[0]);
+      res.status(201).json(decorateEvent(result.rows[0]));
     } catch (error) {
       console.error("Error creating event:", error);
       res.status(500).json({ error: "Failed to create event" });
     }
   });
 
-  // Update an event
   router.put("/:id", authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
-      const {
-        title,
-        description,
-        event_type,
-        event_date,
-        event_time,
-        participants,
-      } = req.body;
+      const { title, description, event_type, event_date, event_time } =
+        req.body;
+      const participants = await resolveParticipantsCsv(pool, req.body);
 
-      // Check if user is the creator of this event
       const eventCheck = await pool.query(
         "SELECT * FROM events WHERE id = $1",
         [id]
@@ -234,21 +305,17 @@ function createEventsRouter(pool, authenticateToken) {
           .json({ error: "You can only edit events you created" });
       }
 
-      // Validate required fields
       if (!title || !event_type || !event_date || !event_time) {
         return res
           .status(400)
           .json({ error: "Title, event type, date, and time are required" });
       }
 
-      // Validate event type
       const validTypes = ["Meeting", "Class", "Others"];
       if (!validTypes.includes(event_type)) {
-        return res
-          .status(400)
-          .json({
-            error: "Invalid event type. Must be Meeting, Class, or Others",
-          });
+        return res.status(400).json({
+          error: "Invalid event type. Must be Meeting, Class, or Others",
+        });
       }
 
       const result = await pool.query(
@@ -310,19 +377,17 @@ function createEventsRouter(pool, authenticateToken) {
         req.user,
         fieldsChanged
       );
-      res.json(result.rows[0]);
+      res.json(decorateEvent(result.rows[0]));
     } catch (error) {
       console.error("Error updating event:", error);
       res.status(500).json({ error: "Failed to update event" });
     }
   });
 
-  // Delete an event
   router.delete("/:id", authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
 
-      // Check if user is the creator of this event
       const eventCheck = await pool.query(
         "SELECT created_by FROM events WHERE id = $1",
         [id]
@@ -353,7 +418,6 @@ function createEventsRouter(pool, authenticateToken) {
     }
   });
 
-  // Get a single event by ID
   router.get("/:id", authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
@@ -372,7 +436,7 @@ function createEventsRouter(pool, authenticateToken) {
         return res.status(404).json({ error: "Event not found" });
       }
 
-      res.json(result.rows[0]);
+      res.json(decorateEvent(result.rows[0]));
     } catch (error) {
       console.error("Error fetching event:", error);
       res.status(500).json({ error: "Failed to fetch event" });

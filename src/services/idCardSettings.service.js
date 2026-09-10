@@ -9,6 +9,7 @@ const DEFAULTS = {
   motto_en: "PEACE - WORK - FATHERLAND",
   card_title: "STUDENT ID CARD",
   qr_caption: "Scan for attendance",
+  stamp_url: null,
 };
 
 async function ensureSettingsTable() {
@@ -21,9 +22,15 @@ async function ensureSettingsTable() {
       motto_en VARCHAR(255) NOT NULL DEFAULT 'PEACE - WORK - FATHERLAND',
       card_title VARCHAR(120) NOT NULL DEFAULT 'STUDENT ID CARD',
       qr_caption VARCHAR(120) NOT NULL DEFAULT 'Scan for attendance',
+      stamp_url TEXT,
       updated_at TIMESTAMPTZ DEFAULT NOW(),
       updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE id_card_settings
+      ADD COLUMN IF NOT EXISTS stamp_url TEXT
   `);
 
   await pool.query(`
@@ -33,16 +40,24 @@ async function ensureSettingsTable() {
   `);
 }
 
+function mapSettings(row) {
+  return {
+    ...DEFAULTS,
+    ...(row || {}),
+    stamp_url: row?.stamp_url || null,
+  };
+}
+
 async function getIdCardSettings() {
   await ensureSettingsTable();
   const { rows } = await pool.query(`SELECT * FROM id_card_settings WHERE id = 1`);
-  return { ...DEFAULTS, ...(rows[0] || {}) };
+  return mapSettings(rows[0]);
 }
 
 async function updateIdCardSettings(payload, userId = null) {
   await ensureSettingsTable();
 
-  const fields = [
+  const textFields = [
     "school_name",
     "motto",
     "motto_fr",
@@ -55,7 +70,7 @@ async function updateIdCardSettings(payload, userId = null) {
   const vals = [];
   let idx = 0;
 
-  fields.forEach((key) => {
+  textFields.forEach((key) => {
     if (payload[key] !== undefined && payload[key] !== null) {
       idx += 1;
       sets.push(`${key} = $${idx}`);
@@ -63,22 +78,27 @@ async function updateIdCardSettings(payload, userId = null) {
     }
   });
 
+  if (Object.prototype.hasOwnProperty.call(payload, "stamp_url")) {
+    idx += 1;
+    sets.push(`stamp_url = $${idx}::text`);
+    vals.push(payload.stamp_url ? String(payload.stamp_url).trim() : null);
+  }
+
   if (!sets.length) {
     return getIdCardSettings();
   }
 
+  sets.push("updated_at = NOW()");
   idx += 1;
-  sets.push(`updated_at = NOW()`);
-  idx += 1;
-  sets.push(`updated_by = $${idx}`);
-  vals.push(userId);
+  sets.push(`updated_by = $${idx}::integer`);
+  vals.push(userId ?? null);
 
   const { rows } = await pool.query(
     `UPDATE id_card_settings SET ${sets.join(", ")} WHERE id = 1 RETURNING *`,
     vals
   );
 
-  return { ...DEFAULTS, ...(rows[0] || {}) };
+  return mapSettings(rows[0]);
 }
 
 module.exports = {

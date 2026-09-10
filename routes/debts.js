@@ -3,13 +3,13 @@ const { pool, authenticateToken } = require("./utils");
 
 const router = express.Router();
 
-const FINANCE_ROLES = ["Admin1", "Admin2", "Admin3"];
+const DEBT_ROLES = ["Admin2"];
 const DEBT_TYPES = ["owed_by_school", "owed_to_school"];
 const DEBT_STATUSES = ["open", "partial", "paid", "written_off"];
 
 function requireFinanceAccess(req, res, next) {
-  if (!FINANCE_ROLES.includes(req.user?.role)) {
-    return res.status(403).json({ error: "Access denied. Finance admin only." });
+  if (!DEBT_ROLES.includes(req.user?.role)) {
+    return res.status(403).json({ error: "Access denied. Admin2 only." });
   }
   next();
 }

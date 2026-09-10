@@ -4,83 +4,141 @@ const { pool } = require("./utils");
 const { authenticateToken } = require("./utils");
 
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+const {
+  getHodAssignment,
+  syncHodUserStatus,
+} = require("../src/services/hodStatus.service");
 
-// Get all HODs with related data
+const HOD_MANAGER_ROLES = ["Admin4"];
+
+function assertHodManager(req, res) {
+  if (!HOD_MANAGER_ROLES.includes(req.user?.role)) {
+    res.status(403).json({ error: "Only Admin4 can manage HODs" });
+    return false;
+  }
+  return true;
+}
+
+function decorateHod(row) {
+  if (!row) return row;
+  const suspended = row.suspended === true || row.suspended === "t";
+  return {
+    ...row,
+    suspended,
+    hod_status: suspended ? "suspended" : "active",
+  };
+}
+
+const HOD_DETAIL_SQL = `
+  SELECT
+    h.*,
+    u.id as hod_user_id,
+    u.name as hod_user_name,
+    u.username as hod_username,
+    s.id as subject_id,
+    s.name as subject_name,
+    s.code as subject_code,
+    sp.id as department_id
+  FROM hods h
+  LEFT JOIN users u ON h.hod_user_id = u.id
+  LEFT JOIN subjects s ON h.subject_id = s.id
+  LEFT JOIN specialties sp ON LOWER(TRIM(sp.name)) = LOWER(TRIM(h.department_name))
+  WHERE h.id = $1
+`;
+
+async function fetchHodDetail(hodId) {
+  const result = await pool.query(HOD_DETAIL_SQL, [hodId]);
+  return result.rows[0] ? decorateHod(result.rows[0]) : null;
+}
+
+router.get("/me", authenticateToken, async (req, res) => {
+  try {
+    const assignment = await getHodAssignment(pool, req.user.id);
+    res.json(assignment);
+  } catch (error) {
+    console.error("Error fetching current HOD status:", error);
+    res.status(500).json({ error: "Failed to fetch HOD status" });
+  }
+});
+
+router.get("/stats/overview", authenticateToken, async (req, res) => {
+  try {
+    const statsQuery = `
+      SELECT
+        COUNT(*) as total_hods,
+        COUNT(CASE WHEN suspended = true THEN 1 END) as suspended_hods,
+        COUNT(CASE WHEN suspended = false THEN 1 END) as active_hods
+      FROM hods
+    `;
+    const statsResult = await pool.query(statsQuery);
+    res.json(statsResult.rows[0]);
+  } catch (error) {
+    console.error("Error fetching HOD stats:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 router.get("/", authenticateToken, async (req, res) => {
   try {
     const query = `
-            SELECT 
-                h.id,
-                h.department_name,
-                h.suspended,
-                h.created_at,
-                h.updated_at,
-                u.id as hod_user_id,
-                u.name as hod_user_name,
-                u.username as hod_username,
-                s.id as subject_id,
-                s.name as subject_name,
-                s.code as subject_code,
-                COUNT(ht.teacher_id) as teacher_count
-            FROM hods h
-            LEFT JOIN users u ON h.hod_user_id = u.id
-            LEFT JOIN subjects s ON h.subject_id = s.id
-            LEFT JOIN hod_teachers ht ON h.id = ht.hod_id
-            GROUP BY h.id, u.id, u.name, u.username, s.id, s.name, s.code
-            ORDER BY h.created_at DESC
-        `;
-
+      SELECT
+        h.id,
+        h.department_name,
+        h.suspended,
+        h.created_at,
+        h.updated_at,
+        u.id as hod_user_id,
+        u.name as hod_user_name,
+        u.username as hod_username,
+        s.id as subject_id,
+        s.name as subject_name,
+        s.code as subject_code,
+        sp.id as department_id,
+        COUNT(ht.teacher_id) as teacher_count
+      FROM hods h
+      LEFT JOIN users u ON h.hod_user_id = u.id
+      LEFT JOIN subjects s ON h.subject_id = s.id
+      LEFT JOIN specialties sp ON LOWER(TRIM(sp.name)) = LOWER(TRIM(h.department_name))
+      LEFT JOIN hod_teachers ht ON h.id = ht.hod_id
+      GROUP BY h.id, u.id, u.name, u.username, s.id, s.name, s.code, sp.id
+      ORDER BY h.created_at DESC
+    `;
     const result = await pool.query(query);
-    res.json(result.rows);
+    res.json(result.rows.map(decorateHod));
   } catch (error) {
     console.error("Error fetching HODs:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Get HOD by ID with teachers
 router.get("/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    if (!/^\d+$/.test(String(id))) {
+      return res.status(400).json({ error: "Invalid HOD id" });
+    }
 
-    // Get HOD details
-    const hodQuery = `
-            SELECT 
-                h.*,
-                u.name as hod_user_name,
-                u.username as hod_username,
-                s.name as subject_name,
-                s.code as subject_code
-            FROM hods h
-            LEFT JOIN users u ON h.hod_user_id = u.id
-            LEFT JOIN subjects s ON h.subject_id = s.id
-            WHERE h.id = $1
-        `;
-
-    const hodResult = await pool.query(hodQuery, [id]);
-
-    if (hodResult.rows.length === 0) {
+    const hod = await fetchHodDetail(id);
+    if (!hod) {
       return res.status(404).json({ error: "HOD not found" });
     }
 
-    // Get teachers under this HOD
-    const teachersQuery = `
-            SELECT 
-                u.id,
-                u.name,
-                u.username,
-                u.email,
-                u.role
-            FROM hod_teachers ht
-            JOIN users u ON ht.teacher_id = u.id
-            WHERE ht.hod_id = $1
-        `;
+    const teachersResult = await pool.query(
+      `
+      SELECT
+        u.id,
+        u.name,
+        u.username,
+        u.email,
+        u.role
+      FROM hod_teachers ht
+      JOIN users u ON ht.teacher_id = u.id
+      WHERE ht.hod_id = $1
+      `,
+      [id]
+    );
 
-    const teachersResult = await pool.query(teachersQuery, [id]);
-
-    const hod = hodResult.rows[0];
     hod.teachers = teachersResult.rows;
-
     res.json(hod);
   } catch (error) {
     console.error("Error fetching HOD:", error);
@@ -88,41 +146,50 @@ router.get("/:id", authenticateToken, async (req, res) => {
   }
 });
 
-// Create new HOD
 router.post("/", authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
+    if (!assertHodManager(req, res)) return;
+
     await client.query("BEGIN");
 
     const { department_name, hod_user_id, subject_id, teacher_ids } = req.body;
 
-    // Validate required fields (subject now optional)
     if (!department_name || !hod_user_id) {
+      await client.query("ROLLBACK");
       return res
         .status(400)
         .json({ error: "Department name and HOD user are required" });
     }
 
-    // Check if department already exists
     const existingDept = await client.query(
-      "SELECT id FROM hods WHERE department_name = $1",
+      "SELECT id FROM hods WHERE LOWER(TRIM(department_name)) = LOWER(TRIM($1))",
       [department_name]
     );
-
     if (existingDept.rows.length > 0) {
-      return res.status(400).json({ error: "Department already exists" });
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Department already has an HOD" });
     }
 
-    // Create HOD
+    const existingUser = await client.query(
+      "SELECT id FROM hods WHERE hod_user_id = $1",
+      [hod_user_id]
+    );
+    if (existingUser.rows.length > 0) {
+      await client.query("ROLLBACK");
+      return res
+        .status(400)
+        .json({ error: "This user is already assigned as an HOD" });
+    }
+
     const hodResult = await client.query(
-      `INSERT INTO hods (department_name, hod_user_id, subject_id) 
-             VALUES ($1, $2, $3) RETURNING *`,
+      `INSERT INTO hods (department_name, hod_user_id, subject_id, suspended)
+       VALUES ($1, $2, $3, false) RETURNING *`,
       [department_name, hod_user_id, subject_id || null]
     );
 
     const hod = hodResult.rows[0];
 
-    // Add teachers if provided
     if (teacher_ids && teacher_ids.length > 0) {
       for (const teacher_id of teacher_ids) {
         await client.query(
@@ -134,23 +201,10 @@ router.post("/", authenticateToken, async (req, res) => {
 
     await client.query("COMMIT");
 
-    // Return the created HOD with full details
-    const fullHodQuery = `
-            SELECT 
-                h.*,
-                u.name as hod_user_name,
-                u.username as hod_username,
-                s.name as subject_name,
-                s.code as subject_code
-            FROM hods h
-            LEFT JOIN users u ON h.hod_user_id = u.id
-            LEFT JOIN subjects s ON h.subject_id = s.id
-            WHERE h.id = $1
-        `;
-
-    const fullHodResult = await pool.query(fullHodQuery, [hod.id]);
+    const fullHod = await fetchHodDetail(hod.id);
     await logChanges("hods", hod.id, ChangeTypes.create, req.user);
-    res.status(201).json(fullHodResult.rows[0]);
+    await syncHodUserStatus(pool, hod_user_id);
+    res.status(201).json(fullHod);
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Error creating HOD:", error);
@@ -160,35 +214,59 @@ router.post("/", authenticateToken, async (req, res) => {
   }
 });
 
-// Update HOD
 router.put("/:id", authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
+    if (!assertHodManager(req, res)) return;
+
     await client.query("BEGIN");
 
     const { id } = req.params;
     const { department_name, hod_user_id, subject_id, teacher_ids } = req.body;
 
-    // Check if HOD exists
     const existingHod = await client.query("SELECT * FROM hods WHERE id = $1", [
       id,
     ]);
     if (existingHod.rows.length === 0) {
+      await client.query("ROLLBACK");
       return res.status(404).json({ error: "HOD not found" });
     }
 
-    // Update HOD
+    const oldHod = existingHod.rows[0];
+
+    if (department_name) {
+      const existingDept = await client.query(
+        "SELECT id FROM hods WHERE LOWER(TRIM(department_name)) = LOWER(TRIM($1)) AND id <> $2",
+        [department_name, id]
+      );
+      if (existingDept.rows.length > 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "Department already has an HOD" });
+      }
+    }
+
+    if (hod_user_id && String(hod_user_id) !== String(oldHod.hod_user_id)) {
+      const existingUser = await client.query(
+        "SELECT id FROM hods WHERE hod_user_id = $1 AND id <> $2",
+        [hod_user_id, id]
+      );
+      if (existingUser.rows.length > 0) {
+        await client.query("ROLLBACK");
+        return res
+          .status(400)
+          .json({ error: "This user is already assigned as an HOD" });
+      }
+    }
+
     const updateResult = await client.query(
-      `UPDATE hods 
-             SET department_name = $1, hod_user_id = $2, subject_id = $3, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $4 RETURNING *`,
+      `UPDATE hods
+       SET department_name = $1, hod_user_id = $2, subject_id = $3, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $4 RETURNING *`,
       [department_name, hod_user_id, subject_id || null, id]
     );
 
-    // Remove existing teachers
     await client.query("DELETE FROM hod_teachers WHERE hod_id = $1", [id]);
 
-    // Add new teachers if provided
     if (teacher_ids && teacher_ids.length > 0) {
       for (const teacher_id of teacher_ids) {
         await client.query(
@@ -200,41 +278,32 @@ router.put("/:id", authenticateToken, async (req, res) => {
 
     await client.query("COMMIT");
 
-    // Return updated HOD with full details
-    const fullHodQuery = `
-            SELECT 
-                h.*,
-                u.name as hod_user_name,
-                u.username as hod_username,
-                s.name as subject_name,
-                s.code as subject_code
-            FROM hods h
-            LEFT JOIN users u ON h.hod_user_id = u.id
-            LEFT JOIN subjects s ON h.subject_id = s.id
-            WHERE h.id = $1
-        `;
-
-    const fullHodResult = await pool.query(fullHodQuery, [id]);
+    const fullHod = await fetchHodDetail(id);
     const fieldsChanged = {};
-    const old = existingHod.rows[0];
     const updated = updateResult.rows[0];
-    if (old.department_name !== updated.department_name)
+    if (oldHod.department_name !== updated.department_name)
       fieldsChanged.department_name = {
-        before: old.department_name,
+        before: oldHod.department_name,
         after: updated.department_name,
       };
-    if (old.hod_user_id !== updated.hod_user_id)
+    if (oldHod.hod_user_id !== updated.hod_user_id)
       fieldsChanged.hod_user_id = {
-        before: old.hod_user_id,
+        before: oldHod.hod_user_id,
         after: updated.hod_user_id,
       };
-    if (old.subject_id !== updated.subject_id)
+    if (oldHod.subject_id !== updated.subject_id)
       fieldsChanged.subject_id = {
-        before: old.subject_id,
+        before: oldHod.subject_id,
         after: updated.subject_id,
       };
     await logChanges("hods", id, ChangeTypes.update, req.user, fieldsChanged);
-    res.json(fullHodResult.rows[0]);
+
+    if (String(oldHod.hod_user_id) !== String(hod_user_id)) {
+      await syncHodUserStatus(pool, oldHod.hod_user_id);
+    }
+    await syncHodUserStatus(pool, hod_user_id);
+
+    res.json(fullHod);
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Error updating HOD:", error);
@@ -244,11 +313,11 @@ router.put("/:id", authenticateToken, async (req, res) => {
   }
 });
 
-// Toggle HOD suspension status
 router.patch("/:id/toggle-suspension", authenticateToken, async (req, res) => {
   try {
-    const { id } = req.params;
+    if (!assertHodManager(req, res)) return;
 
+    const { id } = req.params;
     const oldRecord = await pool.query("SELECT * FROM hods WHERE id = $1", [
       id,
     ]);
@@ -257,9 +326,9 @@ router.patch("/:id/toggle-suspension", authenticateToken, async (req, res) => {
     }
 
     const result = await pool.query(
-      `UPDATE hods 
-             SET suspended = NOT suspended, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $1 RETURNING *`,
+      `UPDATE hods
+       SET suspended = NOT suspended, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 RETURNING *`,
       [id]
     );
 
@@ -276,64 +345,52 @@ router.patch("/:id/toggle-suspension", authenticateToken, async (req, res) => {
         after: updated.suspended,
       };
     await logChanges("hods", id, ChangeTypes.update, req.user, fieldsChanged);
-    res.json(result.rows[0]);
+
+    const assignment = await syncHodUserStatus(pool, updated.hod_user_id);
+    const fullHod = await fetchHodDetail(id);
+    res.json({ ...fullHod, ...assignment });
   } catch (error) {
     console.error("Error toggling HOD suspension:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Delete HOD
 router.delete("/:id", authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
+    if (!assertHodManager(req, res)) return;
+
     await client.query("BEGIN");
 
     const { id } = req.params;
-
-    // Check if HOD exists
     const existingHod = await client.query(
-      "SELECT id FROM hods WHERE id = $1",
+      "SELECT * FROM hods WHERE id = $1",
       [id]
     );
     if (existingHod.rows.length === 0) {
+      await client.query("ROLLBACK");
       return res.status(404).json({ error: "HOD not found" });
     }
 
-    // Delete teachers first (due to foreign key constraint)
-    await client.query("DELETE FROM hod_teachers WHERE hod_id = $1", [id]);
+    const hodUserId = existingHod.rows[0].hod_user_id;
 
-    // Delete HOD
+    await client.query("DELETE FROM hod_teachers WHERE hod_id = $1", [id]);
     await client.query("DELETE FROM hods WHERE id = $1", [id]);
 
     await client.query("COMMIT");
     await logChanges("hods", id, ChangeTypes.delete, req.user);
-    res.json({ message: "HOD deleted successfully" });
+    await syncHodUserStatus(pool, hodUserId);
+    res.json({
+      message: "HOD deleted successfully",
+      hod_status: "none",
+      hod_user_id: hodUserId,
+    });
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Error deleting HOD:", error);
     res.status(500).json({ error: "Internal server error" });
   } finally {
     client.release();
-  }
-});
-
-// Get HOD statistics
-router.get("/stats/overview", authenticateToken, async (req, res) => {
-  try {
-    const statsQuery = `
-            SELECT 
-                COUNT(*) as total_hods,
-                COUNT(CASE WHEN suspended = true THEN 1 END) as suspended_hods,
-                COUNT(CASE WHEN suspended = false THEN 1 END) as active_hods
-            FROM hods
-        `;
-
-    const statsResult = await pool.query(statsQuery);
-    res.json(statsResult.rows[0]);
-  } catch (error) {
-    console.error("Error fetching HOD stats:", error);
-    res.status(500).json({ error: "Internal server error" });
   }
 });
 

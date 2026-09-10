@@ -7,6 +7,9 @@ const ftpService = require("../ftp-service");
 require("dotenv").config();
 
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+const {
+  getHodAssignment,
+} = require("../src/services/hodStatus.service");
 
 const isDesktop = process.env.NODE_ENV === "desktop";
 const db = isDesktop
@@ -423,16 +426,149 @@ router.get("/all", authenticateToken, async (req, res) => {
   }
 });
 
+// Active HOD: approved lesson plans for their department only
+router.get("/hod", authenticateToken, async (req, res) => {
+  try {
+    const assignment = await getHodAssignment(pool, req.user.id);
+    if (!assignment.is_hod) {
+      return res.status(403).json({
+        error:
+          assignment.hod_status === "suspended"
+            ? "Your HOD assignment is suspended. Lesson plan access is blocked."
+            : "Only an active Head of Department can view department lesson plans.",
+        hod_status: assignment.hod_status,
+      });
+    }
+
+    const search = String(req.query.search || "").trim().toLowerCase();
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(
+      500,
+      Math.max(1, parseInt(req.query.limit, 10) || 15)
+    );
+    const offset = (pageNum - 1) * limitNum;
+
+    const params = [assignment.department_id, assignment.department_name || ""];
+    const conditions = [
+      `lp.status = 'approved'`,
+      `(
+        ($1::int IS NOT NULL AND (
+          lp.department_id = $1
+          OR c.department_id = $1
+          OR EXISTS (
+            SELECT 1 FROM class_subjects cs
+            WHERE cs.teacher_id = lp.user_id AND cs.department_id = $1
+          )
+        ))
+        OR LOWER(TRIM(COALESCE(sp.name, sp2.name, ''))) = LOWER(TRIM($2))
+      )`,
+    ];
+
+    if (search) {
+      params.push(`%${search}%`);
+      const idx = params.length;
+      conditions.push(`(
+        LOWER(lp.title) LIKE $${idx}
+        OR LOWER(COALESCE(lp.file_name, '')) LIKE $${idx}
+        OR LOWER(COALESCE(lp.subject, '')) LIKE $${idx}
+        OR LOWER(COALESCE(u.name, '')) LIKE $${idx}
+        OR LOWER(COALESCE(u.username, '')) LIKE $${idx}
+      )`);
+    }
+
+    const whereClause = `WHERE ${conditions.join(" AND ")}`;
+    params.push(limitNum);
+    const limitIdx = params.length;
+    params.push(offset);
+    const offsetIdx = params.length;
+
+    const sql = `
+      SELECT
+        lp.*,
+        u.name AS teacher_name,
+        u.username AS teacher_username,
+        u.role AS teacher_role,
+        c.name AS class_label,
+        COALESCE(sp.name, sp2.name) AS department_name
+      FROM lesson_plans lp
+      LEFT JOIN users u ON lp.user_id = u.id
+      LEFT JOIN classes c ON lp.class_id = c.id
+      LEFT JOIN specialties sp ON lp.department_id = sp.id
+      LEFT JOIN specialties sp2 ON c.department_id = sp2.id
+      ${whereClause}
+      ORDER BY lp.submitted_at DESC NULLS LAST, lp.id DESC
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
+    `;
+
+    const countSql = `
+      SELECT COUNT(*)::int AS total
+      FROM lesson_plans lp
+      LEFT JOIN users u ON lp.user_id = u.id
+      LEFT JOIN classes c ON lp.class_id = c.id
+      LEFT JOIN specialties sp ON lp.department_id = sp.id
+      LEFT JOIN specialties sp2 ON c.department_id = sp2.id
+      ${whereClause}
+    `;
+    const countParams = params.slice(0, params.length - 2);
+
+    const [result, countResult] = await Promise.all([
+      pool.query(sql, params),
+      pool.query(countSql, countParams),
+    ]);
+
+    const total = countResult.rows[0]?.total ?? result.rows.length;
+    res.json({
+      items: result.rows,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.max(1, Math.ceil(total / limitNum)),
+      hod: assignment,
+    });
+  } catch (error) {
+    console.error("Error fetching HOD lesson plans:", error);
+    res.status(500).json({ error: "Failed to fetch department lesson plans" });
+  }
+});
+
+async function hodCanDownloadPlan(userId, plan) {
+  const assignment = await getHodAssignment(pool, userId);
+  if (!assignment.is_hod || plan.status !== "approved") return false;
+  const deptId = assignment.department_id;
+
+  const match = await pool.query(
+    `
+    SELECT 1
+    FROM lesson_plans lp
+    LEFT JOIN classes c ON lp.class_id = c.id
+    LEFT JOIN specialties sp ON lp.department_id = sp.id
+    LEFT JOIN specialties sp2 ON c.department_id = sp2.id
+    WHERE lp.id = $1
+      AND lp.status = 'approved'
+      AND (
+        ($2::int IS NOT NULL AND (
+          lp.department_id = $2
+          OR c.department_id = $2
+          OR EXISTS (
+            SELECT 1 FROM class_subjects cs
+            WHERE cs.teacher_id = lp.user_id AND cs.department_id = $2
+          )
+        ))
+        OR LOWER(TRIM(COALESCE(sp.name, sp2.name, ''))) = LOWER(TRIM($3))
+      )
+    LIMIT 1
+    `,
+    [plan.id, deptId, assignment.department_name || ""]
+  );
+  return match.rows.length > 0;
+}
+
 // Download an approved lesson plan (Admin3 download-only access)
 router.get("/:id/download", authenticateToken, async (req, res) => {
   try {
     const lessonPlanId = parseInt(req.params.id, 10);
     if (Number.isNaN(lessonPlanId)) {
       return res.status(400).json({ error: "Invalid lesson plan id" });
-    }
-
-    if (!ADMIN_LIST_ROLES.includes(req.user.role)) {
-      return res.status(403).json({ error: "Access denied" });
     }
 
     const result = await pool.query(
@@ -448,6 +584,16 @@ router.get("/:id/download", authenticateToken, async (req, res) => {
     }
 
     const plan = result.rows[0];
+    const isAdmin = ADMIN_LIST_ROLES.includes(req.user.role);
+
+    if (!isAdmin) {
+      const allowedAsHod = await hodCanDownloadPlan(req.user.id, plan);
+      if (!allowedAsHod) {
+        return res.status(403).json({
+          error: "Only an active HOD can download approved plans for their department.",
+        });
+      }
+    }
 
     if (isAdmin3(req.user) && plan.status !== "approved") {
       return res.status(403).json({
