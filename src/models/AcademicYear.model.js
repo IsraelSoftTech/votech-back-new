@@ -13,16 +13,6 @@ module.exports = (sequelize) => {
       AcademicYear.hasMany(models.Mark, {
         foreignKey: "academic_year_id",
       });
-      if (models.AcademicYearSwitchLog) {
-        AcademicYear.hasMany(models.AcademicYearSwitchLog, {
-          foreignKey: "from_year_id",
-          as: "switchLogsFrom",
-        });
-        AcademicYear.hasMany(models.AcademicYearSwitchLog, {
-          foreignKey: "to_year_id",
-          as: "switchLogsTo",
-        });
-      }
       if (models.User) {
         AcademicYear.belongsTo(models.User, {
           foreignKey: "switched_by",

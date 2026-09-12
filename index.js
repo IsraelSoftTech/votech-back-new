@@ -167,6 +167,15 @@ async function runMigrations() {
 
   try {
     const {
+      run: runRemoveAcademicYearPage,
+    } = require("./src/db/migrations/removeAcademicYearPage.step1");
+    await runRemoveAcademicYearPage(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (remove academic year page step 1):", err.message);
+  }
+
+  try {
+    const {
       run: runStudentIdCardsStep1,
     } = require("./src/db/migrations/studentIdCards.step1");
     await runStudentIdCardsStep1(pool);
@@ -404,34 +413,6 @@ async function runMigrations() {
     console.log("✅ student_promotions.was_repeating column ready");
   } catch (err) {
     console.warn("⚠️ Migration (student_promotions.was_repeating):", err.message);
-  }
-
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS academic_year_grants (
-        id SERIAL PRIMARY KEY,
-        academic_year_id INTEGER NOT NULL REFERENCES "academicYears"(id),
-        granted_by INTEGER NOT NULL REFERENCES users(id),
-        is_global BOOLEAN NOT NULL DEFAULT false,
-        admin3_user_ids INTEGER[] NOT NULL DEFAULT '{}',
-        reason TEXT,
-        granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        expires_at TIMESTAMPTZ NOT NULL,
-        revoked_at TIMESTAMPTZ,
-        revoked_by INTEGER REFERENCES users(id),
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `);
-    await pool.query(`
-      CREATE INDEX IF NOT EXISTS academic_year_grants_academic_year_id_idx ON academic_year_grants (academic_year_id)
-    `);
-    await pool.query(`
-      CREATE INDEX IF NOT EXISTS academic_year_grants_granted_by_idx ON academic_year_grants (granted_by)
-    `);
-    console.log("✅ academic_year_grants table ready");
-  } catch (err) {
-    console.warn("⚠️ Migration (academic_year_grants):", err.message);
   }
 
   try {

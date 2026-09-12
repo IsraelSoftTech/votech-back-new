@@ -144,7 +144,6 @@ const classRouter = require("./src/routes/class.route");
 const academicBandRouter = require("./src/routes/academicBand.route");
 const promotionRequirementRouter = require("./src/routes/promotionRequirement.route");
 const promotionRouter = require("./src/routes/promotion.route");
-const academicYearGrantRouter = require("./src/routes/academicYearGrant.route");
 const reportCardSessionRouter = require("./src/routes/reportCardSession.route");
 const academicNotificationRouter = require("./src/routes/academicNotification.route");
 const marksRouter = require("./src/routes/mark.route");
@@ -230,7 +229,6 @@ app.use(
 );
 
 app.use("/api/v1/academic-years", accademicYearRouter);
-app.use("/api/v1/academic-year-grants", academicYearGrantRouter);
 app.use("/api/v1/subjects", subjectRouter);
 app.use("/api/v1/class-subjects", classSubjectRouter);
 app.use("/api/v1/department-classes", departmentClassesRouter);

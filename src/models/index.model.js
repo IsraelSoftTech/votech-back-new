@@ -9,10 +9,6 @@ const marks = require("./Mark.model")(sequelize, DataTypes);
 const users = require("./users")(sequelize, DataTypes);
 const students = require("./students")(sequelize, DataTypes);
 const AcademicYear = require("./AcademicYear.model")(sequelize, DataTypes);
-const AcademicYearSwitchLog = require("./AcademicYearSwitchLog.model")(
-  sequelize,
-  DataTypes
-);
 const Term = require("./Term.model")(sequelize, DataTypes);
 const Sequence = require("./Sequence.model")(sequelize, DataTypes);
 const ReportCardComment = require("./ReportCard.model")(sequelize, DataTypes);
@@ -37,10 +33,6 @@ const student_promotions = require("./StudentPromotion.model")(
   DataTypes
 );
 const promotion_run_lock = require("./PromotionRunLock.model")(
-  sequelize,
-  DataTypes
-);
-const academic_year_grants = require("./AcademicYearGrant.model")(
   sequelize,
   DataTypes
 );
@@ -684,7 +676,6 @@ const models = {
   User: users,
   Student: students,
   AcademicYear,
-  AcademicYearSwitchLog,
   Term,
   Sequence,
   ReportCardComment,
@@ -702,7 +693,6 @@ const models = {
   ReportCardRunLock: report_card_run_lock,
   StudentDepartmentChoice: student_department_choices,
   AcademicJobNotification: academic_job_notifications,
-  AcademicYearGrant: academic_year_grants,
   SchoolSetting: school_settings,
   SchoolSettingYear: school_setting_years,
   ClassMasterAssignment: class_master_assignments,

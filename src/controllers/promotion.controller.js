@@ -8,7 +8,7 @@ const catchAsync = require("../utils/catchAsync");
 const appResponder = require("../utils/appResponder");
 const { computeStudentAverages } = require("../utils/promotionMath");
 const { decidePromotion } = require("../utils/promotionDecision.util");
-const { hasLiveGrant, assertYearWritable } = require("../utils/yearLock.util");
+const { assertYearWritable } = require("../utils/yearLock.util");
 const { notify } = require("../utils/academicJobNotification.util");
 const { parsePagination, buildPaginationMeta } = require("../utils/pagination.util");
 
@@ -467,15 +467,12 @@ const startRun = catchAsync(async (req, res, next) => {
     );
   }
   if (fromYear.status !== "active") {
-    const granted = await hasLiveGrant(fromYear.id, req.user.id, req.user.role);
-    if (!granted) {
-      return next(
-        new AppError(
-          `"${fromYear.name}" is archived and you don't have an active grant for it. Ask an Admin1 to grant temporary access before running promotion for it.`,
-          StatusCodes.FORBIDDEN
-        )
-      );
-    }
+    return next(
+      new AppError(
+        `"${fromYear.name}" is archived and read-only.`,
+        StatusCodes.FORBIDDEN
+      )
+    );
   }
 
   const toYear = await models.AcademicYear.findByPk(academic_year_to_id);
