@@ -16,16 +16,18 @@
 // against pdf-lib's own issue tracker: PDFDocument.save() always
 // buffers the whole merged document in memory before returning bytes,
 // there is no streaming save, regardless of what the options suggest.
-// qpdf (a real external process, memory outside Node's heap entirely,
-// see scripts/ensureQpdf.js for how it's provisioned) merges file-to-file
-// without that ceiling.
+// qpdf merges file-to-file without that ceiling. It first ran as an
+// external binary (scripts/ensureQpdf.js), which broke in prod because
+// the committed Linux binary had no executable bit and the self-heal
+// depended on a GitHub download; it now runs as WebAssembly from
+// node_modules on a worker thread, see src/utils/pdfMerge.util.js for
+// the measured numbers behind that choice.
 
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
-const { execFile } = require("child_process");
-const { getBinaryPath, getLibDir } = require("../../scripts/ensureQpdf");
+const { mergePdfFiles } = require("./pdfMerge.util");
 const models = require("../models/index.model");
 const {
   buildReportCardsFromMarks,
@@ -87,61 +89,15 @@ function renderChunkToFile(chunkCards, termLabel, gradingScale, logoBase64, isOr
   });
 }
 
-// Merges the chunk PDFs into one final file via qpdf (a real external
-// process, its memory lives outside Node's heap entirely), instead of
+// Merges the chunk PDFs into one final file via qpdf-wasm (runs on a
+// worker thread, its memory lives outside V8's heap), instead of
 // pdf-lib, which always builds the whole merged document in memory
 // before it can write anything, see the file header for the measured
-// numbers behind this.
-function mergeChunksToFile(chunkPaths, finalPath) {
-  return new Promise((resolve, reject) => {
-    const qpdfPath = getBinaryPath();
-    if (!qpdfPath || !fs.existsSync(qpdfPath)) {
-      return reject(
-        new Error(
-          "qpdf binary not found, run `node scripts/ensureQpdf.js` (also wired into npm postinstall) before generating report cards."
-        )
-      );
-    }
-
-    // Linux's qpdf build is dynamically linked against its own bundled
-    // lib/ directory (libqpdf + a few system libs), not statically
-    // linked, it won't find them without this. No-op on Windows, where
-    // the one companion DLL just sits next to the exe already.
-    const libDir = getLibDir();
-    const env = libDir
-      ? { ...process.env, LD_LIBRARY_PATH: [libDir, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":") }
-      : process.env;
-
-    const args = ["--empty", "--pages", ...chunkPaths, "--", finalPath];
-    execFile(qpdfPath, args, { env }, (err, stdout, stderr) => {
-      // qpdf's own docs: exit code 3 means "succeeded with warnings"
-      // (e.g. a minor structural quirk in an input), the output is still
-      // valid, only exit codes >= 2 other than 3 are real failures.
-      if (err && err.code !== 3) {
-        // err.message alone was "Command failed: <cmd>" with nothing
-        // else useful whenever stderr came back empty — this surfaces
-        // err.code/errno/signal/syscall too (Node sets these on the
-        // error object but execFile's own message doesn't include them),
-        // which is the difference between "a real qpdf error" and "the
-        // process never actually ran" (ENOENT/EACCES/a signal kill).
-        const diagnostics = [
-          err.code !== undefined ? `code=${err.code}` : null,
-          err.errno !== undefined ? `errno=${err.errno}` : null,
-          err.syscall ? `syscall=${err.syscall}` : null,
-          err.signal ? `signal=${err.signal}` : null,
-          err.path ? `path=${err.path}` : null,
-        ]
-          .filter(Boolean)
-          .join(" ");
-        const detail = stderr || stdout || "(no stdout/stderr captured)";
-        return reject(
-          new Error(`qpdf merge failed: ${detail} [${diagnostics || err.message}]`)
-        );
-      }
-      for (const p of chunkPaths) fs.unlink(p, () => {});
-      resolve();
-    });
-  });
+// numbers behind this. Chunk files are only deleted once the merge
+// succeeded, a failed merge leaves them for the caller's cleanup.
+async function mergeChunksToFile(chunkPaths, finalPath) {
+  await mergePdfFiles(chunkPaths, finalPath);
+  for (const p of chunkPaths) fs.unlink(p, () => {});
 }
 
 /**

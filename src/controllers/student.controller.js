@@ -787,10 +787,22 @@ const classListPdf = catchAsync(async (req, res, next) => {
     return next(new AppError("Class not found.", StatusCodes.NOT_FOUND));
   }
 
-  const academicYear = await models.AcademicYear.findOne({ where: { status: "active" } });
+  // Same year rule and the same roster rule as the students list
+  // (readAllStudents): an explicit academic_year_id, else the active year,
+  // and the roster comes from buildStudentWhere. Before this the PDF
+  // ignored the year entirely and printed every active student ever
+  // parked in the class under a header naming the active year, so it
+  // could list students the on-screen list (correctly) did not.
+  const yearId = await applyDefaultYearListFilter(req);
+  const academicYear = yearId ? await models.AcademicYear.findByPk(yearId) : null;
+  const where = await buildStudentWhere({
+    class_id: classId,
+    status: "active",
+    academic_year_id: yearId || undefined,
+  });
 
   const students = await models.Student.findAll({
-    where: { class_id: classId, status: "active" },
+    where,
     order: [["full_name", "ASC"]],
     include: studentClass.is_orientation
       ? [
@@ -805,7 +817,12 @@ const classListPdf = catchAsync(async (req, res, next) => {
   });
 
   if (!students.length) {
-    return next(new AppError(`No active students found in ${studentClass.name}.`, StatusCodes.NOT_FOUND));
+    return next(
+      new AppError(
+        `No active students found in ${studentClass.name}${academicYear ? ` for ${academicYear.name}` : ""}.`,
+        StatusCodes.NOT_FOUND
+      )
+    );
   }
 
   const docDefinition = buildClassListDoc({

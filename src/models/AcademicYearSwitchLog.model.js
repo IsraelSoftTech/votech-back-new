@@ -2,7 +2,12 @@
 
 const { Model, DataTypes } = require("sequelize");
 
-const VALID_ACTIONS = ["switch", "reactivate", "archive"];
+// "grant" / "grant_revoke": Admin1 unlocking (or re-locking) an archived
+// year for Admin3s. They live in the same log as switches so Admin1 sees
+// one chronological story per year, not two lists to cross-reference.
+// Keep in sync with the CHECK constraint in
+// src/db/migrations/academicYearManagement.step1.js.
+const VALID_ACTIONS = ["switch", "reactivate", "archive", "grant", "grant_revoke"];
 
 function defineAcademicYearSwitchLog(sequelize) {
   class AcademicYearSwitchLog extends Model {

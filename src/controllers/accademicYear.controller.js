@@ -19,6 +19,7 @@ const {
 } = require("../utils/academicYearLinkedData.util");
 const { recordAcademicYearSwitchLog } = require("../utils/academicYearSwitchAudit.util");
 const { notifyAdmin1OfYearChange } = require("../services/academicYearNotify.service");
+const { verifyPasswordAndRole } = require("../utils/freshAuth.util");
 
 const AcademicYearModel = require("../models/AcademicYear.model")(
   sequelize,
@@ -446,10 +447,78 @@ const deleteAcademicYear = catchAsync(async (req, res, next) => {
   });
 });
 
+// Classes that still have active students sitting in the given academic
+// year, this is the authoritative "not yet promoted" signal: a completed
+// promotion move already moves its students' academic_year_id forward, so
+// anyone left behind here genuinely was never promoted (or was reversed
+// back), regardless of what the PromotionRunMove history says happened.
+async function getStragglerClasses(academicYearId, transaction = null) {
+  const rows = await models.Student.findAll({
+    where: { academic_year_id: academicYearId, status: "active" },
+    attributes: ["class_id"],
+    group: ["class_id"],
+    raw: true,
+    transaction,
+  });
+  const classIds = [...new Set(rows.map((r) => r.class_id).filter(Boolean))];
+  if (!classIds.length) return [];
+  return models.Class.findAll({
+    where: { id: { [Op.in]: classIds } },
+    attributes: ["id", "name"],
+    raw: true,
+    transaction,
+  });
+}
+
+// Read-only preview so the frontend can show the warning/checklist before
+// the admin commits to anything, no re-auth needed just to look. Mirrors
+// exactly the checks switchAcademicYear enforces below, so what the page
+// warns about is what the switch will refuse.
+const getSwitchChecklist = catchAsync(async (req, res) => {
+  const activeYear = await AcademicYearModel.findOne({ where: { status: "active" } });
+
+  if (!activeYear) {
+    return res.status(StatusCodes.OK).json({
+      success: true,
+      data: {
+        active_year: null,
+        default_next_year: null,
+        other_years: [],
+        blocking_classes: [],
+        promotion_run_in_progress: false,
+      },
+    });
+  }
+
+  const laterYears = await AcademicYearModel.findAll({
+    where: { start_date: { [Op.gt]: activeYear.start_date } },
+    order: [["start_date", "ASC"]],
+  });
+  const blockingClasses = await getStragglerClasses(activeYear.id);
+  const lock = await models.PromotionRunLock.findByPk(1);
+
+  res.status(StatusCodes.OK).json({
+    success: true,
+    data: {
+      active_year: activeYear,
+      default_next_year: laterYears[0] || null,
+      other_years: laterYears.slice(1),
+      blocking_classes: blockingClasses,
+      promotion_run_in_progress: !!(lock && lock.current_run_id),
+    },
+  });
+});
+
 const switchAcademicYear = catchAsync(async (req, res) => {
-  if (req.body.confirm !== true) {
+  // Two confirmation styles are accepted: the Academic Years page re-asks
+  // the admin's password (fresh auth, verified against the Admin3 role),
+  // older callers sent confirm: true. Either is enough, neither is skipped.
+  const { password, confirm, confirm_non_default } = req.body || {};
+  if (password) {
+    await verifyPasswordAndRole(req.user.id, password, "Admin3");
+  } else if (confirm !== true) {
     throw new AppError(
-      "Confirmation required. Set confirm: true to switch academic year.",
+      "Confirmation required. Re-enter your password (or set confirm: true) to switch academic year.",
       StatusCodes.BAD_REQUEST
     );
   }
@@ -496,6 +565,41 @@ const switchAcademicYear = catchAsync(async (req, res) => {
         archivedYear: null,
         message: "Academic year is already active.",
       };
+    }
+
+    if (previousActive) {
+      // The active year only moves forward in time. Going back to an
+      // archived year for corrections is a different, Admin1-only action
+      // (reactivateAcademicYear), not a switch.
+      if (new Date(target.start_date) <= new Date(previousActive.start_date)) {
+        throw new AppError(
+          `Cannot switch to "${target.name}", it does not start after the currently active year "${previousActive.name}". The active year can only move forward in time.`,
+          StatusCodes.BAD_REQUEST
+        );
+      }
+
+      const laterYears = await AcademicYearModel.findAll({
+        where: { start_date: { [Op.gt]: previousActive.start_date } },
+        order: [["start_date", "ASC"]],
+        transaction: t,
+      });
+      const defaultNext = laterYears[0];
+      if (defaultNext && defaultNext.id !== target.id && !confirm_non_default) {
+        throw new AppError(
+          `"${target.name}" skips over "${defaultNext.name}", which would normally come next. If this is intentional, resend the request with confirm_non_default: true.`,
+          StatusCodes.CONFLICT
+        );
+      }
+
+      const stragglers = await getStragglerClasses(previousActive.id, t);
+      if (stragglers.length) {
+        throw new AppError(
+          `Cannot switch years yet, ${stragglers.length} class(es) still have active students in "${previousActive.name}" who have not been promoted: ${stragglers
+            .map((c) => c.name)
+            .join(", ")}. Run or finish their promotion first.`,
+          StatusCodes.CONFLICT
+        );
+      }
     }
 
     const fromYearId = previousActive?.id ?? null;
@@ -1044,6 +1148,274 @@ const getAcademicYearSwitchLogs = catchAsync(async (req, res) => {
   res.status(StatusCodes.OK).json({ success: true, data });
 });
 
+// ─── Year overview (Academic Year detail page) ───────────────────────────
+//
+// One payload for the whole detail page, all counts computed in SQL so the
+// server never materializes a year's students or marks just to count them
+// (the VPS has 1GB, see reportCardChunkedGenerator.util.js for why that
+// matters). Every number here mirrors an existing rule elsewhere rather
+// than inventing a new one: "expected marks" is computeCoverage's formula
+// (marksOverview.controller.js), "never promoted" is the switch's straggler
+// check (getStragglerClasses above), so the detail page can never disagree
+// with the screens it links to.
+
+const getAcademicYearOverview = catchAsync(async (req, res, next) => {
+  const yearId = parseYearId(req.params.id);
+  // models.AcademicYear, not this file's AcademicYearModel: the
+  // switchedByUser/reactivatedByUser associations are wired on the shared
+  // instance from index.model.js.
+  const year = await models.AcademicYear.findByPk(yearId, {
+    include: [
+      { model: models.User, as: "switchedByUser", attributes: ["id", "name", "username"], required: false },
+      { model: models.User, as: "reactivatedByUser", attributes: ["id", "name", "username"], required: false },
+    ],
+  });
+  if (!year) return next(new AppError("Academic year not found", StatusCodes.NOT_FOUND));
+
+  const q = (sql) => sequelize.query(sql, { replacements: { yearId }, type: sequelize.QueryTypes.SELECT });
+
+  const [
+    terms,
+    sequencesPerTerm,
+    studentsPerClass,
+    classSubjectsPerClass,
+    marksPerTerm,
+    unmarkedPerTerm,
+    reportCardAgg,
+    reportCardClasses,
+    promotionRuns,
+    promotionDecisions,
+    stragglers,
+    classMasterRows,
+    unassignedClassSubjects,
+    logs,
+  ] = await Promise.all([
+    TermModel.findAll({ where: { academic_year_id: yearId }, order: [["order_number", "ASC"]], raw: true }),
+    q(`SELECT term_id, COUNT(*)::int AS sequences FROM sequences WHERE academic_year_id = :yearId GROUP BY term_id`),
+    q(`SELECT class_id, COUNT(*)::int AS students,
+              COUNT(*) FILTER (WHERE status = 'active')::int AS active_students,
+              COUNT(*) FILTER (WHERE sex ILIKE 'm%')::int AS male,
+              COUNT(*) FILTER (WHERE sex ILIKE 'f%')::int AS female
+       FROM students WHERE academic_year_id = :yearId GROUP BY class_id`),
+    q(`SELECT class_id, COUNT(*)::int AS subjects,
+              COUNT(*) FILTER (WHERE teacher_id IS NULL)::int AS without_teacher
+       FROM class_subjects WHERE academic_year_id = :yearId GROUP BY class_id`),
+    q(`SELECT term_id, COUNT(*)::int AS filled FROM marks WHERE academic_year_id = :yearId GROUP BY term_id`),
+    // Class subjects (per term) that have not a single mark yet.
+    q(`SELECT t.id AS term_id, COUNT(*)::int AS subjects_without_marks
+       FROM terms t
+       JOIN class_subjects cs ON cs.academic_year_id = t.academic_year_id
+       WHERE t.academic_year_id = :yearId
+         AND NOT EXISTS (
+           SELECT 1 FROM marks m
+           WHERE m.academic_year_id = cs.academic_year_id
+             AND m.class_id = cs.class_id AND m.subject_id = cs.subject_id AND m.term_id = t.id
+         )
+       GROUP BY t.id`),
+    q(`SELECT COUNT(*)::int AS sessions,
+              COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_sessions,
+              MAX(completed_at) AS last_completed_at
+       FROM report_card_sessions WHERE academic_year_id = :yearId`),
+    q(`SELECT COUNT(DISTINCT r.class_id)::int AS classes_generated
+       FROM report_card_runs r JOIN report_card_sessions s ON s.id = r.session_id
+       WHERE s.academic_year_id = :yearId AND r.status = 'completed'`),
+    q(`SELECT COUNT(*)::int AS runs,
+              COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_runs,
+              MAX(completed_at) AS last_completed_at
+       FROM promotion_runs WHERE academic_year_from_id = :yearId`),
+    q(`SELECT decision, COUNT(*)::int AS students,
+              COUNT(*) FILTER (WHERE was_repeating)::int AS repeating
+       FROM student_promotions WHERE from_academic_year_id = :yearId GROUP BY decision`),
+    getStragglerClasses(yearId),
+    q(`SELECT class_id FROM class_master_assignments WHERE academic_year_id = :yearId`),
+    q(`SELECT cs.class_id, c.name AS class_name, cs.subject_id, s.name AS subject_name, s.code AS subject_code
+       FROM class_subjects cs
+       JOIN classes c ON c.id = cs.class_id
+       JOIN subjects s ON s.id = cs.subject_id
+       WHERE cs.academic_year_id = :yearId AND cs.teacher_id IS NULL
+       ORDER BY c.name, s.name LIMIT 100`),
+    models.AcademicYearSwitchLog.findAll({
+      where: { [Op.or]: [{ from_year_id: yearId }, { to_year_id: yearId }] },
+      order: [["performed_at", "DESC"]],
+      limit: 30,
+      include: [
+        { model: AcademicYearModel, as: "fromYear", attributes: ["id", "name"], required: false },
+        { model: AcademicYearModel, as: "toYear", attributes: ["id", "name"], required: false },
+        { model: models.User, as: "performedByUser", attributes: ["id", "username", "name"], required: false },
+      ],
+    }),
+  ]);
+
+  // Classes: everything not suspended, so a class the year forgot to fill
+  // shows up as "0 students" instead of silently disappearing.
+  const classes = await models.Class.findAll({
+    where: { suspended: false },
+    attributes: ["id", "name", "department_id", "is_orientation"],
+    include: [{ model: models.Specialty, as: "department", attributes: ["id", "name", "abbreviation"] }],
+    order: [["name", "ASC"]],
+  });
+  const studentsByClass = new Map(studentsPerClass.map((r) => [r.class_id, r]));
+  const subjectsByClass = new Map(classSubjectsPerClass.map((r) => [r.class_id, r]));
+  const classesWithMaster = new Set(classMasterRows.map((r) => r.class_id));
+
+  const classRows = classes.map((c) => {
+    const st = studentsByClass.get(c.id);
+    const cs = subjectsByClass.get(c.id);
+    return {
+      class_id: c.id,
+      class_name: c.name,
+      department: c.department ? { id: c.department.id, name: c.department.name } : null,
+      is_orientation: !!c.is_orientation,
+      students: st ? st.students : 0,
+      active_students: st ? st.active_students : 0,
+      male: st ? st.male : 0,
+      female: st ? st.female : 0,
+      subjects: cs ? cs.subjects : 0,
+      has_class_master: classesWithMaster.has(c.id),
+    };
+  });
+  const classesWithStudents = classRows.filter((r) => r.students > 0);
+
+  const seqByTerm = new Map(sequencesPerTerm.map((r) => [r.term_id, r.sequences]));
+  const filledByTerm = new Map(marksPerTerm.map((r) => [r.term_id, r.filled]));
+  const unmarkedByTerm = new Map(unmarkedPerTerm.map((r) => [r.term_id, r.subjects_without_marks]));
+  // computeCoverage's formula: every (class subject x student x sequence)
+  // triple is one expected mark.
+  const pairsPerSequence = classRows.reduce((sum, r) => sum + r.students * r.subjects, 0);
+  const termRows = terms.map((t) => {
+    const sequences = seqByTerm.get(t.id) || 0;
+    const expected = pairsPerSequence * sequences;
+    const filled = filledByTerm.get(t.id) || 0;
+    return {
+      term_id: t.id,
+      name: t.name,
+      order_number: t.order_number,
+      sequences,
+      expected_marks: expected,
+      filled_marks: filled,
+      percent: expected ? Math.min(100, Math.round((filled / expected) * 1000) / 10) : 0,
+      subjects_without_marks: unmarkedByTerm.get(t.id) || 0,
+    };
+  });
+
+  const decisions = { promoted: 0, promoted_on_condition: 0, failed: 0 };
+  let repeating = 0;
+  for (const d of promotionDecisions) {
+    if (d.decision in decisions) decisions[d.decision] = d.students;
+    repeating += d.repeating;
+  }
+  const stragglerStudents = stragglers.length
+    ? classRows
+        .filter((r) => stragglers.some((sc) => sc.id === r.class_id))
+        .reduce((n, r) => n + r.active_students, 0)
+    : 0;
+
+  const now = new Date();
+  const isAdmin1 = req.user?.role === "Admin1";
+  // Grants are Admin1's business (same rule as academicYearGrant.route.js),
+  // Admin3 gets the log but not the grant list.
+  const grants = isAdmin1
+    ? await models.AcademicYearGrant.findAll({
+        where: { academic_year_id: yearId },
+        order: [["granted_at", "DESC"]],
+        limit: 20,
+        include: [
+          { association: models.AcademicYearGrant.associations.grantor, attributes: ["id", "name", "username"] },
+          { association: models.AcademicYearGrant.associations.revoker, attributes: ["id", "name", "username"] },
+        ],
+      })
+    : null;
+
+  const userLabel = (u) => (u ? u.name || u.username : null);
+  const plainYear = year.get({ plain: true });
+
+  res.status(StatusCodes.OK).json({
+    success: true,
+    data: {
+      year: {
+        id: plainYear.id,
+        name: plainYear.name,
+        status: plainYear.status,
+        start_date: plainYear.start_date,
+        end_date: plainYear.end_date,
+        is_locked_for_editing: !!plainYear.is_locked_for_editing,
+        switched_at: plainYear.switched_at,
+        switched_by: userLabel(plainYear.switchedByUser),
+        reactivated_at: plainYear.reactivated_at,
+        reactivated_by: userLabel(plainYear.reactivatedByUser),
+        created_at: plainYear.createdAt,
+      },
+      terms: termRows,
+      enrollment: {
+        total_students: classRows.reduce((n, r) => n + r.students, 0),
+        active_students: classRows.reduce((n, r) => n + r.active_students, 0),
+        male: classRows.reduce((n, r) => n + r.male, 0),
+        female: classRows.reduce((n, r) => n + r.female, 0),
+        classes_with_students: classesWithStudents.length,
+        classes_without_students: classRows.length - classesWithStudents.length,
+        classes: classRows,
+      },
+      report_cards: {
+        sessions: reportCardAgg[0]?.sessions || 0,
+        completed_sessions: reportCardAgg[0]?.completed_sessions || 0,
+        last_completed_at: reportCardAgg[0]?.last_completed_at || null,
+        classes_generated: reportCardClasses[0]?.classes_generated || 0,
+        classes_total: classesWithStudents.length,
+      },
+      promotion: {
+        runs: promotionRuns[0]?.runs || 0,
+        completed_runs: promotionRuns[0]?.completed_runs || 0,
+        last_completed_at: promotionRuns[0]?.last_completed_at || null,
+        decisions,
+        repeating,
+        never_promoted_students: stragglerStudents,
+        never_promoted_classes: stragglers,
+      },
+      governance: {
+        logs: logs.map((log) => {
+          const p = log.get({ plain: true });
+          return {
+            id: p.id,
+            action: p.action,
+            performed_at: p.performed_at,
+            reason: p.reason,
+            from_year: p.fromYear,
+            to_year: p.toYear,
+            performed_by: userLabel(p.performedByUser),
+          };
+        }),
+        grants: grants
+          ? grants.map((g) => {
+              const p = g.get({ plain: true });
+              const revoked = !!p.revoked_at;
+              const expired = !revoked && new Date(p.expires_at) <= now;
+              return {
+                id: p.id,
+                is_global: p.is_global,
+                admin3_user_ids: p.admin3_user_ids,
+                reason: p.reason,
+                granted_at: p.granted_at,
+                expires_at: p.expires_at,
+                revoked_at: p.revoked_at,
+                granted_by: userLabel(p.grantor),
+                revoked_by: userLabel(p.revoker),
+                state: revoked ? "revoked" : expired ? "expired" : "active",
+              };
+            })
+          : null,
+        active_grants: grants ? grants.filter((g) => !g.revoked_at && new Date(g.expires_at) > now).length : null,
+      },
+      setup_health: {
+        classes_without_master: classesWithStudents
+          .filter((r) => !r.has_class_master)
+          .map((r) => ({ class_id: r.class_id, class_name: r.class_name })),
+        class_subjects_without_teacher: unassignedClassSubjects,
+        class_subjects_without_teacher_total: classSubjectsPerClass.reduce((n, r) => n + r.without_teacher, 0),
+      },
+    },
+  });
+});
+
 // ─── Carry Forward year-scoped values (Admin3) ──────────────────────────
 //
 // Copies everything the school would otherwise have to set up again from
@@ -1263,6 +1635,8 @@ module.exports = {
   readAllAcademicYears,
   updateAcademicYear,
   deleteAcademicYear,
+  getSwitchChecklist,
+  getAcademicYearOverview,
   switchAcademicYear,
   rolloverAcademicYear,
   reactivateAcademicYear,

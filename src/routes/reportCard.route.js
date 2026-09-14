@@ -26,9 +26,15 @@ reportCardRouter.use(protect);
 
 reportCardRouter.route("/bulk").get(reportCardControllers.bulkReportCards);
 reportCardRouter.route("/single").get(reportCardControllers.singleReportCard);
-reportCardRouter
-  .route("/bulk-pdfs")
-  .get(reportCardControllers.bulkReportCardsPdf);
+// Disabled 2026-09-12: this was the old puppeteer path, it launches a full
+// Chromium (300MB+ on its own, more than the whole report-card budget on
+// the 1GB VPS) and nothing in the frontend calls it any more, everything
+// goes through /single-pdf-direct or report-card sessions (pdfmake +
+// qpdf-wasm). Left here rather than deleted so the history of the
+// endpoint is obvious if someone goes looking for it.
+// reportCardRouter
+//   .route("/bulk-pdfs")
+//   .get(reportCardControllers.bulkReportCardsPdf);
 
 reportCardRouter.route("/bulk-html").get(bulkPdfDirect);
 

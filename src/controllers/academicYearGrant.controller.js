@@ -7,6 +7,17 @@ const AppError = require("../utils/AppError");
 const catchAsync = require("../utils/catchAsync");
 const appResponder = require("../utils/appResponder");
 const { verifyPasswordAndRole } = require("../utils/freshAuth.util");
+const { recordAcademicYearSwitchLog } = require("../utils/academicYearSwitchAudit.util");
+const { getIpAddress } = require("../../routes/utils");
+
+// One readable line per grant event for the academic-year activity log
+// (the list Admin1 sees), so "who was let into which year, until when, and
+// why" is answerable from the log alone without opening the grants table.
+function describeGrantTargets(grant, users = []) {
+  if (grant.is_global) return "all Admin3 users";
+  const names = users.map((u) => u.name || u.username || `user ${u.id}`);
+  return names.length ? names.join(", ") : `Admin3 user(s) ${(grant.admin3_user_ids || []).join(", ")}`;
+}
 
 const grantIncludes = [
   { association: models.AcademicYearGrant.associations.academic_year },
@@ -96,14 +107,46 @@ const createGrant = catchAsync(async (req, res, next) => {
     }
   }
 
-  const grant = await models.AcademicYearGrant.create({
-    academic_year_id,
-    granted_by: req.user.id,
-    is_global: !!is_global,
-    admin3_user_ids: is_global ? [] : targetIds,
-    reason: reason || null,
-    granted_at: new Date(),
-    expires_at,
+  const grantedUsers =
+    !is_global && targetIds.length
+      ? await models.User.findAll({
+          where: { id: { [Op.in]: targetIds } },
+          attributes: ["id", "name", "username"],
+          raw: true,
+        })
+      : [];
+
+  // Grant row and its log line commit together: a grant that exists but
+  // never shows in Admin1's activity log is exactly the gap this closes.
+  const grant = await models.AcademicYearGrant.sequelize.transaction(async (t) => {
+    const row = await models.AcademicYearGrant.create(
+      {
+        academic_year_id,
+        granted_by: req.user.id,
+        is_global: !!is_global,
+        admin3_user_ids: is_global ? [] : targetIds,
+        reason: reason || null,
+        granted_at: new Date(),
+        expires_at,
+      },
+      { transaction: t }
+    );
+    await recordAcademicYearSwitchLog(
+      {
+        from_year_id: null,
+        to_year_id: academic_year_id,
+        action: "grant",
+        performed_by: req.user.id,
+        performed_at: row.granted_at,
+        reason: `Access granted to ${describeGrantTargets(row, grantedUsers)} until ${new Date(
+          expires_at
+        ).toISOString()}${reason ? `. ${reason}` : ""}`,
+        ip_address: getIpAddress(req),
+      },
+      req.user,
+      t
+    );
+    return row;
   });
 
   const created = await models.AcademicYearGrant.findByPk(grant.id, {
@@ -137,7 +180,33 @@ const revokeGrant = catchAsync(async (req, res, next) => {
     );
   }
 
-  await grant.update({ revoked_at: new Date(), revoked_by: req.user.id });
+  const grantedUsers = grant.is_global
+    ? []
+    : await models.User.findAll({
+        where: { id: { [Op.in]: grant.admin3_user_ids || [] } },
+        attributes: ["id", "name", "username"],
+        raw: true,
+      });
+
+  await models.AcademicYearGrant.sequelize.transaction(async (t) => {
+    const revokedAt = new Date();
+    await grant.update({ revoked_at: revokedAt, revoked_by: req.user.id }, { transaction: t });
+    await recordAcademicYearSwitchLog(
+      {
+        from_year_id: null,
+        to_year_id: grant.academic_year_id,
+        action: "grant_revoke",
+        performed_by: req.user.id,
+        performed_at: revokedAt,
+        reason: `Access revoked for ${describeGrantTargets(grant, grantedUsers)} (grant #${grant.id})${
+          req.body?.reason ? `. ${req.body.reason}` : ""
+        }`,
+        ip_address: getIpAddress(req),
+      },
+      req.user,
+      t
+    );
+  });
 
   const updated = await models.AcademicYearGrant.findByPk(grant.id, {
     include: grantIncludes,
