@@ -4,16 +4,16 @@
   "description": "MPASAT Online Backend with MySQL",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "cross-env NODE_ENV=development PORT=5000 nodemon index.js",
+    "start": "node --max-old-space-size=256 --max-semi-space-size=4 index.js",
+    "dev": "cross-env NODE_ENV=development PORT=5000 nodemon --max-old-space-size=256 --max-semi-space-size=4 index.js",
     "load-schema": "node load-schema.js",
     "create-admin": "node create-admin.js",
-    "postinstall": "node scripts/ensureQpdf.js",
     "db:migrate": "node -r dotenv/config node_modules/sequelize-cli/lib/sequelize db:migrate",
     "db:migrate:status": "node -r dotenv/config node_modules/sequelize-cli/lib/sequelize db:migrate:status"
   },
   "dependencies": {
     "20": "^3.1.9",
+    "@jspawn/qpdf-wasm": "0.0.2",
     "archiver": "^7.0.1",
     "basic-ftp": "^5.0.5",
     "bcryptjs": "^2.4.3",

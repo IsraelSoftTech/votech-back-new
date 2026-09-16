@@ -1,4 +1,9 @@
 "use strict";
+// RETIRED 2026-09-12: no longer wired anywhere (the postinstall hook and the
+// index.js watchdog were removed, bin/qpdf/ is gone from the repo). The merge
+// now runs qpdf as WebAssembly from node_modules, see
+// src/utils/pdfMerge.util.js for why. Kept only as history of the approach.
+//
 // Provisions a local, project-owned qpdf binary (used to merge report-card
 // chunk PDFs without pdf-lib's in-memory-only merge, see
 // reportCardChunkedGenerator.util.js for why). Runs automatically on

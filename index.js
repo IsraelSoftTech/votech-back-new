@@ -1,3 +1,9 @@
+// Must run before anything else is required: if the process was started
+// without the V8 heap limits the 1GB VPS needs, this re-launches index.js
+// with them and turns this process into a signal-forwarding wrapper.
+// See src/utils/nodeHeapFlags.js for the measurements behind the flags.
+if (require("./src/utils/nodeHeapFlags").relaunchedWithHeapFlags()) return;
+
 process.on("uncaughtException", (err) => {
   console.error("Uncaught Exception:", err);
 });
@@ -163,15 +169,6 @@ async function runMigrations() {
     await runAcademicYearStep1(pool);
   } catch (err) {
     console.warn("⚠️ Migration (academic year management step 1):", err.message);
-  }
-
-  try {
-    const {
-      run: runRemoveAcademicYearPage,
-    } = require("./src/db/migrations/removeAcademicYearPage.step1");
-    await runRemoveAcademicYearPage(pool);
-  } catch (err) {
-    console.warn("⚠️ Migration (remove academic year page step 1):", err.message);
   }
 
   try {
@@ -417,6 +414,34 @@ async function runMigrations() {
 
   try {
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS academic_year_grants (
+        id SERIAL PRIMARY KEY,
+        academic_year_id INTEGER NOT NULL REFERENCES "academicYears"(id),
+        granted_by INTEGER NOT NULL REFERENCES users(id),
+        is_global BOOLEAN NOT NULL DEFAULT false,
+        admin3_user_ids INTEGER[] NOT NULL DEFAULT '{}',
+        reason TEXT,
+        granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL,
+        revoked_at TIMESTAMPTZ,
+        revoked_by INTEGER REFERENCES users(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS academic_year_grants_academic_year_id_idx ON academic_year_grants (academic_year_id)
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS academic_year_grants_granted_by_idx ON academic_year_grants (granted_by)
+    `);
+    console.log("✅ academic_year_grants table ready");
+  } catch (err) {
+    console.warn("⚠️ Migration (academic_year_grants):", err.message);
+  }
+
+  try {
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS school_settings (
         id INTEGER PRIMARY KEY DEFAULT 1,
         school_name VARCHAR(200) NOT NULL DEFAULT 'Votech S7 Academy',
@@ -645,8 +670,18 @@ async function startOnce(port) {
   const { startReportCardWatchdog } = require("./src/controllers/reportCardSession.controller");
   startReportCardWatchdog();
 
-  const { startQpdfWatchdog } = require("./scripts/ensureQpdf");
-  startQpdfWatchdog();
+  // Retired 2026-09-12 along with the external qpdf binary it kept alive,
+  // the merge now runs as WebAssembly from node_modules
+  // (src/utils/pdfMerge.util.js), so there is nothing to re-provision.
+  // const { startQpdfWatchdog } = require("./scripts/ensureQpdf");
+  // startQpdfWatchdog();
+
+  // One loud check at boot instead: if the merge engine can't load, report
+  // card sessions will fail, and this says so before anyone starts one.
+  const { verifyPdfMergeEngine } = require("./src/utils/pdfMerge.util");
+  verifyPdfMergeEngine()
+    .then((version) => console.log(`[pdfMerge] qpdf-wasm ready (qpdf ${version})`))
+    .catch((err) => console.error("[pdfMerge] qpdf-wasm FAILED to load, report card merging will not work:", err.message));
 
   server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on port ${port}`);

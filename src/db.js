@@ -23,6 +23,7 @@ console.log("📌 NODE_ENV:", process.env.NODE_ENV || "undefined");
 // "development". Read it off the actual host instead so the label can't
 // lie about which database is live.
 const isLocalHost = /@(localhost|127\.0\.0\.1)[:/]/.test(dbUrl || "");
+const isDesktop = process.env.NODE_ENV === "desktop";
 console.log(
   "📌 Environment:",
   isLocalHost ? `LOCAL (${isDesktop ? "desktop" : "dev"})` : "REMOTE"
