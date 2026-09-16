@@ -12,6 +12,12 @@ const {
   getSchoolHoursWithScannerStatus,
   updateSchoolHours,
 } = require("../src/services/schoolHours.service");
+const {
+  listAccessUsers,
+  hasAccess,
+  grantAccess,
+  revokeAccess,
+} = require("../src/services/attendanceAccess.service");
 
 const router = express.Router();
 
@@ -39,6 +45,11 @@ function scanRateLimit(req, res, next) {
 
 function canManageSchoolHours(role) {
   return ["Admin1", "Admin3"].includes(role);
+}
+
+/** Only Admin3 owns the attendance Settings tab, grants included. */
+function canManageAttendanceAccess(role) {
+  return role === "Admin3";
 }
 
 router.post("/scan", scanRateLimit, async (req, res) => {
@@ -80,6 +91,68 @@ router.put("/school-hours", async (req, res) => {
     const status = e.statusCode || 500;
     console.error("Update school hours error:", e);
     res.status(status).json({ error: e.message || "Failed to save school hours" });
+  }
+});
+
+/** Any signed-in user may ask whether they hold an attendance grant. */
+router.get("/access/me", async (req, res) => {
+  try {
+    const granted = await hasAccess(req.user?.id ?? null);
+    res.json({ has_access: granted });
+  } catch (e) {
+    console.error("Attendance access check error:", e);
+    res.status(500).json({ error: "Failed to check attendance access" });
+  }
+});
+
+router.get("/access", async (req, res) => {
+  try {
+    if (!canManageAttendanceAccess(req.user?.role || "")) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    const users = await listAccessUsers();
+    res.json(users);
+  } catch (e) {
+    console.error("List attendance access error:", e);
+    res.status(500).json({ error: "Failed to fetch attendance access list" });
+  }
+});
+
+router.post("/access", async (req, res) => {
+  try {
+    if (!canManageAttendanceAccess(req.user?.role || "")) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    const userId = Number(req.body?.user_id);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return res.status(400).json({ error: "A valid user_id is required" });
+    }
+    const user = await grantAccess(userId, req.user?.id ?? null);
+    res.json({ message: `Attendance access granted to ${user.name}`, user });
+  } catch (e) {
+    const status = e.statusCode || 500;
+    if (status >= 500) console.error("Grant attendance access error:", e);
+    res.status(status).json({ error: e.message || "Failed to grant access" });
+  }
+});
+
+router.delete("/access/:userId", async (req, res) => {
+  try {
+    if (!canManageAttendanceAccess(req.user?.role || "")) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    const userId = Number(req.params.userId);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return res.status(400).json({ error: "A valid user id is required" });
+    }
+    const revoked = await revokeAccess(userId, req.user?.id ?? null);
+    if (!revoked) {
+      return res.status(404).json({ error: "That user has no attendance access" });
+    }
+    res.json({ message: "Attendance access removed" });
+  } catch (e) {
+    console.error("Revoke attendance access error:", e);
+    res.status(500).json({ error: e.message || "Failed to remove access" });
   }
 });
 

@@ -52,6 +52,10 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
+const {
+  ROLE_SELECTION_PURPOSE,
+} = require("../src/config/superAdmin");
+
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
 // Authentication middleware
@@ -69,6 +73,13 @@ const authenticateToken = (req, res, next) => {
 
   try {
     const user = jwt.verify(token, JWT_SECRET);
+    // A super admin who has not picked a role yet holds a token with no user
+    // behind it; it is only good for /api/super-admin.
+    if (user?.purpose === ROLE_SELECTION_PURPOSE) {
+      return res
+        .status(403)
+        .json({ error: "Select a role before using the system" });
+    }
     req.user = user;
     next();
   } catch (err) {

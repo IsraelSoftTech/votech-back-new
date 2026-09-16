@@ -41,6 +41,7 @@ const WHITELIST_PREFIXES = [
   "/api/hods",
   "/api/staff-attendance",
   "/api/discipline-cases",
+  "/api/user-guides",
   "/api/teachers",
   "/api/v1/teachers",
   "/api/specialties",

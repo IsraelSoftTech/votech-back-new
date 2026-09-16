@@ -670,6 +670,7 @@ const TABLE_COLUMNS = {
     "support_doc",
     "item_id",
     "amount",
+    "transaction_date",
     "updatedAt",
     "updatedBy",
     "deviceId",

@@ -103,6 +103,7 @@ app.use("/public", express.static(path.join(__dirname, "public")));
 console.log("📁 Uploads served at /uploads from", DEV_UPLOAD_DIR);
 
 const authRouter = require("./routes/auth");
+const superAdminRouter = require("./routes/superAdmin");
 const usersRouter = require("./routes/users");
 const classesRouter = require("./routes/classes");
 const feesRouter = require("./routes/fees");
@@ -128,6 +129,7 @@ const studentAttendanceRouter = require("./routes/student-attendance");
 const monitorRouter = require("./routes/monitor");
 const vocationalRouter = require("./routes/vocational");
 const hodsRouter = require("./routes/hods");
+const userGuidesRouter = require("./routes/userGuides");
 // const teacherDisciplineRouter = require("./routes/teacher-discipline-cases");
 const profileRouter = require("./routes/profile");
 
@@ -186,6 +188,9 @@ if (process.env.NODE_ENV === "desktop") {
   console.log("🌐 Production mode: Database swap routes disabled");
 }
 app.use("/api", authRouter);
+// Sits with the auth routes, ahead of the gates: choosing a role is part of
+// signing in, so it must work in read-only mode and in an archived year.
+app.use("/api/super-admin", superAdminRouter);
 
 app.use(readOnlyGate);
 app.use(enforceActiveYearWrites);
@@ -217,6 +222,7 @@ app.use("/api/students", studentsRouter);
 app.use("/api/student-id-cards", studentIdCardsRouter);
 app.use("/api/student-attendance", studentAttendanceRouter);
 app.use("/api/attendance", studentAttendanceRouter);
+app.use("/api/user-guides", userGuidesRouter);
 // app.use("/api/teacher-discipline-cases", teacherDisciplineRouter);
 
 

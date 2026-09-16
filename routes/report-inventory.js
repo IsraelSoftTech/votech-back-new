@@ -7,6 +7,48 @@ const {
 
 const router = express.Router();
 
+const MIN_TRANSACTION_DATE = "2000-01-01";
+
+function badRequest(message) {
+  const err = new Error(message);
+  err.statusCode = 400;
+  return err;
+}
+
+/**
+ * Transactions are often recorded days or weeks after they happen, so any past
+ * date is accepted. A future date is nearly always a typo; one day of slack
+ * absorbs clock and timezone skew between the client and the server.
+ */
+function parseTransactionDate(value) {
+  if (value == null || value === "") return null;
+
+  const raw = String(value).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    throw badRequest("Transaction date must be in YYYY-MM-DD format");
+  }
+
+  const parsed = new Date(`${raw}T00:00:00Z`);
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== raw
+  ) {
+    throw badRequest("That transaction date does not exist");
+  }
+
+  const latest = new Date(Date.now() + 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  if (raw > latest) {
+    throw badRequest("Transaction date cannot be in the future");
+  }
+  if (raw < MIN_TRANSACTION_DATE) {
+    throw badRequest(`Transaction date cannot be before ${MIN_TRANSACTION_DATE}`);
+  }
+
+  return raw;
+}
+
 // ========== HEADS ==========
 // Get all heads (must be before /:id)
 router.get("/heads", authenticateToken, async (req, res) => {
@@ -80,12 +122,15 @@ router.delete("/heads/:id", authenticateToken, requireAdmin, async (req, res) =>
 // Get all report inventory items
 router.get("/", authenticateToken, async (req, res) => {
   try {
+    // transaction_date is sent as a plain YYYY-MM-DD string so the day cannot
+    // shift when it crosses timezones on its way to the browser.
     const result = await pool.query(`
       SELECT i.*, h.name as head_name,
-        COALESCE(i.amount, i.unit_cost_price * COALESCE(i.quantity, 1)) as amount
+        COALESCE(i.amount, i.unit_cost_price) as amount,
+        to_char(COALESCE(i.transaction_date, i.created_at::date), 'YYYY-MM-DD') as transaction_date
       FROM report_inventory i
       LEFT JOIN report_inventory_heads h ON i.head_id = h.id
-      ORDER BY i.created_at DESC
+      ORDER BY COALESCE(i.transaction_date, i.created_at::date) DESC, i.created_at DESC
     `);
     res.json(result.rows);
   } catch (error) {
@@ -107,6 +152,7 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
       amount,
       supplier,
       support_doc,
+      transaction_date,
     } = req.body;
 
     const amt = amount != null ? parseFloat(amount) : unit_cost_price;
@@ -115,6 +161,8 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
         error: "Item name, category, UOM, and amount are required",
       });
     }
+
+    const txDate = parseTransactionDate(transaction_date);
 
     if (!["income", "expenditure"].includes(category)) {
       return res
@@ -145,10 +193,16 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
 
     const amountVal = parseFloat(amt != null ? amt : unit_cost_price);
     const result = await pool.query(
+      // amount is the total for the line exactly as entered. unit_cost_price
+      // is the legacy NOT NULL column and carries the same figure.
       `INSERT INTO report_inventory (
-        item_name, head_id, category, uom, quantity, unit_cost_price,
-        supplier, support_doc, item_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        item_name, head_id, category, uom, quantity, unit_cost_price, amount,
+        supplier, support_doc, item_id, transaction_date
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $6, $7, $8, $9,
+        COALESCE($10::date, (NOW() AT TIME ZONE 'Africa/Douala')::date)
+      )
+      RETURNING *, to_char(transaction_date, 'YYYY-MM-DD') as transaction_date`,
       [
         item_name,
         head_id ? parseInt(head_id, 10) : null,
@@ -159,6 +213,7 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
         category === "income" ? (supplier || null) : null,
         support_doc || null,
         itemId,
+        txDate,
       ]
     );
 
@@ -167,6 +222,9 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
       item: result.rows[0],
     });
   } catch (error) {
+    if (error.statusCode === 400) {
+      return res.status(400).json({ error: error.message });
+    }
     console.error("Error creating report inventory item:", error);
     res.status(500).json({ error: "Failed to register item" });
   }
@@ -186,6 +244,7 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
       amount,
       supplier,
       support_doc,
+      transaction_date,
     } = req.body;
 
     const amt = amount != null ? parseFloat(amount) : unit_cost_price;
@@ -194,6 +253,8 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
         error: "Item name, category, UOM, and amount are required",
       });
     }
+
+    const txDate = parseTransactionDate(transaction_date);
 
     const validUom = ["Pieces", "Kg", "Liters", "Cartons", "Others"];
     if (!validUom.includes(uom)) {
@@ -213,9 +274,11 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
     const result = await pool.query(
       `UPDATE report_inventory SET
         item_name = $1, head_id = $2, category = $3, uom = $4, quantity = $5,
-        unit_cost_price = $6, supplier = $7, support_doc = $8,
-        updated_at = $9
-      WHERE id = $10 RETURNING *`,
+        unit_cost_price = $6, amount = $6, supplier = $7, support_doc = $8,
+        transaction_date = COALESCE($9::date, transaction_date, created_at::date),
+        updated_at = $10
+      WHERE id = $11
+      RETURNING *, to_char(transaction_date, 'YYYY-MM-DD') as transaction_date`,
       [
         item_name,
         head_id ? parseInt(head_id, 10) : null,
@@ -225,6 +288,7 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
         amountVal,
         category === "income" ? (supplier || null) : null,
         support_doc || null,
+        txDate,
         new Date(),
         id,
       ]
@@ -235,6 +299,9 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
       item: result.rows[0],
     });
   } catch (error) {
+    if (error.statusCode === 400) {
+      return res.status(400).json({ error: error.message });
+    }
     console.error("Error updating report inventory item:", error);
     res.status(500).json({ error: "Failed to update item" });
   }

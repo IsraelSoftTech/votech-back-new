@@ -10,6 +10,7 @@ const {
 } = require("./utils");
 
 const { logChanges, ChangeTypes } = require("../src/utils/logChanges.util");
+const { isSuperAdminUsername } = require("../src/config/superAdmin");
 
 const router = express.Router();
 
@@ -218,6 +219,10 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
             .json({ error: "Maximum of 2 Admin4 accounts allowed" });
         }
       }
+    }
+
+    if (isSuperAdminUsername(username)) {
+      return res.status(400).json({ error: "This username is reserved" });
     }
 
     const usernameConflict = await pool.query(

@@ -1,18 +1,19 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
 const {
   pool,
   authenticateToken,
   logUserActivity,
-  createUserSession,
   endUserSession,
   getIpAddress,
   getUserAgent,
-  JWT_SECRET,
 } = require("./utils");
-const { getActiveYear } = require("../src/services/activeAcademicYear.service");
-const { getHodAssignment } = require("../src/services/hodStatus.service");
+const { issueUserSession } = require("../src/services/userSession.service");
+const {
+  isSuperAdminUsername,
+  verifySuperAdminPassword,
+  signRoleSelectionToken,
+} = require("../src/services/superAdmin.service");
 
 const router = express.Router();
 
@@ -94,6 +95,19 @@ router.post("/login", async (req, res) => {
         .json({ error: "Username and password are required" });
     }
 
+    // The super admin owns no row in `users`, so it is matched before the
+    // lookup. It gets no session yet — only the right to pick a role.
+    if (isSuperAdminUsername(username)) {
+      if (!verifySuperAdminPassword(password)) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+      return res.json({
+        superAdmin: true,
+        requiresRoleSelection: true,
+        roleSelectionToken: signRoleSelectionToken(),
+      });
+    }
+
     // Find user by username
     const result = await queryWithRetry(() =>
       pool.query("SELECT * FROM users WHERE username = $1", [username])
@@ -116,71 +130,11 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    // Create JWT token
-    const token = jwt.sign(
-      { id: user.id, username: user.username, role: user.role },
-      JWT_SECRET,
-      { expiresIn: "24h" }
-    );
+    // Token, activity log, session row and the authUser payload — shared with
+    // the super admin role switch so both paths behave identically.
+    const session = await issueUserSession(user, req);
 
-    // Log user activity
-    const ipAddress = getIpAddress(req);
-    const userAgent = getUserAgent(req);
-    await logUserActivity(
-      user.id,
-      "login",
-      "User logged in successfully",
-      null,
-      null,
-      null,
-      ipAddress,
-      userAgent
-    );
-
-    // Create user session
-    await createUserSession(user.id, ipAddress, userAgent);
-
-    let activeYearId = null;
-    try {
-      const activeYear = await getActiveYear();
-      activeYearId = activeYear?.id ?? null;
-    } catch (activeYearError) {
-      console.warn("Login: could not resolve active academic year", activeYearError.message);
-    }
-
-    let hodAssignment = {
-      hod_status: "none",
-      is_hod: false,
-      hod_id: null,
-      hod_department_name: null,
-      hod_department_id: null,
-    };
-    try {
-      const hod = await getHodAssignment(pool, user.id);
-      hodAssignment = {
-        hod_status: hod.hod_status,
-        is_hod: hod.is_hod,
-        hod_id: hod.hod_id,
-        hod_department_name: hod.department_name,
-        hod_department_id: hod.department_id,
-      };
-    } catch (hodError) {
-      console.warn("Login: could not resolve HOD status", hodError.message);
-    }
-
-    res.json({
-      token,
-      user: {
-        id: user.id,
-        name: user.name,
-        username: user.username,
-        role: user.role,
-        contact: user.contact,
-        email: user.email,
-        active_year_id: activeYearId,
-        ...hodAssignment,
-      },
-    });
+    res.json(session);
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ error: "Login failed" });
@@ -229,6 +183,11 @@ router.post("/register", async (req, res) => {
       return res
         .status(400)
         .json({ error: "Name, username, password, and role are required" });
+    }
+
+    // The master credentials must never be claimable by a real account.
+    if (isSuperAdminUsername(username)) {
+      return res.status(400).json({ error: "This username is reserved" });
     }
 
     if (role === "Admin4") {

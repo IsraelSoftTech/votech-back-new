@@ -99,7 +99,23 @@ async function runMigrations() {
     await pool
       .query(
         `
-      UPDATE report_inventory SET amount = unit_cost_price * COALESCE(quantity, 1) WHERE amount IS NULL
+      UPDATE report_inventory SET amount = unit_cost_price WHERE amount IS NULL
+    `
+      )
+      .catch(() => {});
+    // The date the transaction actually happened, which is not always the day
+    // it was recorded. Existing rows fall back to their recording date.
+    await pool
+      .query(
+        `
+      ALTER TABLE report_inventory ADD COLUMN IF NOT EXISTS transaction_date DATE
+    `
+      )
+      .catch(() => {});
+    await pool
+      .query(
+        `
+      UPDATE report_inventory SET transaction_date = created_at::date WHERE transaction_date IS NULL
     `
       )
       .catch(() => {});
@@ -227,6 +243,15 @@ async function runMigrations() {
 
   try {
     const {
+      run: runStudentAttendanceStep4,
+    } = require("./src/db/migrations/studentAttendance.step4");
+    await runStudentAttendanceStep4(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (student attendance step 4):", err.message);
+  }
+
+  try {
+    const {
       run: runLessonPlanManagementStep1,
     } = require("./src/db/migrations/lessonPlanManagement.step1");
     await runLessonPlanManagementStep1(pool);
@@ -281,6 +306,13 @@ async function runMigrations() {
     await runStudentFeeDiscountStep1(pool);
   } catch (err) {
     console.warn("⚠️ Migration (student fee discount step 1):", err.message);
+  }
+
+  try {
+    const { run: runUserGuidesStep1 } = require("./src/db/migrations/userGuides.step1");
+    await runUserGuidesStep1(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (user guides step 1):", err.message);
   }
 
   try {
