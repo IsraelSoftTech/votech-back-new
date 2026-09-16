@@ -13,6 +13,7 @@ const {
   computeBaseFee,
   parseFeeAmount,
 } = require("../src/services/feeCalculation.service");
+const { fetchFeeTotals } = require("../src/services/feeTotals.service");
 
 const router = express.Router();
 
@@ -66,94 +67,11 @@ router.get("/totals/summary", authenticateToken, async (req, res) => {
   const userRole = req.user.role;
   try {
     const academicYearId = await getActiveAcademicYearId();
-    let result;
-    if (isAdminLike(userRole)) {
-      result = await pool.query(
-        `
-        WITH student_base AS (
-          SELECT
-            s.id,
-            (
-              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.registration_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.bus_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.internship_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.remedial_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
-            ) AS base_fee
-          FROM students s
-          JOIN classes c ON s.class_id = c.id
-          WHERE s."deletedAt" IS NULL
-        ),
-        discounted AS (
-          SELECT
-            sb.id,
-            GREATEST(
-              0,
-              sb.base_fee - COALESCE(LEAST(d.discount_amount, sb.base_fee), 0)
-            ) AS net_expected
-          FROM student_base sb
-          LEFT JOIN student_fee_discounts d
-            ON d.student_id = sb.id
-           AND d.academic_year_id = $1
-        )
-        SELECT
-          COALESCE((SELECT SUM(net_expected) FROM discounted), 0) AS total_expected,
-          COALESCE((
-            SELECT SUM(f.amount)
-            FROM fees f
-            JOIN students st ON f.student_id = st.id
-            WHERE st."deletedAt" IS NULL
-          ), 0) AS total_paid
-      `,
-        [academicYearId]
-      );
-    } else {
-      result = await pool.query(
-        `
-        WITH student_base AS (
-          SELECT
-            s.id,
-            (
-              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.registration_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.bus_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.internship_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.remedial_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.tuition_fee), '[^0-9.]', '', 'g'), '')::numeric, 0) +
-              COALESCE(NULLIF(REGEXP_REPLACE(TRIM(c.pta_fee), '[^0-9.]', '', 'g'), '')::numeric, 0)
-            ) AS base_fee
-          FROM students s
-          JOIN classes c ON s.class_id = c.id
-          WHERE s.user_id = $2 AND s."deletedAt" IS NULL
-        ),
-        discounted AS (
-          SELECT
-            sb.id,
-            GREATEST(
-              0,
-              sb.base_fee - COALESCE(LEAST(d.discount_amount, sb.base_fee), 0)
-            ) AS net_expected
-          FROM student_base sb
-          LEFT JOIN student_fee_discounts d
-            ON d.student_id = sb.id
-           AND d.academic_year_id = $1
-        )
-        SELECT
-          COALESCE((SELECT SUM(net_expected) FROM discounted), 0) AS total_expected,
-          COALESCE((
-            SELECT SUM(f.amount)
-            FROM fees f
-            JOIN students st ON f.student_id = st.id
-            WHERE st.user_id = $2 AND st."deletedAt" IS NULL
-          ), 0) AS total_paid
-      `,
-        [academicYearId, userId]
-      );
-    }
-    const row = result.rows[0];
-    const totalExpected = parseFloat(row?.total_expected) || 0;
-    const totalPaid = parseFloat(row?.total_paid) || 0;
-    res.json({ totalPaid, totalOwed: Math.max(0, totalExpected - totalPaid) });
+    const totals = await fetchFeeTotals(pool, {
+      academicYearId,
+      userId: isAdminLike(userRole) ? null : userId,
+    });
+    res.json(totals);
   } catch (error) {
     console.error("Error fetching fee totals:", error);
     res.status(500).json({ error: "Error fetching totals", details: error.message });
