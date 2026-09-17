@@ -35,21 +35,10 @@ router.post("/assume", async (req, res) => {
       return res.status(400).json({ error: "A role is required" });
     }
 
-    const rawUserId = req.body?.userId;
-    let userId = null;
-    if (rawUserId !== undefined && rawUserId !== null && rawUserId !== "") {
-      userId = Number(rawUserId);
-      if (!Number.isInteger(userId) || userId <= 0) {
-        return res.status(400).json({ error: "Invalid account selected" });
-      }
-    }
-
-    const account = await findAccountForRole(role, userId);
+    const account = await findAccountForRole(role);
     if (!account) {
       return res.status(404).json({
-        error: userId
-          ? "That account is no longer available for this role"
-          : `No active ${role} account exists yet`,
+        error: `No dedicated ${role} workspace is available yet`,
       });
     }
 

@@ -1,5 +1,6 @@
 const express = require("express");
 const { pool, authenticateToken } = require("./utils");
+const { NOT_SYSTEM_SQL } = require("../src/services/superAdminSlots.service");
 
 const router = express.Router();
 
@@ -19,6 +20,7 @@ router.get("/users", authenticateToken, async (req, res) => {
         FROM users u
         LEFT JOIN user_activities ua ON u.id = ua.user_id
         LEFT JOIN user_sessions us ON u.id = us.user_id
+        WHERE COALESCE(u.is_system, FALSE) = FALSE
         GROUP BY u.id, u.name, u.username, u.role, u.email, u.contact, u.created_at, u.suspended
         ORDER BY u.created_at DESC
       `);
@@ -33,6 +35,7 @@ router.get("/users", authenticateToken, async (req, res) => {
           0 as activity_count,
           0 as session_count
         FROM users
+        WHERE ${NOT_SYSTEM_SQL}
         ORDER BY created_at DESC
       `);
       res.json(result.rows);

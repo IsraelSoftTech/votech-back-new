@@ -316,6 +316,16 @@ async function runMigrations() {
   }
 
   try {
+    const { run: runSuperAdminSlotsStep1 } = require("./src/db/migrations/superAdminSlots.step1");
+    await runSuperAdminSlotsStep1(pool);
+    const { ensureSuperAdminSlots } = require("./src/services/superAdminSlots.service");
+    await ensureSuperAdminSlots();
+    console.log("✅ Super admin role workspaces ready");
+  } catch (err) {
+    console.warn("⚠️ Migration (super admin slots):", err.message);
+  }
+
+  try {
     await pool.query(`
       ALTER TABLE students ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'
     `);

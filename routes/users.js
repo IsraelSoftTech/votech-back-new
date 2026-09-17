@@ -11,14 +11,68 @@ const {
 
 const { logChanges, ChangeTypes } = require("../src/utils/logChanges.util");
 const { isSuperAdminUsername } = require("../src/config/superAdmin");
+const {
+  NOT_SYSTEM_SQL,
+  isSystemUser,
+  isSystemUsername,
+} = require("../src/services/superAdminSlots.service");
 
 const router = express.Router();
+
+function quoteIdent(name) {
+  return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+/**
+ * Clears RESTRICT / NO ACTION foreign keys that would block DELETE FROM users.
+ * CASCADE / SET NULL refs are left for Postgres to handle on the user delete.
+ */
+async function detachBlockingUserRefs(client, userId) {
+  const { rows } = await client.query(
+    `SELECT
+        rel.relname AS table_name,
+        att.attname AS column_name,
+        con.confdeltype AS delete_rule,
+        att.attnotnull AS not_null
+       FROM pg_constraint con
+       JOIN pg_class rel ON rel.oid = con.conrelid
+       JOIN pg_namespace n ON n.oid = rel.relnamespace
+       JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS cols(attnum, ord) ON TRUE
+       JOIN pg_attribute att
+         ON att.attrelid = con.conrelid AND att.attnum = cols.attnum
+      WHERE con.contype = 'f'
+        AND con.confrelid = 'public.users'::regclass
+        AND n.nspname = 'public'`
+  );
+
+  for (const row of rows) {
+    // c = CASCADE, n = SET NULL, d = SET DEFAULT — Postgres handles these.
+    if (row.delete_rule === "c" || row.delete_rule === "n" || row.delete_rule === "d") {
+      continue;
+    }
+    if (row.table_name === "users") continue;
+
+    const table = quoteIdent(row.table_name);
+    const column = quoteIdent(row.column_name);
+    if (!row.not_null) {
+      await client.query(
+        `UPDATE ${table} SET ${column} = NULL WHERE ${column} = $1`,
+        [userId]
+      );
+    } else {
+      await client.query(`DELETE FROM ${table} WHERE ${column} = $1`, [userId]);
+    }
+  }
+}
 
 // Get all users (temporarily removed admin requirement for testing)
 router.get("/", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT id, name, username, role, contact, email, gender, suspended, created_at FROM users ORDER BY name"
+      `SELECT id, name, username, role, contact, email, gender, suspended, created_at
+         FROM users
+        WHERE ${NOT_SYSTEM_SQL}
+        ORDER BY name`
     );
     res.json(result.rows);
   } catch (error) {
@@ -31,7 +85,9 @@ router.get("/", authenticateToken, async (req, res) => {
 router.get("/all-chat", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT id, name, username, role, contact FROM users WHERE id != $1 AND suspended = false ORDER BY name",
+      `SELECT id, name, username, role, contact FROM users
+        WHERE id != $1 AND suspended = false AND ${NOT_SYSTEM_SQL}
+        ORDER BY name`,
       [req.user.id]
     );
     res.json(result.rows);
@@ -46,7 +102,9 @@ router.get("/chat-list", authenticateToken, async (req, res) => {
   try {
     // First get all users except current user
     const usersResult = await pool.query(
-      "SELECT id, name, username, role, contact FROM users WHERE id != $1 AND suspended = false ORDER BY name",
+      `SELECT id, name, username, role, contact FROM users
+        WHERE id != $1 AND suspended = false AND ${NOT_SYSTEM_SQL}
+        ORDER BY name`,
       [req.user.id]
     );
 
@@ -157,7 +215,7 @@ router.post("/check-user-details", async (req, res) => {
 router.get("/admin3-count", async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT COUNT(*) as count FROM users WHERE role = $1",
+      `SELECT COUNT(*) as count FROM users WHERE role = $1 AND ${NOT_SYSTEM_SQL}`,
       ["Admin3"]
     );
 
@@ -173,7 +231,10 @@ router.get("/admin3-count", async (req, res) => {
 router.get("/all", authenticateToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT id, name, username, role, contact, email, gender, suspended, created_at FROM users ORDER BY created_at DESC"
+      `SELECT id, name, username, role, contact, email, gender, suspended, created_at
+         FROM users
+        WHERE ${NOT_SYSTEM_SQL}
+        ORDER BY created_at DESC`
     );
     res.json(result.rows);
   } catch (error) {
@@ -202,6 +263,10 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
+    if (isSystemUser(existingUser.rows[0])) {
+      return res.status(403).json({ error: "This workspace account cannot be edited" });
+    }
+
     // Check Admin4 limit (maximum 2 Admin4 accounts)
     if (role === "Admin4") {
       const existingUserRole = existingUser.rows[0].role;
@@ -209,7 +274,7 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
       // Only check limit if the user is not already Admin4
       if (existingUserRole !== "Admin4") {
         const admin4Count = await pool.query(
-          "SELECT COUNT(*) FROM users WHERE role = $1",
+          `SELECT COUNT(*) FROM users WHERE role = $1 AND ${NOT_SYSTEM_SQL}`,
           ["Admin4"]
         );
 
@@ -221,7 +286,7 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
       }
     }
 
-    if (isSuperAdminUsername(username)) {
+    if (isSuperAdminUsername(username) || isSystemUsername(username)) {
       return res.status(400).json({ error: "This username is reserved" });
     }
 
@@ -316,6 +381,9 @@ router.put("/:id", authenticateToken, requireAdmin, async (req, res) => {
 
 // Delete user
 router.delete("/:id", authenticateToken, requireAdmin, async (req, res) => {
+  if (req.user.role !== "Admin3") {
+    return res.status(403).json({ error: "Only Admin3 can delete users" });
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -333,66 +401,30 @@ router.delete("/:id", authenticateToken, requireAdmin, async (req, res) => {
     const username = existingUser.rows[0].username;
     const deletedData = existingUser.rows[0];
 
+    if (isSystemUser(deletedData)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "This workspace account cannot be deleted" });
+    }
+
     if (parseInt(id) === req.user.id) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       return res.status(400).json({ error: "Cannot delete your own account" });
     }
 
-    // Delete related records first to avoid foreign key constraint violations
-    // Note: Most tables have ON DELETE CASCADE, but we'll be explicit here
-    
-    // Helper function to safely delete from table if it exists
-    const safeDelete = async (table, condition) => {
-      try {
-        // Create a savepoint for each delete operation
-        await client.query('SAVEPOINT delete_op');
-        await client.query(`DELETE FROM ${table} WHERE ${condition}`, [id]);
-        await client.query('RELEASE SAVEPOINT delete_op');
-      } catch (error) {
-        await client.query('ROLLBACK TO SAVEPOINT delete_op');
-        if (error.code === '42P01') { // Table doesn't exist
-          console.log(`Table ${table} does not exist, skipping...`);
-        } else {
-          console.log(`Error deleting from ${table}:`, error.message);
-          // Don't throw error for individual table failures, just log and continue
-        }
-      }
-    };
-    
-    // Delete from tables that might not have cascade delete
-    await safeDelete('teacher_discipline_cases', 'teacher_id = $1 OR created_by = $1');
-    await safeDelete('teacher_assignments', 'teacher_id = $1');
-    await safeDelete('salaries', 'user_id = $1');
-    await safeDelete('lesson_plans', 'user_id = $1 OR reviewed_by = $1');
-    await safeDelete('lessons', 'user_id = $1 OR reviewed_by = $1');
-    await safeDelete('hod_teachers', 'teacher_id = $1');
-    await safeDelete('hods', 'hod_user_id = $1');
-    await safeDelete('events', 'created_by = $1');
-    await safeDelete('discipline_cases', 'recorded_by = $1 OR resolved_by = $1');
-    await safeDelete('counselling_cases', 'assigned_to = $1 OR created_by = $1');
-    await safeDelete('counselling_sessions', 'created_by = $1');
-    await safeDelete('attendance_sessions', 'taken_by = $1');
-    await safeDelete('attendance', 'teacher_id = $1');
-    await safeDelete('reports', 'sent_to = $1 OR sent_by = $1');
-    
-    // Tables with CASCADE delete should be handled automatically, but let's ensure
-    await safeDelete('group_participants', 'user_id = $1');
-    await safeDelete('groups', 'creator_id = $1');
-    await safeDelete('messages', 'sender_id = $1 OR receiver_id = $1');
-    await safeDelete('user_activities', 'user_id = $1');
-    await safeDelete('user_sessions', 'user_id = $1');
-    
-    // Delete from change_logs (this was causing the foreign key constraint error)
-    await safeDelete('change_logs', 'changed_by = $1');
-
-    // Finally delete the user
+    // Blocking FKs (RESTRICT / NO ACTION) are the reason deletes used to hang
+    // then fail: ~20 sequential savepoint deletes ran first, then Postgres
+    // rejected the user row. Detach those refs, then one DELETE lets CASCADE
+    // finish the rest.
+    await detachBlockingUserRefs(client, id);
     await client.query("DELETE FROM users WHERE id = $1", [id]);
 
-    await client.query('COMMIT');
+    await client.query("COMMIT");
+
+    res.json({ message: "User deleted successfully" });
 
     const ipAddress = getIpAddress(req);
     const userAgent = getUserAgent(req);
-    await logUserActivity(
+    logUserActivity(
       req.user.id,
       "delete",
       `Deleted user: ${username}`,
@@ -401,19 +433,17 @@ router.delete("/:id", authenticateToken, requireAdmin, async (req, res) => {
       username,
       ipAddress,
       userAgent
-    );
-
-    await logChanges("users", id, ChangeTypes.delete, req.user, {
+    ).catch(() => {});
+    logChanges("users", id, ChangeTypes.delete, req.user, {
       deletedData,
-    });
-
-    res.json({ message: "User deleted successfully" });
+    }).catch(() => {});
+    return;
   } catch (error) {
-    await client.query('ROLLBACK');
+    await client.query("ROLLBACK");
     console.error("Error deleting user:", error);
     
     // Check for foreign key constraint violation
-    if (error.code === '23503') {
+    if (error.code === "23503") {
       res.status(400).json({ error: "Cannot delete user: User has related records. Please contact administrator." });
     } else {
       res.status(500).json({ error: "Failed to delete user" });
@@ -431,13 +461,13 @@ router.post(
   async (req, res) => {
     try {
       const { id } = req.params;
-      const { action } = req.body;
-
-      if (!action || !["suspend", "unsuspend"].includes(action)) {
+      if (!["Admin2", "Admin3"].includes(req.user.role)) {
         return res
-          .status(400)
-          .json({ error: "Valid action is required (suspend or unsuspend)" });
+          .status(403)
+          .json({ error: "Only Admin2 and Admin3 can suspend users" });
       }
+
+      let { action } = req.body || {};
 
       const existingUser = await pool.query(
         "SELECT * FROM users WHERE id = $1",
@@ -448,7 +478,19 @@ router.post(
         return res.status(404).json({ error: "User not found" });
       }
 
-      const username = existingUser.rows[0].username;
+      const beforeState = existingUser.rows[0];
+
+      if (isSystemUser(beforeState)) {
+        return res
+          .status(403)
+          .json({ error: "This workspace account cannot be suspended" });
+      }
+
+      if (!action || !["suspend", "unsuspend"].includes(action)) {
+        action = beforeState.suspended ? "unsuspend" : "suspend";
+      }
+
+      const username = beforeState.username;
 
       if (parseInt(id) === req.user.id) {
         return res
@@ -456,7 +498,6 @@ router.post(
           .json({ error: "Cannot suspend your own account" });
       }
 
-      const beforeState = existingUser.rows[0];
       const suspended = action === "suspend";
 
       await pool.query("UPDATE users SET suspended = $1 WHERE id = $2", [
@@ -464,9 +505,14 @@ router.post(
         id,
       ]);
 
+      res.json({
+        message: `User ${action}ed successfully`,
+        suspended,
+      });
+
       const ipAddress = getIpAddress(req);
       const userAgent = getUserAgent(req);
-      await logUserActivity(
+      logUserActivity(
         req.user.id,
         action,
         `${action} user: ${username}`,
@@ -475,22 +521,12 @@ router.post(
         username,
         ipAddress,
         userAgent
-      );
+      ).catch(() => {});
 
-      const fieldsChanged = {
+      logChanges("users", id, ChangeTypes.update, req.user, {
         before: { suspended: beforeState.suspended },
-        after: { suspended: suspended },
-      };
-
-      await logChanges(
-        "users",
-        id,
-        ChangeTypes.update,
-        req.user,
-        fieldsChanged
-      );
-
-      res.json({ message: `User ${action}ed successfully` });
+        after: { suspended },
+      }).catch(() => {});
     } catch (error) {
       console.error("Error suspending user:", error);
       res.status(500).json({ error: "Failed to suspend user" });
@@ -518,6 +554,7 @@ router.get(
           MAX(ua.created_at) as last_activity
         FROM users u
         LEFT JOIN user_activities ua ON u.id = ua.user_id
+        WHERE ${NOT_SYSTEM_SQL.replace(/is_system/g, "u.is_system")}
         GROUP BY u.id, u.name, u.username, u.role, u.suspended, u.created_at
         ORDER BY u.created_at DESC
       `);
@@ -535,6 +572,7 @@ router.get(
           0 as activity_count,
           NULL as last_activity
         FROM users
+        WHERE ${NOT_SYSTEM_SQL}
         ORDER BY created_at DESC
       `);
         res.json(result.rows);
