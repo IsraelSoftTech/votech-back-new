@@ -39,6 +39,7 @@ async function resolveParticipantsCsv(pool, body) {
       SELECT username
       FROM users
       WHERE COALESCE(suspended, false) = false
+        AND COALESCE(is_system, false) = false
         AND username IS NOT NULL
         AND TRIM(username) <> ''
       ORDER BY username

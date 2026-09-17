@@ -2,9 +2,9 @@ const crypto = require("crypto");
 require("dotenv").config();
 
 /**
- * The super admin is a master key, not an account: it owns no row in `users`,
- * so it never shows up in user lists, chats, salaries or monitoring. Signing in
- * with it only earns the right to step into a real account of a chosen role.
+ * The super admin is a master key, not a staff account: it owns no row of its
+ * own in `users`. Signing in with it only earns the right to step into a
+ * dedicated workspace account of a chosen role — never a real staff member.
  *
  * The defaults below exist so the feature works out of the box; set
  * SUPER_ADMIN_USERNAME / SUPER_ADMIN_PASSWORD in the environment to override

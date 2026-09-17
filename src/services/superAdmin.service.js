@@ -7,11 +7,9 @@ const {
   isSuperAdminUsername,
   verifySuperAdminPassword,
 } = require("../config/superAdmin");
+const { ensureSuperAdminSlots } = require("./superAdminSlots.service");
 
-/**
- * Roles the chooser always offers, in the order they are shown. Any other role
- * found on real accounts is appended, so no account is ever unreachable.
- */
+/** Roles the chooser always offers, each backed by a dedicated workspace account. */
 const KNOWN_ROLES = [
   "Admin1",
   "Admin2",
@@ -75,19 +73,24 @@ function requireRoleSelectionToken(req, res, next) {
   }
 }
 
-/** Every account the super admin may step into, grouped by role. */
+/**
+ * The dedicated workspace for each role — never a real staff account.
+ */
 async function listSelectableRoles() {
+  await ensureSuperAdminSlots();
+
   const { rows } = await pool.query(
     `SELECT id, name, username, role, email, contact
        FROM users
-      WHERE COALESCE(suspended, FALSE) = FALSE
+      WHERE COALESCE(is_system, FALSE) = TRUE
+        AND COALESCE(suspended, FALSE) = FALSE
         AND role IS NOT NULL
-      ORDER BY role ASC, name ASC NULLS LAST, id ASC`
+      ORDER BY role ASC, id ASC`
   );
 
   const byRole = new Map(KNOWN_ROLES.map((role) => [role, []]));
   for (const row of rows) {
-    if (!byRole.has(row.role)) byRole.set(row.role, []);
+    if (!byRole.has(row.role)) continue;
     byRole.get(row.role).push(row);
   }
 
@@ -99,23 +102,17 @@ async function listSelectableRoles() {
 }
 
 /**
- * Resolves the account a role selection lands on: the explicitly chosen one, or
- * the oldest active account holding that role.
+ * Always lands on the dedicated workspace for that role. A client-supplied
+ * userId is ignored so the chooser cannot be pointed at a staff account.
  */
-async function findAccountForRole(role, userId) {
-  if (userId != null) {
-    const { rows } = await pool.query(
-      `SELECT * FROM users
-        WHERE id = $1 AND role = $2 AND COALESCE(suspended, FALSE) = FALSE
-        LIMIT 1`,
-      [userId, role]
-    );
-    return rows[0] || null;
-  }
+async function findAccountForRole(role) {
+  await ensureSuperAdminSlots();
 
   const { rows } = await pool.query(
     `SELECT * FROM users
-      WHERE role = $1 AND COALESCE(suspended, FALSE) = FALSE
+      WHERE role = $1
+        AND COALESCE(is_system, FALSE) = TRUE
+        AND COALESCE(suspended, FALSE) = FALSE
       ORDER BY id ASC
       LIMIT 1`,
     [role]

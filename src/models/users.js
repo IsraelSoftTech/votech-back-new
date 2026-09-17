@@ -63,6 +63,11 @@ module.exports = (sequelizeInstance = sequelize) => {
         allowNull: true,
         defaultValue: false,
       },
+      is_system: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+      },
     },
     {
       sequelize,

@@ -63,7 +63,9 @@ const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mov"]);
 
 /** Per-type ceilings, enforced in the handler; multer's limit is global. */
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
-const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+/** Uploaded / stored videos are capped at 15MB. Larger originals are compressed on the client first. */
+const MAX_VIDEO_BYTES = 15 * 1024 * 1024;
+const MAX_VIDEO_SOURCE_BYTES = 200 * 1024 * 1024;
 
 /** Remote FTP folder for guide attachments. */
 const REMOTE_DIR = "user_guides";
@@ -165,7 +167,7 @@ function handleGuideUpload(req, res, next) {
 
     if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(413).json({
-        error: `File is too large. The maximum is ${formatMb(MAX_VIDEO_BYTES)}. For long videos, add the guide as a link instead.`,
+        error: `File is too large. Videos are stored at ${formatMb(MAX_VIDEO_BYTES)} or less. For long videos, add the guide as a link instead.`,
       });
     }
     if (err.code === "LIMIT_FILE_COUNT" || err.code === "LIMIT_UNEXPECTED_FILE") {
@@ -224,7 +226,7 @@ function assertUploadMatchesType(file, contentType) {
     if (file.size > MAX_VIDEO_BYTES) {
       throw httpError(
         413,
-        `Videos are limited to ${formatMb(MAX_VIDEO_BYTES)}. Add longer videos as a link instead.`
+        `Videos must be ${formatMb(MAX_VIDEO_BYTES)} or less after compression. Add longer videos as a link instead.`
       );
     }
     return;
@@ -542,6 +544,7 @@ router.get("/meta/roles", requireGuideAdmin, (req, res) => {
     limits: {
       documentBytes: MAX_DOCUMENT_BYTES,
       videoBytes: MAX_VIDEO_BYTES,
+      videoSourceBytes: MAX_VIDEO_SOURCE_BYTES,
       documentExtensions: [...DOC_EXTENSIONS],
       videoExtensions: [...VIDEO_EXTENSIONS],
     },

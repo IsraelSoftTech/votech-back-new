@@ -14,6 +14,11 @@ const {
   verifySuperAdminPassword,
   signRoleSelectionToken,
 } = require("../src/services/superAdmin.service");
+const {
+  NOT_SYSTEM_SQL,
+  isSystemUser,
+  isSystemUsername,
+} = require("../src/services/superAdminSlots.service");
 
 const router = express.Router();
 
@@ -119,6 +124,11 @@ router.post("/login", async (req, res) => {
 
     const user = result.rows[0];
 
+    // Dedicated super-admin workspaces are not password-login accounts.
+    if (isSystemUser(user)) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
     // Check if user is suspended
     if (user.suspended) {
       return res.status(401).json({ error: "Account is suspended" });
@@ -186,13 +196,13 @@ router.post("/register", async (req, res) => {
     }
 
     // The master credentials must never be claimable by a real account.
-    if (isSuperAdminUsername(username)) {
+    if (isSuperAdminUsername(username) || isSystemUsername(username)) {
       return res.status(400).json({ error: "This username is reserved" });
     }
 
     if (role === "Admin4") {
       const admin4Count = await pool.query(
-        "SELECT COUNT(*) FROM users WHERE role = $1",
+        `SELECT COUNT(*) FROM users WHERE role = $1 AND ${NOT_SYSTEM_SQL}`,
         ["Admin4"]
       );
       if (parseInt(admin4Count.rows[0].count) >= 2) {
