@@ -11,6 +11,7 @@ const appResponder = require("../utils/appResponder");
 const catchAsync = require("../utils/catchAsync");
 const { sequelize } = require("../db");
 const { applyDefaultYearListFilter } = require("../utils/academicYearScope.util");
+const { getActiveYear } = require("../services/activeAcademicYear.service");
 const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
 const { parsePagination, buildPaginationMeta } = require("../utils/pagination.util");
 const { uploadSingleFileToFTP } = require("../services/fileStorage.service");
@@ -158,11 +159,25 @@ async function buildStudentWhere(query) {
 }
 
 const readAllStudents = catchAsync(async (req, res) => {
+  // ?pending_placement=true: active students still sitting in an older
+  // year after a switch (see studentPlacement.controller.js). They are by
+  // definition NOT in the active year, so the default year scope must be
+  // lifted and replaced by "active AND not the active year".
+  const pendingOnly = req.query.pending_placement === "true" || req.query.pending_placement === true;
+  if (pendingOnly) {
+    req.query.all_years = "true";
+    delete req.query.academic_year_id;
+    req.query.status = "active";
+  }
   await applyDefaultYearListFilter(req);
   const { page, limit, offset } = parsePagination(req.query, { defaultLimit: 20, maxLimit: 200 });
   const sortBy = STUDENT_SORT_FIELDS[req.query.sortBy] || "full_name";
   const sortDir = String(req.query.sortDir).toLowerCase() === "desc" ? "DESC" : "ASC";
   const where = await buildStudentWhere(req.query);
+  if (pendingOnly) {
+    const active = await getActiveYear();
+    if (active?.id) where.academic_year_id = { [Op.ne]: active.id };
+  }
 
   const { rows, count } = await models.Student.findAndCountAll({
     where,

@@ -8,36 +8,34 @@ const models = require("../models/index.model");
 async function getAcademicYearLinkedCounts(yearId, transaction = null) {
   const queryOpts = transaction ? { transaction } : {};
 
-  const [students, marks, bands, reportCards, snapshots] = await Promise.all([
-    models.Student.count({
-      where: { academic_year_id: yearId },
-      ...queryOpts,
-    }),
-    models.Mark.count({
-      where: { academic_year_id: yearId },
-      ...queryOpts,
-    }),
-    models.AcademicBand.count({
-      where: { academic_year_id: yearId },
-      ...queryOpts,
-    }),
-    models.ReportCardComment.count({
-      where: { academic_year_id: yearId },
-      ...queryOpts,
-    }),
-    models.ReportCardSnapshot.count({
-      where: { academic_year_id: yearId },
-      ...queryOpts,
-    }),
-  ]);
-
+  // Each count is independent: one table that cannot be counted (e.g. a
+  // deployment where it was never created) is reported in `errors` instead
+  // of failing the whole check. Callers that DELETE must treat a non-empty
+  // `errors` as "cannot verify" and refuse; read-only callers just show it.
+  const targets = [
+    ["students", models.Student],
+    ["marks", models.Mark],
+    ["bands", models.AcademicBand],
+    ["reportCards", models.ReportCardComment],
+    ["snapshots", models.ReportCardSnapshot],
+  ];
+  const settled = await Promise.allSettled(
+    targets.map(([, model]) => model.count({ where: { academic_year_id: yearId }, ...queryOpts }))
+  );
+  const counts = {};
+  const errors = [];
+  settled.forEach((r, i) => {
+    const key = targets[i][0];
+    if (r.status === "fulfilled") counts[key] = r.value;
+    else {
+      counts[key] = 0;
+      errors.push(`${key}: ${r.reason?.parent?.message || r.reason?.message || "count failed"}`);
+    }
+  });
   return {
-    students,
-    marks,
-    bands,
-    reportCards,
-    snapshots,
-    total: students + marks + bands + reportCards + snapshots,
+    ...counts,
+    total: Object.values(counts).reduce((n, v) => n + v, 0),
+    errors,
   };
 }
 

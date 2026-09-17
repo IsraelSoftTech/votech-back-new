@@ -36,6 +36,10 @@ const student_promotions = require("./StudentPromotion.model")(
   sequelize,
   DataTypes
 );
+const student_status_changes = require("./StudentStatusChange.model")(
+  sequelize,
+  DataTypes
+);
 const promotion_run_lock = require("./PromotionRunLock.model")(
   sequelize,
   DataTypes
@@ -696,6 +700,7 @@ const models = {
   PromotionRun: promotion_runs,
   PromotionRunMove: promotion_run_moves,
   StudentPromotion: student_promotions,
+  StudentStatusChange: student_status_changes,
   PromotionRunLock: promotion_run_lock,
   ReportCardSession: report_card_sessions,
   ReportCardRun: report_card_runs,

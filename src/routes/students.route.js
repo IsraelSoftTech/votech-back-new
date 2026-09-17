@@ -5,6 +5,7 @@ const { protect, restrictTo } = require("../controllers/auth.controller");
 const transcriptControllers = require("../controllers/transcript.controller");
 const { singleStudentReportCardByYear } = require("../controllers/reportCardPdfGenerator");
 const { attachRequestContext } = require("../utils/requestContext.util");
+const placementControllers = require("../controllers/studentPlacement.controller");
 
 const studentRouter = express.Router();
 
@@ -35,6 +36,34 @@ studentRouter
 studentRouter
   .route("/class/:classId/list-pdf")
   .get(studentControllers.classListPdf);
+
+// ── Registration-time placement (studentPlacement.controller.js) ──────
+// Fixed paths registered before "/:id" so Express never reads
+// "pending-placement" or "returning" as a student id.
+studentRouter
+  .route("/pending-placement")
+  .get(restrictTo("Admin1", "Admin3"), placementControllers.listPendingPlacement);
+studentRouter
+  .route("/pending-placement/exit-all")
+  .post(restrictTo("Admin3"), placementControllers.exitAllPending);
+studentRouter
+  .route("/returning")
+  .get(restrictTo("Admin3"), placementControllers.lookupReturning);
+studentRouter
+  .route("/bulk-exit")
+  .post(restrictTo("Admin3"), placementControllers.bulkExit);
+studentRouter
+  .route("/:id/place")
+  .post(restrictTo("Admin3"), placementControllers.placeStudent);
+studentRouter
+  .route("/:id/exit")
+  .post(restrictTo("Admin3"), placementControllers.exitStudent);
+studentRouter
+  .route("/:id/exit/revert")
+  .post(restrictTo("Admin3"), placementControllers.revertExit);
+studentRouter
+  .route("/:id/status-history")
+  .get(restrictTo("Admin1", "Admin3"), placementControllers.getStatusHistory);
 
 studentRouter.route("/:id/transcript").get(transcriptControllers.getTranscript);
 studentRouter.route("/:id/transcript/pdf").get(transcriptControllers.getTranscriptPdf);

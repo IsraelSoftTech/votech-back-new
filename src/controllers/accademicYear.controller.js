@@ -46,7 +46,12 @@ async function initAcademicYear() {
   }
 }
 
-async function isOverlapping(
+// Returns the year the given dates collide with (or null). Soft-deleted
+// years never count: the model is paranoid, so Sequelize adds
+// "deletedAt IS NULL" itself. When this reports an overlap, the year it
+// names really exists, usually one a delete was refused on because it
+// still had linked data.
+async function findOverlappingYear(
   start_date,
   end_date,
   excludeId = null,
@@ -60,12 +65,14 @@ async function isOverlapping(
   };
   if (excludeId) whereClause.id = { [Op.ne]: excludeId };
 
-  const overlap = await AcademicYearModel.findOne({
+  return AcademicYearModel.findOne({
     where: whereClause,
+    attributes: ["id", "name", "start_date", "end_date", "status"],
     transaction,
   });
-  return !!overlap;
 }
+
+const fmtDay = (d) => (d ? new Date(d).toLocaleDateString("en-GB") : "?");
 
 function isDurationValid(start_date, end_date) {
   const start = new Date(start_date);
@@ -85,10 +92,15 @@ async function validateAcademicYearInput(data, id = null, transaction = null) {
     throw new AppError("Start date must be before end date");
   if (!isDurationValid(start_date, end_date))
     throw new AppError("Academic year must be between 6 months and 1 year");
-  if (await isOverlapping(start_date, end_date, id, transaction))
+  const clash = await findOverlappingYear(start_date, end_date, id, transaction);
+  if (clash) {
     throw new AppError(
-      "Academic year dates overlap with existing academic year"
+      `These dates overlap "${clash.name}" (${clash.status}, ${fmtDay(clash.start_date)} to ${fmtDay(
+        clash.end_date
+      )}). Change the dates, or delete that year first if it is a mistake.`,
+      StatusCodes.CONFLICT
     );
+  }
 
   const existingName = await AcademicYearModel.findOne({
     where: { name, id: { [Op.ne]: id } },
@@ -280,7 +292,19 @@ const readAllAcademicYears = catchAsync(async (req, res, next) => {
     return appResponder(StatusCodes.OK, active ? [active] : [], res);
   }
 
-  await CRUDAcademicYear.readAll(res, req, "", 1, 100);
+  // Not CRUDAcademicYear.readAll: that helper copies the raw query string
+  // into the SQL where-clause, so "?all=true" became `WHERE all = true`
+  // and 500ed ("column AcademicYear.all does not exist"). Archived years
+  // were therefore never listed anywhere, which is how a year that could
+  // not be deleted looked deleted.
+  const years = await AcademicYearModel.findAll({
+    order: [
+      ["start_date", "DESC"],
+      ["id", "DESC"],
+    ],
+  });
+  const appResponder = require("../utils/appResponder");
+  return appResponder(StatusCodes.OK, years, res);
 });
 
 const updateAcademicYear = catchAsync(async (req, res, next) => {
@@ -365,10 +389,22 @@ const deleteAcademicYear = catchAsync(async (req, res, next) => {
   }
 
   const linked = await getAcademicYearLinkedCounts(id);
+  if (linked.errors && linked.errors.length) {
+    // Fail closed: never delete a year whose linked data could not be
+    // fully verified.
+    return next(
+      new AppError(
+        `Cannot verify whether "${academicYear.name}" still has linked data (${linked.errors.join("; ")}). Deletion refused.`,
+        StatusCodes.INTERNAL_SERVER_ERROR
+      )
+    );
+  }
   if (linked.total > 0) {
     return next(
       new AppError(
-        `Cannot delete this academic year because it has linked data: ${formatLinkedDataError(linked)}. Archived years with records must be kept for audit purposes.`,
+        `"${academicYear.name}" cannot be deleted, it still has ${formatLinkedDataError(
+          linked
+        )} linked to it. Move or remove those first (students can be placed into another year or marked as left); archived years with records are kept for audit.`,
         StatusCodes.CONFLICT
       )
     );
@@ -452,22 +488,55 @@ const deleteAcademicYear = catchAsync(async (req, res, next) => {
 // promotion move already moves its students' academic_year_id forward, so
 // anyone left behind here genuinely was never promoted (or was reversed
 // back), regardless of what the PromotionRunMove history says happened.
+// Each class carries its count of not-yet-promoted students, so the switch
+// dialog can say "Class A (41), Class B (24)" and a skipped switch can be
+// logged with the exact number that was left pending.
 async function getStragglerClasses(academicYearId, transaction = null) {
   const rows = await models.Student.findAll({
     where: { academic_year_id: academicYearId, status: "active" },
-    attributes: ["class_id"],
+    attributes: ["class_id", [sequelize.fn("COUNT", sequelize.col("id")), "students"]],
     group: ["class_id"],
     raw: true,
     transaction,
   });
-  const classIds = [...new Set(rows.map((r) => r.class_id).filter(Boolean))];
-  if (!classIds.length) return [];
-  return models.Class.findAll({
-    where: { id: { [Op.in]: classIds } },
+  const countByClass = new Map(rows.filter((r) => r.class_id).map((r) => [Number(r.class_id), Number(r.students)]));
+  if (!countByClass.size) return [];
+  const classes = await models.Class.findAll({
+    where: { id: { [Op.in]: [...countByClass.keys()] } },
     attributes: ["id", "name"],
     raw: true,
     transaction,
   });
+  return classes.map((c) => ({ ...c, pending_students: countByClass.get(c.id) || 0 }));
+}
+
+const pendingTotal = (stragglers) => stragglers.reduce((n, c) => n + (c.pending_students || 0), 0);
+
+// Audit text: the operator's reason plus, when they chose to skip, exactly
+// what was left for registration-time placement.
+function describeSkippedPending(reason, skipped) {
+  const base = reason?.trim?.() || "";
+  if (!skipped || !skipped.length) return base || null;
+  const note = `Switched with ${pendingTotal(skipped)} student(s) in ${skipped.length} class(es) left for placement at registration: ${skipped
+    .map((c) => `${c.name} (${c.pending_students})`)
+    .join(", ")}.`;
+  return base ? `${base} ${note}` : note;
+}
+
+// Both the switch and the rollover refuse while students are still
+// unpromoted, unless the caller explicitly acknowledges leaving them for
+// registration-time placement (studentPlacement.controller.js). Returns
+// the stragglers so the caller can put the count in the audit log.
+async function assertPromotionCompleteOrSkipped(previousActive, body, transaction) {
+  const stragglers = await getStragglerClasses(previousActive.id, transaction);
+  if (!stragglers.length) return stragglers;
+  if (body && body.skip_pending_placement === true) return stragglers;
+  throw new AppError(
+    `Cannot switch years yet, ${pendingTotal(stragglers)} active student(s) in ${stragglers.length} class(es) have not been promoted out of "${previousActive.name}": ${stragglers
+      .map((c) => `${c.name} (${c.pending_students})`)
+      .join(", ")}. Run their promotion first, or resend with skip_pending_placement: true to place them one by one at registration.`,
+    StatusCodes.CONFLICT
+  );
 }
 
 // Read-only preview so the frontend can show the warning/checklist before
@@ -504,6 +573,10 @@ const getSwitchChecklist = catchAsync(async (req, res) => {
       default_next_year: laterYears[0] || null,
       other_years: laterYears.slice(1),
       blocking_classes: blockingClasses,
+      blocking_students_total: pendingTotal(blockingClasses),
+      // The dialog's second option: switch anyway and place these students
+      // one by one as they register (needs skip_pending_placement: true).
+      can_skip_pending_placement: blockingClasses.length > 0,
       promotion_run_in_progress: !!(lock && lock.current_run_id),
     },
   });
@@ -514,6 +587,7 @@ const switchAcademicYear = catchAsync(async (req, res) => {
   // the admin's password (fresh auth, verified against the Admin3 role),
   // older callers sent confirm: true. Either is enough, neither is skipped.
   const { password, confirm, confirm_non_default } = req.body || {};
+  let skippedPending = [];
   if (password) {
     await verifyPasswordAndRole(req.user.id, password, "Admin3");
   } else if (confirm !== true) {
@@ -591,15 +665,7 @@ const switchAcademicYear = catchAsync(async (req, res) => {
         );
       }
 
-      const stragglers = await getStragglerClasses(previousActive.id, t);
-      if (stragglers.length) {
-        throw new AppError(
-          `Cannot switch years yet, ${stragglers.length} class(es) still have active students in "${previousActive.name}" who have not been promoted: ${stragglers
-            .map((c) => c.name)
-            .join(", ")}. Run or finish their promotion first.`,
-          StatusCodes.CONFLICT
-        );
-      }
+      skippedPending = await assertPromotionCompleteOrSkipped(previousActive, req.body, t);
     }
 
     const fromYearId = previousActive?.id ?? null;
@@ -629,7 +695,7 @@ const switchAcademicYear = catchAsync(async (req, res) => {
         action: "switch",
         performed_by: performedBy,
         performed_at: now,
-        reason: req.body.reason?.trim?.() || null,
+        reason: describeSkippedPending(req.body.reason, skippedPending),
         ip_address: getIpAddress(req),
       },
       req.user,
@@ -751,6 +817,13 @@ const rolloverAcademicYear = catchAsync(async (req, res) => {
       ? previousActive.get({ plain: true })
       : null;
 
+    // Rollover archives the current year exactly like a switch does, so it
+    // gets the same "everyone promoted, or explicitly skipped" rule; it
+    // used to be a silent way around that check.
+    const skippedPending = previousActive
+      ? await assertPromotionCompleteOrSkipped(previousActive, req.body, t)
+      : [];
+
     const payload = {
       name,
       start_date,
@@ -812,9 +885,7 @@ const rolloverAcademicYear = catchAsync(async (req, res) => {
         action: "switch",
         performed_by: performedBy,
         performed_at: now,
-        reason:
-          req.body.reason?.trim?.() ||
-          `Rollover to ${name}`,
+        reason: describeSkippedPending(req.body.reason?.trim?.() || `Rollover to ${name}`, skippedPending),
         ip_address: getIpAddress(req),
       },
       req.user,
@@ -1159,6 +1230,8 @@ const getAcademicYearSwitchLogs = catchAsync(async (req, res) => {
 // check (getStragglerClasses above), so the detail page can never disagree
 // with the screens it links to.
 
+const plainYearStatus = (year) => (year && year.get ? year.get("status") : year?.status);
+
 const getAcademicYearOverview = catchAsync(async (req, res, next) => {
   const yearId = parseYearId(req.params.id);
   // models.AcademicYear, not this file's AcademicYearModel: the
@@ -1310,6 +1383,16 @@ const getAcademicYearOverview = catchAsync(async (req, res, next) => {
         .reduce((n, r) => n + r.active_students, 0)
     : 0;
 
+  // Only meaningful for the active year: students still sitting in an
+  // older year after a switch that skipped their promotion (see
+  // studentPlacement.controller.js), the number the registration desk
+  // has to work down to zero.
+  const pendingPlacement =
+    plainYearStatus(year) === "active"
+      ? await q(`SELECT COUNT(*)::int AS students, COUNT(DISTINCT class_id)::int AS classes
+                 FROM students WHERE status = 'active' AND academic_year_id <> :yearId AND "deletedAt" IS NULL`)
+      : [{ students: 0, classes: 0 }];
+
   const now = new Date();
   const isAdmin1 = req.user?.role === "Admin1";
   // Grants are Admin1's business (same rule as academicYearGrant.route.js),
@@ -1328,10 +1411,20 @@ const getAcademicYearOverview = catchAsync(async (req, res, next) => {
 
   const userLabel = (u) => (u ? u.name || u.username : null);
   const plainYear = year.get({ plain: true });
+  // Same counts the delete endpoint refuses on, so the page can say up
+  // front whether this year can be deleted and why not.
+  const linked = await getAcademicYearLinkedCounts(yearId);
 
   res.status(StatusCodes.OK).json({
     success: true,
     data: {
+      deletion: {
+        can_delete: plainYear.status !== "active" && linked.total === 0 && !(linked.errors || []).length,
+        blocked_by_active: plainYear.status === "active",
+        verified: !(linked.errors || []).length,
+        linked,
+        linked_summary: linked.total ? formatLinkedDataError(linked) : null,
+      },
       year: {
         id: plainYear.id,
         name: plainYear.name,
@@ -1406,6 +1499,8 @@ const getAcademicYearOverview = catchAsync(async (req, res, next) => {
         active_grants: grants ? grants.filter((g) => !g.revoked_at && new Date(g.expires_at) > now).length : null,
       },
       setup_health: {
+        pending_placement_students: pendingPlacement[0]?.students || 0,
+        pending_placement_classes: pendingPlacement[0]?.classes || 0,
         classes_without_master: classesWithStudents
           .filter((r) => !r.has_class_master)
           .map((r) => ({ class_id: r.class_id, class_name: r.class_name })),
