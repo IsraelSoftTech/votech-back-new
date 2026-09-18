@@ -129,7 +129,66 @@ async function fetchFeeTotalsByClass(pool, { academicYearId, userId = null }) {
   }));
 }
 
+async function fetchMonthlyPayments(pool, { userId = null }) {
+  const scoped = userId != null;
+  const sql = scoped
+    ? `SELECT date_trunc('month', f.paid_at) AS month_start,
+              COALESCE(SUM(f.amount), 0) AS paid
+       FROM fees f
+       INNER JOIN students s ON s.id = f.student_id AND s."deletedAt" IS NULL AND s.user_id = $1
+       WHERE f.paid_at IS NOT NULL
+       GROUP BY date_trunc('month', f.paid_at)
+       ORDER BY month_start`
+    : `SELECT date_trunc('month', f.paid_at) AS month_start,
+              COALESCE(SUM(f.amount), 0) AS paid
+       FROM fees f
+       INNER JOIN students s ON s.id = f.student_id AND s."deletedAt" IS NULL
+       WHERE f.paid_at IS NOT NULL
+       GROUP BY date_trunc('month', f.paid_at)
+       ORDER BY month_start`;
+  const { rows } = await pool.query(sql, scoped ? [userId] : []);
+  return rows;
+}
+
+function toFeeChart(monthlyRows, totals) {
+  const expected = totals.totalExpected || 0;
+  const fmt = new Intl.DateTimeFormat("en-GB", {
+    month: "short",
+    year: "numeric",
+  });
+  let cumulative = 0;
+  const chart = (monthlyRows || []).map((row) => {
+    cumulative += parseFloat(row.paid) || 0;
+    const d = row.month_start ? new Date(row.month_start) : new Date();
+    return {
+      date: fmt.format(d),
+      paid: cumulative,
+      owed: Math.max(0, expected - cumulative),
+    };
+  });
+  if (!chart.length) {
+    return [
+      {
+        date: "Current",
+        paid: totals.totalPaid || 0,
+        owed: totals.totalOwed || 0,
+      },
+    ];
+  }
+  return chart;
+}
+
+/** Totals plus a monthly paid/owed series — one round-trip for Fee Overview. */
+async function fetchFeeTotalsWithChart(pool, opts) {
+  const [totals, monthly] = await Promise.all([
+    fetchFeeTotals(pool, opts),
+    fetchMonthlyPayments(pool, opts),
+  ]);
+  return { ...totals, chart: toFeeChart(monthly, totals) };
+}
+
 module.exports = {
   fetchFeeTotals,
   fetchFeeTotalsByClass,
+  fetchFeeTotalsWithChart,
 };

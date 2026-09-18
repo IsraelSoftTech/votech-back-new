@@ -13,7 +13,7 @@ const {
   computeBaseFee,
   parseFeeAmount,
 } = require("../src/services/feeCalculation.service");
-const { fetchFeeTotals } = require("../src/services/feeTotals.service");
+const { fetchFeeTotalsWithChart } = require("../src/services/feeTotals.service");
 
 const router = express.Router();
 
@@ -67,7 +67,7 @@ router.get("/totals/summary", authenticateToken, async (req, res) => {
   const userRole = req.user.role;
   try {
     const academicYearId = await getActiveAcademicYearId();
-    const totals = await fetchFeeTotals(pool, {
+    const totals = await fetchFeeTotalsWithChart(pool, {
       academicYearId,
       userId: isAdminLike(userRole) ? null : userId,
     });
