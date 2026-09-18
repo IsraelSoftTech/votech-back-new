@@ -10,6 +10,11 @@ const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
 const {
   getHodAssignment,
 } = require("../src/services/hodStatus.service");
+const {
+  resolveListYearId,
+  getStampYearId,
+  yearParam,
+} = require("../src/utils/yearScopedQuery.util");
 
 const isDesktop = process.env.NODE_ENV === "desktop";
 const db = isDesktop
@@ -113,7 +118,7 @@ const assertCanModifyOwnPlan = (plan, user) => {
   return null;
 };
 
-const buildLessonPlanListQuery = (req) => {
+const buildLessonPlanListQuery = async (req) => {
   const {
     class: classFilter,
     department,
@@ -128,6 +133,10 @@ const buildLessonPlanListQuery = (req) => {
   const isAdmin3User = isAdmin3(req.user);
   const params = [];
   const conditions = [];
+
+  const yearId = yearParam(await resolveListYearId(req));
+  params.push(yearId);
+  conditions.push(`lp.academic_year_id = $${params.length}`);
 
   if (isAdmin3User) {
     conditions.push(`lp.status = 'approved'`);
@@ -316,8 +325,8 @@ router.post("/", authenticateToken, upload.single("file"), async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO lesson_plans (user_id, title, period_type, file_url, class_id, department_id) 
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      `INSERT INTO lesson_plans (user_id, title, period_type, file_url, class_id, department_id, academic_year_id) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
       [
         req.user.id,
         title,
@@ -325,6 +334,7 @@ router.post("/", authenticateToken, upload.single("file"), async (req, res) => {
         fileUrl,
         class_id ? parseInt(class_id, 10) || null : null,
         department_id ? parseInt(department_id, 10) || null : null,
+        await getStampYearId(),
       ]
     );
 
@@ -363,14 +373,15 @@ router.get("/my", authenticateToken, async (req, res) => {
     );
     const offset = (pageNum - 1) * limitNum;
 
+    const yearId = yearParam(await resolveListYearId(req));
     const [result, countResult] = await Promise.all([
       pool.query(
-        `SELECT * FROM lesson_plans WHERE user_id = $1 ORDER BY submitted_at DESC LIMIT $2 OFFSET $3`,
-        [req.user.id, limitNum, offset]
+        `SELECT * FROM lesson_plans WHERE user_id = $1 AND academic_year_id = $4 ORDER BY submitted_at DESC LIMIT $2 OFFSET $3`,
+        [req.user.id, limitNum, offset, yearId]
       ),
       pool.query(
-        `SELECT COUNT(*)::int AS total FROM lesson_plans WHERE user_id = $1`,
-        [req.user.id]
+        `SELECT COUNT(*)::int AS total FROM lesson_plans WHERE user_id = $1 AND academic_year_id = $2`,
+        [req.user.id, yearId]
       ),
     ]);
 
@@ -403,7 +414,7 @@ router.get("/all", authenticateToken, async (req, res) => {
     }
 
     const { sql, countSql, params, pageNum, limitNum } =
-      buildLessonPlanListQuery(req);
+      await buildLessonPlanListQuery(req);
     const countParams = params.slice(0, params.length - 2);
 
     const [result, countResult] = await Promise.all([
@@ -449,8 +460,10 @@ router.get("/hod", authenticateToken, async (req, res) => {
     const offset = (pageNum - 1) * limitNum;
 
     const params = [assignment.department_id, assignment.department_name || ""];
+    const yearId = yearParam(await resolveListYearId(req));
     const conditions = [
       `lp.status = 'approved'`,
+      `lp.academic_year_id = $3`,
       `(
         ($1::int IS NOT NULL AND (
           lp.department_id = $1
@@ -463,6 +476,7 @@ router.get("/hod", authenticateToken, async (req, res) => {
         OR LOWER(TRIM(COALESCE(sp.name, sp2.name, ''))) = LOWER(TRIM($2))
       )`,
     ];
+    params.push(yearId);
 
     if (search) {
       params.push(`%${search}%`);

@@ -2,6 +2,11 @@ const express = require("express");
 const moment = require("moment");
 
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+const {
+  resolveListYearId,
+  getStampYearId,
+  yearParam,
+} = require("../src/utils/yearScopedQuery.util");
 
 module.exports = function createStaffAttendanceRouter(pool, authenticateToken) {
   const router = express.Router();
@@ -91,7 +96,7 @@ module.exports = function createStaffAttendanceRouter(pool, authenticateToken) {
           COUNT(CASE WHEN status = 'Late' THEN 1 END) as late_count,
           COUNT(CASE WHEN status = 'Half Day' THEN 1 END) as half_day_count
         FROM staff_attendance_records 
-        WHERE TO_CHAR(date, 'YYYY-MM') = $1
+        WHERE TO_CHAR(date, 'YYYY-MM') = $1 AND academic_year_id = $2
       `;
 
       // Last month stats
@@ -103,12 +108,13 @@ module.exports = function createStaffAttendanceRouter(pool, authenticateToken) {
           COUNT(CASE WHEN status = 'Late' THEN 1 END) as late_count,
           COUNT(CASE WHEN status = 'Half Day' THEN 1 END) as half_day_count
         FROM staff_attendance_records 
-        WHERE TO_CHAR(date, 'YYYY-MM') = $1
+        WHERE TO_CHAR(date, 'YYYY-MM') = $1 AND academic_year_id = $2
       `;
 
+      const yearId = yearParam(await resolveListYearId(req));
       const [currentResult, lastResult] = await Promise.all([
-        pool.query(currentMonthQuery, [currentMonth]),
-        pool.query(lastMonthQuery, [lastMonth]),
+        pool.query(currentMonthQuery, [currentMonth, yearId]),
+        pool.query(lastMonthQuery, [lastMonth, yearId]),
       ]);
 
       const currentStats = currentResult.rows[0] || {
@@ -217,11 +223,11 @@ module.exports = function createStaffAttendanceRouter(pool, authenticateToken) {
 
       const result = await pool.query(
         `
-        INSERT INTO staff_attendance_records (date, staff_name, time_in, time_out, classes_taught, status)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO staff_attendance_records (date, staff_name, time_in, time_out, classes_taught, status, academic_year_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
       `,
-        [date, staff_name, time_in, time_out, classes_taught, status]
+        [date, staff_name, time_in, time_out, classes_taught, status, await getStampYearId()]
       );
 
       await logChanges(
@@ -251,14 +257,15 @@ module.exports = function createStaffAttendanceRouter(pool, authenticateToken) {
     try {
       const { page = 1, limit = 50, month, year } = req.query;
       const offset = (page - 1) * limit;
+      const yearId = yearParam(await resolveListYearId(req));
 
-      let whereClause = "";
-      let queryParams = [];
-      let paramCount = 0;
+      let whereClause = `WHERE academic_year_id = $1`;
+      let queryParams = [yearId];
+      let paramCount = 1;
 
       if (month && year) {
         paramCount++;
-        whereClause = `WHERE TO_CHAR(date, 'YYYY-MM') = $${paramCount}`;
+        whereClause += ` AND TO_CHAR(date, 'YYYY-MM') = $${paramCount}`;
         queryParams.push(`${year}-${month.padStart(2, "0")}`);
       }
 
@@ -439,11 +446,14 @@ module.exports = function createStaffAttendanceRouter(pool, authenticateToken) {
       const recordsQuery = `
         SELECT date, staff_name, time_in, time_out, classes_taught, status
         FROM staff_attendance_records 
-        WHERE TO_CHAR(date, 'YYYY-MM') = $1
+        WHERE TO_CHAR(date, 'YYYY-MM') = $1 AND academic_year_id = $2
         ORDER BY date ASC, staff_name ASC
       `;
 
-      const recordsResult = await pool.query(recordsQuery, [targetMonth]);
+      const recordsResult = await pool.query(recordsQuery, [
+        targetMonth,
+        yearParam(await resolveListYearId(req)),
+      ]);
       const records = recordsResult.rows;
 
       // Get all staff members (from records and from users table to include all staff)

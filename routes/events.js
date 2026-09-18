@@ -2,6 +2,11 @@ const express = require("express");
 const router = express.Router();
 
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+const {
+  resolveListYearId,
+  getStampYearId,
+  yearParam,
+} = require("../src/utils/yearScopedQuery.util");
 
 const ALL_SENTINEL = "__ALL__";
 
@@ -67,12 +72,17 @@ function decorateEvent(row) {
 function createEventsRouter(pool, authenticateToken) {
   router.get("/", authenticateToken, async (req, res) => {
     try {
-      const result = await pool.query(`
+      const yearId = yearParam(await resolveListYearId(req));
+      const result = await pool.query(
+        `
         SELECT e.*, u.username as created_by_name 
         FROM events e 
         LEFT JOIN users u ON e.created_by = u.id 
+        WHERE e.academic_year_id = $1
         ORDER BY e.event_date DESC, e.event_time DESC
-      `);
+      `,
+        [yearId]
+      );
       res.json(result.rows.map(decorateEvent));
     } catch (error) {
       console.error("Error fetching events:", error);
@@ -129,15 +139,17 @@ function createEventsRouter(pool, authenticateToken) {
           .json({ error: "Start date and end date are required" });
       }
 
+      const yearId = yearParam(await resolveListYearId(req));
       const result = await pool.query(
         `
         SELECT e.*, u.username as created_by_name 
         FROM events e 
         LEFT JOIN users u ON e.created_by = u.id 
         WHERE e.event_date >= $1 AND e.event_date <= $2
+          AND e.academic_year_id = $3
         ORDER BY e.event_date ASC, e.event_time ASC
       `,
-        [start_date, end_date]
+        [start_date, end_date, yearId]
       );
       res.json(result.rows.map(decorateEvent));
     } catch (error) {
@@ -148,18 +160,21 @@ function createEventsRouter(pool, authenticateToken) {
 
   router.get("/my-events", authenticateToken, async (req, res) => {
     try {
+      const yearId = yearParam(await resolveListYearId(req));
       const result = await pool.query(
         `
         SELECT e.*, u.username as created_by_name 
         FROM events e 
         LEFT JOIN users u ON e.created_by = u.id 
-        WHERE e.participants LIKE $1 OR e.participants LIKE $2 OR e.participants LIKE $3
+        WHERE (e.participants LIKE $1 OR e.participants LIKE $2 OR e.participants LIKE $3)
+          AND e.academic_year_id = $4
         ORDER BY e.event_date ASC, e.event_time ASC
       `,
         [
           `%${req.user.username}%`,
           `${req.user.username},%`,
           `%,${req.user.username}%`,
+          yearId,
         ]
       );
 
@@ -172,14 +187,18 @@ function createEventsRouter(pool, authenticateToken) {
 
   router.get("/upcoming", authenticateToken, async (req, res) => {
     try {
-      const result = await pool.query(`
+      const yearId = yearParam(await resolveListYearId(req));
+      const result = await pool.query(
+        `
         SELECT e.*, u.username as created_by_name 
         FROM events e 
         LEFT JOIN users u ON e.created_by = u.id 
-        WHERE e.event_date >= CURRENT_DATE
+        WHERE e.event_date >= CURRENT_DATE AND e.academic_year_id = $1
         ORDER BY e.event_date ASC, e.event_time ASC
         LIMIT 10
-      `);
+      `,
+        [yearId]
+      );
       res.json(result.rows.map(decorateEvent));
     } catch (error) {
       console.error("Error fetching upcoming events:", error);
@@ -189,14 +208,19 @@ function createEventsRouter(pool, authenticateToken) {
 
   router.get("/stats", authenticateToken, async (req, res) => {
     try {
+      const yearId = yearParam(await resolveListYearId(req));
       const totalResult = await pool.query(
-        "SELECT COUNT(*) as total FROM events"
+        "SELECT COUNT(*) as total FROM events WHERE academic_year_id = $1",
+        [yearId]
       );
-      const upcomingResult = await pool.query(`
+      const upcomingResult = await pool.query(
+        `
         SELECT COUNT(*) as upcoming 
         FROM events 
-        WHERE event_date >= CURRENT_DATE
-      `);
+        WHERE event_date >= CURRENT_DATE AND academic_year_id = $1
+      `,
+        [yearId]
+      );
 
       res.json({
         total: parseInt(totalResult.rows[0].total),
@@ -241,11 +265,12 @@ function createEventsRouter(pool, authenticateToken) {
         });
       }
 
+      const yearId = yearParam(await getStampYearId());
       const existingEvent = await pool.query(
         `
-        SELECT id, title FROM events WHERE event_date = $1
+        SELECT id, title FROM events WHERE event_date = $1 AND academic_year_id = $2
       `,
-        [event_date]
+        [event_date, yearId]
       );
 
       if (existingEvent.rows.length > 0) {
@@ -258,8 +283,8 @@ function createEventsRouter(pool, authenticateToken) {
 
       const result = await pool.query(
         `
-        INSERT INTO events (title, description, event_type, event_date, event_time, participants, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO events (title, description, event_type, event_date, event_time, participants, created_by, academic_year_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *
       `,
         [
@@ -270,6 +295,7 @@ function createEventsRouter(pool, authenticateToken) {
           event_time,
           participants,
           created_by,
+          yearId,
         ]
       );
 

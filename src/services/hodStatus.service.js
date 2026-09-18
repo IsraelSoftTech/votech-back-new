@@ -25,6 +25,9 @@ function toAssignment(row) {
 
 async function getHodAssignment(pool, userId) {
   if (!userId) return noneAssignment();
+  const { getActiveYear } = require("./activeAcademicYear.service");
+  const active = await getActiveYear();
+  const yearId = active?.id ?? -1;
   const { rows } = await pool.query(
     `
     SELECT
@@ -36,11 +39,11 @@ async function getHodAssignment(pool, userId) {
     FROM hods h
     LEFT JOIN specialties s
       ON LOWER(TRIM(s.name)) = LOWER(TRIM(h.department_name))
-    WHERE h.hod_user_id = $1
+    WHERE h.hod_user_id = $1 AND h.academic_year_id = $2
     ORDER BY h.updated_at DESC NULLS LAST, h.id DESC
     LIMIT 1
     `,
-    [userId]
+    [userId, yearId]
   );
   return toAssignment(rows[0]);
 }

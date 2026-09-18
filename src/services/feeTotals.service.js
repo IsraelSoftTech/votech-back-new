@@ -45,6 +45,7 @@ const PAID_BY_TYPE_CTE = `
             )}`
         ).join(",\n        ")}
       FROM fees f
+      WHERE f.academic_year_id = $1
       GROUP BY f.student_id
     )`;
 
@@ -68,7 +69,7 @@ function perStudentCte(scopedToUser) {
       LEFT JOIN paid_by_type p ON p.student_id = s.id
       LEFT JOIN student_fee_discounts d
         ON d.student_id = s.id AND d.academic_year_id = $1
-      WHERE s."deletedAt" IS NULL${scopedToUser ? " AND s.user_id = $2" : ""}
+      WHERE s."deletedAt" IS NULL AND s.academic_year_id = $1${scopedToUser ? " AND s.user_id = $2" : ""}
     )`;
 }
 

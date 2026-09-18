@@ -1,6 +1,11 @@
 const express = require("express");
 
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+const {
+  resolveListYearId,
+  getStampYearId,
+  yearParam,
+} = require("../src/utils/yearScopedQuery.util");
 
 module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
   const router = express.Router();
@@ -13,10 +18,12 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
     try {
       const { student_id } = req.query;
       const params = [];
-      let whereClause = "";
+      const yearId = yearParam(await resolveListYearId(req));
+      params.push(yearId);
+      let whereClause = `WHERE dc.academic_year_id = $1`;
       if (student_id) {
         params.push(student_id);
-        whereClause = `WHERE dc.student_id = $${params.length}`;
+        whereClause += ` AND dc.student_id = $${params.length}`;
       }
       const query = `
         SELECT
@@ -142,8 +149,8 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
             .json({ error: "class_id is required for student cases" });
         }
         query = `
-          INSERT INTO discipline_cases (student_id, class_id, case_description, case_type, recorded_by)
-          VALUES ($1, $2, $3, $4, $5)
+          INSERT INTO discipline_cases (student_id, class_id, case_description, case_type, recorded_by, academic_year_id)
+          VALUES ($1, $2, $3, $4, $5, $6)
           RETURNING *
         `;
         params = [
@@ -152,6 +159,7 @@ module.exports = function createDisciplineCasesRouter(pool, authenticateToken) {
           case_description,
           case_type || "student",
           req.user.id,
+          await getStampYearId(),
         ];
       }
 

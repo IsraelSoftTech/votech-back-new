@@ -8,6 +8,11 @@ const {
   getHodAssignment,
   syncHodUserStatus,
 } = require("../src/services/hodStatus.service");
+const {
+  resolveListYearId,
+  getStampYearId,
+  yearParam,
+} = require("../src/utils/yearScopedQuery.util");
 
 const HOD_MANAGER_ROLES = ["Admin4"];
 
@@ -63,14 +68,16 @@ router.get("/me", authenticateToken, async (req, res) => {
 
 router.get("/stats/overview", authenticateToken, async (req, res) => {
   try {
+    const yearId = yearParam(await resolveListYearId(req));
     const statsQuery = `
       SELECT
         COUNT(*) as total_hods,
         COUNT(CASE WHEN suspended = true THEN 1 END) as suspended_hods,
         COUNT(CASE WHEN suspended = false THEN 1 END) as active_hods
       FROM hods
+      WHERE academic_year_id = $1
     `;
-    const statsResult = await pool.query(statsQuery);
+    const statsResult = await pool.query(statsQuery, [yearId]);
     res.json(statsResult.rows[0]);
   } catch (error) {
     console.error("Error fetching HOD stats:", error);
@@ -80,6 +87,7 @@ router.get("/stats/overview", authenticateToken, async (req, res) => {
 
 router.get("/", authenticateToken, async (req, res) => {
   try {
+    const yearId = yearParam(await resolveListYearId(req));
     const query = `
       SELECT
         h.id,
@@ -100,10 +108,11 @@ router.get("/", authenticateToken, async (req, res) => {
       LEFT JOIN subjects s ON h.subject_id = s.id
       LEFT JOIN specialties sp ON LOWER(TRIM(sp.name)) = LOWER(TRIM(h.department_name))
       LEFT JOIN hod_teachers ht ON h.id = ht.hod_id
+      WHERE h.academic_year_id = $1
       GROUP BY h.id, u.id, u.name, u.username, s.id, s.name, s.code, sp.id
       ORDER BY h.created_at DESC
     `;
-    const result = await pool.query(query);
+    const result = await pool.query(query, [yearId]);
     res.json(result.rows.map(decorateHod));
   } catch (error) {
     console.error("Error fetching HODs:", error);
@@ -162,9 +171,10 @@ router.post("/", authenticateToken, async (req, res) => {
         .json({ error: "Department name and HOD user are required" });
     }
 
+    const yearId = await getStampYearId();
     const existingDept = await client.query(
-      "SELECT id FROM hods WHERE LOWER(TRIM(department_name)) = LOWER(TRIM($1))",
-      [department_name]
+      "SELECT id FROM hods WHERE LOWER(TRIM(department_name)) = LOWER(TRIM($1)) AND academic_year_id = $2",
+      [department_name, yearId]
     );
     if (existingDept.rows.length > 0) {
       await client.query("ROLLBACK");
@@ -172,8 +182,8 @@ router.post("/", authenticateToken, async (req, res) => {
     }
 
     const existingUser = await client.query(
-      "SELECT id FROM hods WHERE hod_user_id = $1",
-      [hod_user_id]
+      "SELECT id FROM hods WHERE hod_user_id = $1 AND academic_year_id = $2",
+      [hod_user_id, yearId]
     );
     if (existingUser.rows.length > 0) {
       await client.query("ROLLBACK");
@@ -183,9 +193,9 @@ router.post("/", authenticateToken, async (req, res) => {
     }
 
     const hodResult = await client.query(
-      `INSERT INTO hods (department_name, hod_user_id, subject_id, suspended)
-       VALUES ($1, $2, $3, false) RETURNING *`,
-      [department_name, hod_user_id, subject_id || null]
+      `INSERT INTO hods (department_name, hod_user_id, subject_id, suspended, academic_year_id)
+       VALUES ($1, $2, $3, false, $4) RETURNING *`,
+      [department_name, hod_user_id, subject_id || null, yearId]
     );
 
     const hod = hodResult.rows[0];

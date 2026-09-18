@@ -240,8 +240,8 @@ router.get("/student/:id", authenticateToken, async (req, res) => {
       );
     } else {
       resultFees = await pool.query(
-        "SELECT fee_type, SUM(amount) as paid FROM fees WHERE student_id = $1 GROUP BY fee_type",
-        [studentId]
+        "SELECT fee_type, SUM(amount) as paid FROM fees WHERE student_id = $1 AND academic_year_id = $2 GROUP BY fee_type",
+        [studentId, await getActiveAcademicYearId()]
       );
     }
 
@@ -291,9 +291,10 @@ router.post("/", authenticateToken, async (req, res) => {
     const srow = resultStudent.rows[0];
 
     // Sum already paid for this fee type
+    const academicYearId = await getActiveAcademicYearId();
     const sumRes = await pool.query(
-      "SELECT COALESCE(SUM(amount),0) as paid FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2)",
-      [student_id, fee_type]
+      "SELECT COALESCE(SUM(amount),0) as paid FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2) AND academic_year_id = $3",
+      [student_id, fee_type, academicYearId]
     );
     const alreadyPaid = parseFloat(sumRes.rows[0].paid) || 0;
 
@@ -328,13 +329,13 @@ router.post("/", authenticateToken, async (req, res) => {
     let result;
     if (paid_at) {
       result = await pool.query(
-        "INSERT INTO fees (student_id, class_id, fee_type, amount, paid_at) VALUES ($1, $2, $3, $4, $5) RETURNING *",
-        [student_id, class_id, fee_type, numericAmount, paid_at]
+        "INSERT INTO fees (student_id, class_id, fee_type, amount, paid_at, academic_year_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
+        [student_id, class_id, fee_type, numericAmount, paid_at, await getActiveAcademicYearId()]
       );
     } else {
       result = await pool.query(
-        "INSERT INTO fees (student_id, class_id, fee_type, amount) VALUES ($1, $2, $3, $4) RETURNING *",
-        [student_id, class_id, fee_type, numericAmount]
+        "INSERT INTO fees (student_id, class_id, fee_type, amount, academic_year_id) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+        [student_id, class_id, fee_type, numericAmount, await getActiveAcademicYearId()]
       );
     }
 
@@ -419,9 +420,10 @@ router.put("/reconcile", authenticateToken, async (req, res) => {
         });
     }
 
+    const academicYearId = await getActiveAcademicYearId();
     const sumRes = await pool.query(
-      "SELECT COALESCE(SUM(amount),0) as paid FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2)",
-      [studentId, fee_type]
+      "SELECT COALESCE(SUM(amount),0) as paid FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2) AND academic_year_id = $3",
+      [studentId, fee_type, academicYearId]
     );
     const oldTotal = parseFloat(sumRes.rows[0].paid) || 0;
 
@@ -738,10 +740,10 @@ router.get(
         FROM fees f
         JOIN students s ON f.student_id = s.id
         JOIN classes c ON f.class_id = c.id
-        WHERE f.student_id = $1
+        WHERE f.student_id = $1 AND f.academic_year_id = $2
         ORDER BY f.paid_at DESC
       `,
-          [studentId]
+          [studentId, await getActiveAcademicYearId()]
         );
       } else {
         // Regular users can only view their own students' payment details
@@ -760,10 +762,10 @@ router.get(
         FROM fees f
         JOIN students s ON f.student_id = s.id
         JOIN classes c ON f.class_id = c.id
-        WHERE f.student_id = $1 AND s.user_id = $2
+        WHERE f.student_id = $1 AND s.user_id = $2 AND f.academic_year_id = $3
         ORDER BY f.paid_at DESC
       `,
-          [studentId, userId]
+          [studentId, userId, await getActiveAcademicYearId()]
         );
       }
       res.json(result.rows);
@@ -908,8 +910,8 @@ router.put("/discount/:studentId", authenticateToken, async (req, res) => {
     }
 
     const feesRes = await pool.query(
-      `SELECT fee_type, SUM(amount) AS paid FROM fees WHERE student_id = $1 GROUP BY fee_type`,
-      [studentId]
+      `SELECT fee_type, SUM(amount) AS paid FROM fees WHERE student_id = $1 AND academic_year_id = $2 GROUP BY fee_type`,
+      [studentId, academicYearId]
     );
     const feeMap = Object.fromEntries(
       feesRes.rows.map((f) => [f.fee_type, parseFloat(f.paid)])

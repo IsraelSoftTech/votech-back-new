@@ -4,6 +4,11 @@ const {
   authenticateToken,
   requireAdmin,
 } = require("./utils");
+const {
+  resolveListYearId,
+  getStampYearId,
+  yearParam,
+} = require("../src/utils/yearScopedQuery.util");
 
 const router = express.Router();
 
@@ -24,11 +29,14 @@ async function isValidDepartment(department_location) {
 // Get all property/equipment
 router.get("/", authenticateToken, async (req, res) => {
   try {
+    const yearId = yearParam(await resolveListYearId(req));
     const result = await pool.query(
       `SELECT pe.*, s.name as department_name
        FROM property_equipment pe
        LEFT JOIN specialties s ON s.id::text = pe.department_location
-       ORDER BY COALESCE(s.name, pe.department_location), pe.name`
+       WHERE pe.academic_year_id = $1
+       ORDER BY COALESCE(s.name, pe.department_location), pe.name`,
+      [yearId]
     );
     const rows = result.rows.map((r) => {
       const { department_name, ...rest } = r;
@@ -60,10 +68,11 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
       });
     }
 
+    const yearId = await getStampYearId();
     const result = await pool.query(
-      `INSERT INTO property_equipment (name, cost, department_location)
-       VALUES ($1, $2, $3) RETURNING *`,
-      [name.trim(), parseFloat(cost), String(department_location)]
+      `INSERT INTO property_equipment (name, cost, department_location, academic_year_id)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [name.trim(), parseFloat(cost), String(department_location), yearId]
     );
     res.status(201).json({
       message: "Property/Equipment registered successfully",

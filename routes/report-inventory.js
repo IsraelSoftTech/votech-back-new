@@ -4,6 +4,11 @@ const {
   authenticateToken,
   requireAdmin,
 } = require("./utils");
+const {
+  resolveListYearId,
+  getStampYearId,
+  yearParam,
+} = require("../src/utils/yearScopedQuery.util");
 
 const router = express.Router();
 
@@ -53,8 +58,10 @@ function parseTransactionDate(value) {
 // Get all heads (must be before /:id)
 router.get("/heads", authenticateToken, async (req, res) => {
   try {
+    const yearId = yearParam(await resolveListYearId(req));
     const result = await pool.query(
-      "SELECT * FROM report_inventory_heads ORDER BY name"
+      "SELECT * FROM report_inventory_heads WHERE academic_year_id = $1 ORDER BY name",
+      [yearId]
     );
     res.json(result.rows);
   } catch (error) {
@@ -70,8 +77,8 @@ router.post("/heads", authenticateToken, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Name is required" });
     }
     const result = await pool.query(
-      "INSERT INTO report_inventory_heads (name) VALUES ($1) RETURNING *",
-      [name.trim()]
+      "INSERT INTO report_inventory_heads (name, academic_year_id) VALUES ($1, $2) RETURNING *",
+      [name.trim(), await getStampYearId()]
     );
     res.status(201).json({ message: "Head added successfully", head: result.rows[0] });
   } catch (error) {
@@ -124,14 +131,19 @@ router.get("/", authenticateToken, async (req, res) => {
   try {
     // transaction_date is sent as a plain YYYY-MM-DD string so the day cannot
     // shift when it crosses timezones on its way to the browser.
-    const result = await pool.query(`
+    const yearId = yearParam(await resolveListYearId(req));
+    const result = await pool.query(
+      `
       SELECT i.*, h.name as head_name,
         COALESCE(i.amount, i.unit_cost_price) as amount,
         to_char(COALESCE(i.transaction_date, i.created_at::date), 'YYYY-MM-DD') as transaction_date
       FROM report_inventory i
       LEFT JOIN report_inventory_heads h ON i.head_id = h.id
+      WHERE i.academic_year_id = $1
       ORDER BY COALESCE(i.transaction_date, i.created_at::date) DESC, i.created_at DESC
-    `);
+    `,
+      [yearId]
+    );
     res.json(result.rows);
   } catch (error) {
     console.error("Error fetching report inventory:", error);
@@ -197,10 +209,11 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
       // is the legacy NOT NULL column and carries the same figure.
       `INSERT INTO report_inventory (
         item_name, head_id, category, uom, quantity, unit_cost_price, amount,
-        supplier, support_doc, item_id, transaction_date
+        supplier, support_doc, item_id, transaction_date, academic_year_id
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $6, $7, $8, $9,
-        COALESCE($10::date, (NOW() AT TIME ZONE 'Africa/Douala')::date)
+        COALESCE($10::date, (NOW() AT TIME ZONE 'Africa/Douala')::date),
+        $11
       )
       RETURNING *, to_char(transaction_date, 'YYYY-MM-DD') as transaction_date`,
       [
@@ -214,6 +227,7 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
         support_doc || null,
         itemId,
         txDate,
+        await getStampYearId(),
       ]
     );
 

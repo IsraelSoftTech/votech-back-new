@@ -132,7 +132,9 @@ const DEBT_SELECT = `
 router.get("/summary", authenticateToken, requireFinanceAccess, async (req, res) => {
   try {
     const { from, to } = req.query;
-    const { where, params } = buildListQuery({ from, to });
+    const academic_year_id =
+      req.query.academic_year_id || (await getActiveAcademicYearId());
+    const { where, params } = buildListQuery({ from, to, academic_year_id });
 
     const result = await pool.query(
       `
@@ -186,7 +188,9 @@ router.get("/summary", authenticateToken, requireFinanceAccess, async (req, res)
 
 router.get("/", authenticateToken, requireFinanceAccess, async (req, res) => {
   try {
-    const { where, params } = buildListQuery(req.query);
+    const academic_year_id =
+      req.query.academic_year_id || (await getActiveAcademicYearId());
+    const { where, params } = buildListQuery({ ...req.query, academic_year_id });
     const result = await pool.query(
       `
       ${DEBT_SELECT}

@@ -4,6 +4,11 @@ const { Pool } = require("pg");
 require("dotenv").config();
 
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+const {
+  resolveListYearId,
+  getStampYearId,
+  yearParam,
+} = require("../src/utils/yearScopedQuery.util");
 
 const isDesktop = process.env.NODE_ENV === "desktop";
 const db = isDesktop
@@ -346,14 +351,16 @@ router.get("/statistics", async (req, res) => {
       academicYearStart = currentYear - 1;
     }
 
+    const yearId = yearParam(await resolveListYearId(req));
+
     // Get total salary paid for this month
     const paidResult = await pool.query(
       `
       SELECT COALESCE(SUM(amount), 0) as total_paid
       FROM salaries 
-      WHERE month = $1 AND year = $2 AND paid = true
+      WHERE month = $1 AND year = $2 AND paid = true AND academic_year_id = $3
     `,
-      [currentMonthName, academicYearStart]
+      [currentMonthName, academicYearStart, yearId]
     );
 
     // Get total salary left (pending) for this month
@@ -361,9 +368,9 @@ router.get("/statistics", async (req, res) => {
       `
       SELECT COALESCE(SUM(amount), 0) as total_pending
       FROM salaries 
-      WHERE month = $1 AND year = $2 AND (paid = false OR paid IS NULL)
+      WHERE month = $1 AND year = $2 AND (paid = false OR paid IS NULL) AND academic_year_id = $3
     `,
-      [currentMonthName, academicYearStart]
+      [currentMonthName, academicYearStart, yearId]
     );
 
     // Get total teachers count
@@ -464,11 +471,11 @@ router.post("/update", authenticateToken, async (req, res) => {
     } else {
       result = await pool.query(
         `
-        INSERT INTO salaries (user_id, amount, month, year, paid)
-        VALUES ($1, $2, $3, $4, false)
+        INSERT INTO salaries (user_id, amount, month, year, paid, academic_year_id)
+        VALUES ($1, $2, $3, $4, false, $5)
         RETURNING *
       `,
-        [userId, amount, monthName, targetYear]
+        [userId, amount, monthName, targetYear, await getStampYearId()]
       );
       await logChanges(
         "salaries",
@@ -802,7 +809,9 @@ router.get("/user/:userId", async (req, res) => {
 // Get all paid salary records for pay slips
 router.get("/paid-salaries", async (req, res) => {
   try {
-    const result = await pool.query(`
+    const yearId = yearParam(await resolveListYearId(req));
+    const result = await pool.query(
+      `
       SELECT 
         s.id,
         ${payslipAmountSql("s")} AS amount,
@@ -819,9 +828,11 @@ router.get("/paid-salaries", async (req, res) => {
       LEFT JOIN users u ON u.id = COALESCE(s.user_id, s.applicant_id)
       LEFT JOIN teachers t ON t.user_id = u.id
       LEFT JOIN cnps_preferences cp ON cp.user_id = COALESCE(s.user_id, s.applicant_id)
-      WHERE s.paid = true
+      WHERE s.paid = true AND s.academic_year_id = $1
       ORDER BY s.paid_at DESC, COALESCE(NULLIF(TRIM(s.employee_name), ''), u.name, u.username, '') ASC
-    `);
+    `,
+      [yearId]
+    );
 
     res.json(result.rows);
   } catch (error) {
