@@ -175,6 +175,7 @@ module.exports = function createStaffAttendanceRouter(pool, authenticateToken) {
         SELECT id, username, name, role
         FROM users 
         WHERE role IN ('Admin', 'Admin2', 'Admin3', 'Teacher', 'HOD')
+          AND COALESCE(suspended, false) = false
         ORDER BY name
       `);
       res.json(result.rows);
@@ -462,11 +463,16 @@ module.exports = function createStaffAttendanceRouter(pool, authenticateToken) {
         SELECT DISTINCT name
         FROM users 
         WHERE role IN ('Admin', 'Admin2', 'Admin3', 'Teacher', 'HOD')
+          AND COALESCE(suspended, false) = false
         ORDER BY name
       `);
+      const suspendedNames = await pool.query(
+        `SELECT name FROM users WHERE COALESCE(suspended, false) = true`
+      );
+      const suspendedNameSet = new Set(suspendedNames.rows.map((row) => row.name));
       const allStaff = [
         ...new Set([
-          ...staffFromRecords,
+          ...staffFromRecords.filter((name) => !suspendedNameSet.has(name)),
           ...usersResult.rows.map((u) => u.name),
         ]),
       ];

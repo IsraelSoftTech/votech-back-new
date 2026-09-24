@@ -7,6 +7,7 @@ const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
 const {
   getHodAssignment,
   syncHodUserStatus,
+  notifyHodAccount,
 } = require("../src/services/hodStatus.service");
 const {
   resolveListYearId,
@@ -214,6 +215,12 @@ router.post("/", authenticateToken, async (req, res) => {
     const fullHod = await fetchHodDetail(hod.id);
     await logChanges("hods", hod.id, ChangeTypes.create, req.user);
     await syncHodUserStatus(pool, hod_user_id);
+    await notifyHodAccount(pool, {
+      userId: hod_user_id,
+      senderId: req.user.id,
+      kind: "appointed",
+      departmentName: department_name,
+    });
     res.status(201).json(fullHod);
   } catch (error) {
     await client.query("ROLLBACK");
@@ -310,6 +317,18 @@ router.put("/:id", authenticateToken, async (req, res) => {
 
     if (String(oldHod.hod_user_id) !== String(hod_user_id)) {
       await syncHodUserStatus(pool, oldHod.hod_user_id);
+      await notifyHodAccount(pool, {
+        userId: oldHod.hod_user_id,
+        senderId: req.user.id,
+        kind: "removed",
+        departmentName: oldHod.department_name,
+      });
+      await notifyHodAccount(pool, {
+        userId: hod_user_id,
+        senderId: req.user.id,
+        kind: "appointed",
+        departmentName: department_name || updated.department_name,
+      });
     }
     await syncHodUserStatus(pool, hod_user_id);
 
@@ -357,6 +376,12 @@ router.patch("/:id/toggle-suspension", authenticateToken, async (req, res) => {
     await logChanges("hods", id, ChangeTypes.update, req.user, fieldsChanged);
 
     const assignment = await syncHodUserStatus(pool, updated.hod_user_id);
+    await notifyHodAccount(pool, {
+      userId: updated.hod_user_id,
+      senderId: req.user.id,
+      kind: updated.suspended ? "suspended" : "reactivated",
+      departmentName: updated.department_name,
+    });
     const fullHod = await fetchHodDetail(id);
     res.json({ ...fullHod, ...assignment });
   } catch (error) {
@@ -390,6 +415,12 @@ router.delete("/:id", authenticateToken, async (req, res) => {
     await client.query("COMMIT");
     await logChanges("hods", id, ChangeTypes.delete, req.user);
     await syncHodUserStatus(pool, hodUserId);
+    await notifyHodAccount(pool, {
+      userId: hodUserId,
+      senderId: req.user.id,
+      kind: "removed",
+      departmentName: existingHod.rows[0].department_name,
+    });
     res.json({
       message: "HOD deleted successfully",
       hod_status: "none",

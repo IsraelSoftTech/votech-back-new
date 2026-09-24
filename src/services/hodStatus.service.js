@@ -64,10 +64,48 @@ async function syncHodUserStatus(pool, userId) {
   return assignment;
 }
 
+const HOD_NOTICE = {
+  appointed: (department) =>
+    `You have been appointed Head of Department${
+      department ? ` for ${department}` : ""
+    }. Your account now shows HOD status, and department lesson plans are available from your menu.`,
+  removed: (department) =>
+    `You have been removed as Head of Department${
+      department ? ` for ${department}` : ""
+    }. HOD status has been cleared from your account.`,
+  suspended: (department) =>
+    `Your Head of Department assignment${
+      department ? ` for ${department}` : ""
+    } has been suspended. Department lesson plan access is blocked until you are reactivated.`,
+  reactivated: (department) =>
+    `Your Head of Department assignment${
+      department ? ` for ${department}` : ""
+    } is active again.`,
+};
+
+async function notifyHodAccount(pool, { userId, senderId, kind, departmentName }) {
+  const build = HOD_NOTICE[kind];
+  if (!userId || !build) return;
+  const sender = Number(senderId);
+  const receiver = Number(userId);
+  if (!sender || sender === receiver) return;
+
+  try {
+    await pool.query(
+      `INSERT INTO messages (sender_id, receiver_id, content)
+       VALUES ($1, $2, $3)`,
+      [sender, receiver, `[HOD] ${build(departmentName || "")}`]
+    );
+  } catch (err) {
+    console.warn("[HOD notify] Failed to notify account:", err.message);
+  }
+}
+
 module.exports = {
   noneAssignment,
   toAssignment,
   getHodAssignment,
   notifyHodUser,
   syncHodUserStatus,
+  notifyHodAccount,
 };

@@ -609,9 +609,12 @@ router.get("/:id/download", authenticateToken, async (req, res) => {
       }
     }
 
-    if (isAdmin3(req.user) && plan.status !== "approved") {
+    if (
+      (isAdmin3(req.user) || req.user.role === "Admin1") &&
+      plan.status !== "approved"
+    ) {
       return res.status(403).json({
-        error: "Admin3 can only download approved lesson plans.",
+        error: `${req.user.role} can only download approved lesson plans.`,
       });
     }
 
