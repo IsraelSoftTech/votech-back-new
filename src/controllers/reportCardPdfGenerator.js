@@ -517,8 +517,10 @@ function buildStudentInfo(data) {
   });
 
   return {
+    unbreakable: true,
     table: {
-      widths: [80, "*", 72, "*"],
+      widths: ["auto", "*", "auto", "*"],
+      dontBreakRows: true,
       body: [
         [
           label("Student Name:"),
@@ -570,7 +572,7 @@ function buildSubjectSection(
   const colCount = scoreCols.length;
 
   const scoreW = colCount <= 3 ? 32 : colCount <= 5 ? 28 : 26;
-  const widths = [35, "*", ...Array(colCount).fill(scoreW), 22, 30, 42, 50];
+  const widths = [35, "*", ...Array(colCount).fill(scoreW), 22, 32, 58, 68];
 
   const headerRow = [
     hdrCell("CODE"),
@@ -767,7 +769,7 @@ function buildOrientationPlacementSection(subjects, termCfg, gradingScale, fs_) 
   const colCount = scoreCols.length;
 
   const scoreW = colCount <= 3 ? 32 : colCount <= 5 ? 28 : 26;
-  const widths = [35, "*", ...Array(colCount).fill(scoreW), 22, 30, 42, 50];
+  const widths = [35, "*", ...Array(colCount).fill(scoreW), 22, 32, 58, 68];
 
   const headerRow = [
     hdrCell("CODE"),

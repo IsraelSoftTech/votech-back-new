@@ -10,10 +10,15 @@ const LIST_WIDTH = 48;
 const LIST_HEIGHT = 48;
 const LIST_QUALITY = 48;
 
-/** ID card print — higher detail */
+/** ID card on-screen preview — light JPEG */
 const CARD_WIDTH = 120;
 const CARD_HEIGHT = 150;
 const CARD_QUALITY = 68;
+
+/** Downloaded ID card — sharp enough to print, still a small JPEG */
+const PRINT_WIDTH = 360;
+const PRINT_HEIGHT = 450;
+const PRINT_QUALITY = 84;
 
 const THUMB_DIR = path.join(__dirname, "../../local_uploads/student-thumbs");
 const inflight = new Map();
@@ -25,11 +30,17 @@ function ensureThumbDir() {
 }
 
 function normalizeSize(size) {
-  return String(size || "list").toLowerCase() === "card" ? "card" : "list";
+  const value = String(size || "list").toLowerCase();
+  if (value === "print") return "print";
+  if (value === "card") return "card";
+  return "list";
 }
 
 function sizeConfig(size) {
-  if (normalizeSize(size) === "card") {
+  if (size === "print") {
+    return { w: PRINT_WIDTH, h: PRINT_HEIGHT, q: PRINT_QUALITY };
+  }
+  if (size === "card") {
     return { w: CARD_WIDTH, h: CARD_HEIGHT, q: CARD_QUALITY };
   }
   return { w: LIST_WIDTH, h: LIST_HEIGHT, q: LIST_QUALITY };

@@ -10,6 +10,8 @@ const DEFAULTS = {
   card_title: "STUDENT ID CARD",
   qr_caption: "Scan for attendance",
   stamp_url: null,
+  date_issued: null,
+  expiry_date: null,
 };
 
 async function ensureSettingsTable() {
@@ -30,7 +32,9 @@ async function ensureSettingsTable() {
 
   await pool.query(`
     ALTER TABLE id_card_settings
-      ADD COLUMN IF NOT EXISTS stamp_url TEXT
+      ADD COLUMN IF NOT EXISTS stamp_url TEXT,
+      ADD COLUMN IF NOT EXISTS date_issued DATE,
+      ADD COLUMN IF NOT EXISTS expiry_date DATE
   `);
 
   await pool.query(`
@@ -40,11 +44,27 @@ async function ensureSettingsTable() {
   `);
 }
 
+function toIsoDate(value) {
+  if (!value) return "";
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return value.slice(0, 10);
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const y = value.getUTCFullYear();
+    const m = String(value.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(value.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  return "";
+}
+
 function mapSettings(row) {
   return {
     ...DEFAULTS,
     ...(row || {}),
     stamp_url: row?.stamp_url || null,
+    date_issued: toIsoDate(row?.date_issued),
+    expiry_date: toIsoDate(row?.expiry_date),
   };
 }
 
@@ -83,6 +103,14 @@ async function updateIdCardSettings(payload, userId = null) {
     sets.push(`stamp_url = $${idx}::text`);
     vals.push(payload.stamp_url ? String(payload.stamp_url).trim() : null);
   }
+
+  ["date_issued", "expiry_date"].forEach((key) => {
+    if (!Object.prototype.hasOwnProperty.call(payload, key)) return;
+    const raw = String(payload[key] || "").trim();
+    idx += 1;
+    sets.push(`${key} = $${idx}::date`);
+    vals.push(/^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null);
+  });
 
   if (!sets.length) {
     return getIdCardSettings();
