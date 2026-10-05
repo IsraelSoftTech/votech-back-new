@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+const { toCalendarDateString } = require("../src/utils/calendarDate.util");
 const {
   resolveListYearId,
   getStampYearId,
@@ -64,6 +65,7 @@ function decorateEvent(row) {
     : [];
   return {
     ...row,
+    event_date: toCalendarDateString(row.event_date) || row.event_date,
     participant_count: list.length,
     participants_list: list,
   };
@@ -247,8 +249,8 @@ function createEventsRouter(pool, authenticateToken) {
           .json({ error: "You are not authorized to create events" });
       }
 
-      const { title, description, event_type, event_date, event_time } =
-        req.body;
+      const { title, description, event_type, event_time } = req.body;
+      const event_date = toCalendarDateString(req.body?.event_date);
       const created_by = req.user.id;
       const participants = await resolveParticipantsCsv(pool, req.body);
 
@@ -315,8 +317,8 @@ function createEventsRouter(pool, authenticateToken) {
   router.put("/:id", authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
-      const { title, description, event_type, event_date, event_time } =
-        req.body;
+      const { title, description, event_type, event_time } = req.body;
+      const event_date = toCalendarDateString(req.body?.event_date);
       const participants = await resolveParticipantsCsv(pool, req.body);
 
       const eventCheck = await pool.query(

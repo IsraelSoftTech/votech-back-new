@@ -1,6 +1,7 @@
 "use strict";
 
 const { pool } = require("../../routes/utils");
+const { toCalendarDateString } = require("../utils/calendarDate.util");
 
 const DEFAULTS = {
   school_name: "VOTECH S7 ACADEMY",
@@ -45,17 +46,7 @@ async function ensureSettingsTable() {
 }
 
 function toIsoDate(value) {
-  if (!value) return "";
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) {
-    return value.slice(0, 10);
-  }
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    const y = value.getUTCFullYear();
-    const m = String(value.getUTCMonth() + 1).padStart(2, "0");
-    const d = String(value.getUTCDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  }
-  return "";
+  return toCalendarDateString(value);
 }
 
 function mapSettings(row) {
@@ -106,10 +97,9 @@ async function updateIdCardSettings(payload, userId = null) {
 
   ["date_issued", "expiry_date"].forEach((key) => {
     if (!Object.prototype.hasOwnProperty.call(payload, key)) return;
-    const raw = String(payload[key] || "").trim();
     idx += 1;
     sets.push(`${key} = $${idx}::date`);
-    vals.push(/^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null);
+    vals.push(toCalendarDateString(payload[key]) || null);
   });
 
   if (!sets.length) {
