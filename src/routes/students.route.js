@@ -36,6 +36,12 @@ studentRouter
 studentRouter
   .route("/class/:classId/list-pdf")
   .get(studentControllers.classListPdf);
+// Past year's class list, rebuilt from that year's records, Admin3 only.
+// Separate from list-pdf above on purpose: that one serves every role and
+// other screens, this one refuses the active year.
+studentRouter
+  .route("/class/:classId/archived-list-pdf")
+  .get(restrictTo("Admin3"), studentControllers.archivedClassListPdf);
 
 // ── Registration-time placement (studentPlacement.controller.js) ──────
 // Fixed paths registered before "/:id" so Express never reads
