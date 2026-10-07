@@ -13,7 +13,7 @@ const {
   computeBaseFee,
   parseFeeAmount,
 } = require("../src/services/feeCalculation.service");
-const { fetchFeeTotals } = require("../src/services/feeTotals.service");
+const { fetchFeeTotalsWithChart } = require("../src/services/feeTotals.service");
 
 const router = express.Router();
 
@@ -67,7 +67,7 @@ router.get("/totals/summary", authenticateToken, async (req, res) => {
   const userRole = req.user.role;
   try {
     const academicYearId = await getActiveAcademicYearId();
-    const totals = await fetchFeeTotals(pool, {
+    const totals = await fetchFeeTotalsWithChart(pool, {
       academicYearId,
       userId: isAdminLike(userRole) ? null : userId,
     });
@@ -165,11 +165,12 @@ router.get("/students/batch", authenticateToken, async (req, res) => {
       );
     }
 
+    const academicYearId = await getActiveAcademicYearId();
     const resultFees = await pool.query(
       `SELECT student_id, fee_type, SUM(amount) as paid 
-       FROM fees WHERE student_id IN (${placeholders}) 
+       FROM fees WHERE student_id IN (${placeholders}) AND academic_year_id = $${studentIds.length + 1}
        GROUP BY student_id, fee_type`,
-      studentIds
+      [...studentIds, academicYearId]
     );
 
     const feeMap = {};
@@ -177,8 +178,6 @@ router.get("/students/batch", authenticateToken, async (req, res) => {
       if (!feeMap[f.student_id]) feeMap[f.student_id] = {};
       feeMap[f.student_id][f.fee_type] = parseFloat(f.paid);
     });
-
-    const academicYearId = await getActiveAcademicYearId();
     const discountMap = await fetchDiscountMap(
       resultStudents.rows.map((s) => s.id),
       academicYearId
@@ -240,8 +239,8 @@ router.get("/student/:id", authenticateToken, async (req, res) => {
       );
     } else {
       resultFees = await pool.query(
-        "SELECT fee_type, SUM(amount) as paid FROM fees WHERE student_id = $1 GROUP BY fee_type",
-        [studentId]
+        "SELECT fee_type, SUM(amount) as paid FROM fees WHERE student_id = $1 AND academic_year_id = $2 GROUP BY fee_type",
+        [studentId, await getActiveAcademicYearId()]
       );
     }
 
@@ -291,9 +290,10 @@ router.post("/", authenticateToken, async (req, res) => {
     const srow = resultStudent.rows[0];
 
     // Sum already paid for this fee type
+    const academicYearId = await getActiveAcademicYearId();
     const sumRes = await pool.query(
-      "SELECT COALESCE(SUM(amount),0) as paid FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2)",
-      [student_id, fee_type]
+      "SELECT COALESCE(SUM(amount),0) as paid FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2) AND academic_year_id = $3",
+      [student_id, fee_type, academicYearId]
     );
     const alreadyPaid = parseFloat(sumRes.rows[0].paid) || 0;
 
@@ -328,13 +328,13 @@ router.post("/", authenticateToken, async (req, res) => {
     let result;
     if (paid_at) {
       result = await pool.query(
-        "INSERT INTO fees (student_id, class_id, fee_type, amount, paid_at) VALUES ($1, $2, $3, $4, $5) RETURNING *",
-        [student_id, class_id, fee_type, numericAmount, paid_at]
+        "INSERT INTO fees (student_id, class_id, fee_type, amount, paid_at, academic_year_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
+        [student_id, class_id, fee_type, numericAmount, paid_at, await getActiveAcademicYearId()]
       );
     } else {
       result = await pool.query(
-        "INSERT INTO fees (student_id, class_id, fee_type, amount) VALUES ($1, $2, $3, $4) RETURNING *",
-        [student_id, class_id, fee_type, numericAmount]
+        "INSERT INTO fees (student_id, class_id, fee_type, amount, academic_year_id) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+        [student_id, class_id, fee_type, numericAmount, await getActiveAcademicYearId()]
       );
     }
 
@@ -419,9 +419,10 @@ router.put("/reconcile", authenticateToken, async (req, res) => {
         });
     }
 
+    const academicYearId = await getActiveAcademicYearId();
     const sumRes = await pool.query(
-      "SELECT COALESCE(SUM(amount),0) as paid FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2)",
-      [studentId, fee_type]
+      "SELECT COALESCE(SUM(amount),0) as paid FROM fees WHERE student_id = $1 AND LOWER(fee_type) = LOWER($2) AND academic_year_id = $3",
+      [studentId, fee_type, academicYearId]
     );
     const oldTotal = parseFloat(sumRes.rows[0].paid) || 0;
 
@@ -509,13 +510,13 @@ router.get("/class/:classId", authenticateToken, async (req, res) => {
     }
 
     const className = classCheck.rows[0].name;
-    // ClassId and ClassName processed
+    const academicYearId = await getActiveAcademicYearId();
 
-    // Get all students in class
+    // Students and payments for the current active academic year only.
     let resultStudents;
     resultStudents = await pool.query(
-      "SELECT s.id, s.student_id as student_code, s.full_name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.class_id = $1",
-      [classId]
+      "SELECT s.id, s.student_id as student_code, s.full_name, c.registration_fee, c.bus_fee, c.internship_fee, c.remedial_fee, c.tuition_fee, c.pta_fee FROM students s JOIN classes c ON s.class_id = c.id WHERE s.class_id = $1 AND s.academic_year_id = $2",
+      [classId, academicYearId]
     );
 
     const students = resultStudents.rows;
@@ -544,8 +545,8 @@ router.get("/class/:classId", authenticateToken, async (req, res) => {
         fees = resultFees.rows;
       } else {
         const placeholders = studentIds.map((_, i) => `$${i + 1}`).join(",");
-        const query = `SELECT student_id, fee_type, SUM(amount) as paid FROM fees WHERE student_id IN (${placeholders}) GROUP BY student_id, fee_type`;
-        const resultFees = await pool.query(query, studentIds);
+        const query = `SELECT student_id, fee_type, SUM(amount) as paid FROM fees WHERE student_id IN (${placeholders}) AND academic_year_id = $${studentIds.length + 1} GROUP BY student_id, fee_type`;
+        const resultFees = await pool.query(query, [...studentIds, academicYearId]);
         fees = resultFees.rows;
       }
     }
@@ -560,7 +561,6 @@ router.get("/class/:classId", authenticateToken, async (req, res) => {
     }
 
     // Calculate stats for each student (centralized status — Point 4D)
-    const academicYearId = await getActiveAcademicYearId();
     const discountMap = await fetchDiscountMap(studentIds, academicYearId);
 
     const stats = students.map((student) => {
@@ -738,10 +738,10 @@ router.get(
         FROM fees f
         JOIN students s ON f.student_id = s.id
         JOIN classes c ON f.class_id = c.id
-        WHERE f.student_id = $1
+        WHERE f.student_id = $1 AND f.academic_year_id = $2
         ORDER BY f.paid_at DESC
       `,
-          [studentId]
+          [studentId, await getActiveAcademicYearId()]
         );
       } else {
         // Regular users can only view their own students' payment details
@@ -760,10 +760,10 @@ router.get(
         FROM fees f
         JOIN students s ON f.student_id = s.id
         JOIN classes c ON f.class_id = c.id
-        WHERE f.student_id = $1 AND s.user_id = $2
+        WHERE f.student_id = $1 AND s.user_id = $2 AND f.academic_year_id = $3
         ORDER BY f.paid_at DESC
       `,
-          [studentId, userId]
+          [studentId, userId, await getActiveAcademicYearId()]
         );
       }
       res.json(result.rows);
@@ -908,8 +908,8 @@ router.put("/discount/:studentId", authenticateToken, async (req, res) => {
     }
 
     const feesRes = await pool.query(
-      `SELECT fee_type, SUM(amount) AS paid FROM fees WHERE student_id = $1 GROUP BY fee_type`,
-      [studentId]
+      `SELECT fee_type, SUM(amount) AS paid FROM fees WHERE student_id = $1 AND academic_year_id = $2 GROUP BY fee_type`,
+      [studentId, academicYearId]
     );
     const feeMap = Object.fromEntries(
       feesRes.rows.map((f) => [f.fee_type, parseFloat(f.paid)])

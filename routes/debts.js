@@ -1,5 +1,6 @@
 const express = require("express");
 const { pool, authenticateToken } = require("./utils");
+const { getActiveYear } = require("../src/services/activeAcademicYear.service");
 
 const router = express.Router();
 
@@ -42,18 +43,13 @@ function mapDebtRow(row) {
 }
 
 async function getActiveAcademicYearId() {
-  const result = await pool.query(`
-    SELECT id FROM "academicYears"
-    WHERE status = 'active' AND "deletedAt" IS NULL
-    ORDER BY id DESC
-    LIMIT 1
-  `);
-  if (!result.rows.length) {
-    const err = new Error("No active academic year is configured");
+  const active = await getActiveYear({ bypassCache: true });
+  if (!active?.id) {
+    const err = new Error("No active academic year is configured. Contact Admin3.");
     err.status = 400;
     throw err;
   }
-  return result.rows[0].id;
+  return active.id;
 }
 
 async function resolveAcademicYearId(academicYearId, { required = false } = {}) {
@@ -132,7 +128,9 @@ const DEBT_SELECT = `
 router.get("/summary", authenticateToken, requireFinanceAccess, async (req, res) => {
   try {
     const { from, to } = req.query;
-    const { where, params } = buildListQuery({ from, to });
+    const academic_year_id =
+      req.query.academic_year_id || (await getActiveAcademicYearId());
+    const { where, params } = buildListQuery({ from, to, academic_year_id });
 
     const result = await pool.query(
       `
@@ -186,7 +184,9 @@ router.get("/summary", authenticateToken, requireFinanceAccess, async (req, res)
 
 router.get("/", authenticateToken, requireFinanceAccess, async (req, res) => {
   try {
-    const { where, params } = buildListQuery(req.query);
+    const academic_year_id =
+      req.query.academic_year_id || (await getActiveAcademicYearId());
+    const { where, params } = buildListQuery({ ...req.query, academic_year_id });
     const result = await pool.query(
       `
       ${DEBT_SELECT}

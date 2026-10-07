@@ -30,7 +30,7 @@ router.get("/summary", authenticateToken, async (req, res) => {
     let feesIncomeQuery = `
       SELECT COALESCE(SUM(amount), 0) as total_income
       FROM fees
-      WHERE 1=1
+      WHERE academic_year_id = $1
     `;
 
     // Get expenditure from inventory (expenditure type)
@@ -110,6 +110,13 @@ router.get("/summary", authenticateToken, async (req, res) => {
       classFeeQuery += ` AND f.paid_at <= $${paramCount}`;
       params.push(end_date);
     }
+
+    paramCount++;
+    feesIncomeQuery += ` AND academic_year_id = $${paramCount}`;
+    salaryQuery += ` AND academic_year_id = $${paramCount}`;
+    feeBreakdownQuery += ` AND academic_year_id = $${paramCount}`;
+    classFeeQuery += ` AND f.academic_year_id = $${paramCount}`;
+    params.push(academicYearId);
 
     const [
       feesIncomeResult,

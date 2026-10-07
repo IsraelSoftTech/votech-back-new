@@ -111,7 +111,7 @@ router.get("/settings/stamp", async (req, res) => {
     if (url.startsWith("http://") || url.startsWith("https://")) {
       const { buffer, contentType } = await fetchRemoteBuffer(url);
       res.setHeader("Content-Type", contentType);
-      res.setHeader("Cache-Control", "public, max-age=86400");
+      res.setHeader("Cache-Control", "no-store");
       return res.send(buffer);
     }
 
@@ -131,7 +131,7 @@ router.get("/settings/stamp", async (req, res) => {
         ? "image/gif"
         : "image/png";
     res.setHeader("Content-Type", type);
-    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.setHeader("Cache-Control", "no-store");
     return res.send(fs.readFileSync(localPath));
   } catch (e) {
     console.error("Get ID card stamp error:", e);

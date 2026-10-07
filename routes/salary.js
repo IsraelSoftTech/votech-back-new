@@ -4,6 +4,11 @@ const { Pool } = require("pg");
 require("dotenv").config();
 
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+const {
+  resolveListYearId,
+  getStampYearId,
+  yearParam,
+} = require("../src/utils/yearScopedQuery.util");
 
 const isDesktop = process.env.NODE_ENV === "desktop";
 const db = isDesktop
@@ -313,6 +318,8 @@ router.get("/approved-applications", async (req, res) => {
         AND s.year = $2
       LEFT JOIN teachers t ON t.user_id = u.id
       LEFT JOIN cnps_preferences cp ON cp.user_id = u.id
+      WHERE COALESCE(u.suspended, false) = false
+        AND COALESCE(u.is_system, false) = false
       ORDER BY applicant_name
     `,
       [currentMonthName, academicYearStart]
@@ -346,36 +353,44 @@ router.get("/statistics", async (req, res) => {
       academicYearStart = currentYear - 1;
     }
 
+    const yearId = yearParam(await resolveListYearId(req));
+
     // Get total salary paid for this month
     const paidResult = await pool.query(
       `
-      SELECT COALESCE(SUM(amount), 0) as total_paid
-      FROM salaries 
-      WHERE month = $1 AND year = $2 AND paid = true
+      SELECT COALESCE(SUM(s.amount), 0) as total_paid
+      FROM salaries s
+      LEFT JOIN users u ON u.id = COALESCE(s.user_id, s.applicant_id)
+      WHERE s.month = $1 AND s.year = $2 AND s.paid = true AND s.academic_year_id = $3
+        AND COALESCE(u.suspended, false) = false
     `,
-      [currentMonthName, academicYearStart]
+      [currentMonthName, academicYearStart, yearId]
     );
 
     // Get total salary left (pending) for this month
     const pendingResult = await pool.query(
       `
-      SELECT COALESCE(SUM(amount), 0) as total_pending
-      FROM salaries 
-      WHERE month = $1 AND year = $2 AND (paid = false OR paid IS NULL)
+      SELECT COALESCE(SUM(s.amount), 0) as total_pending
+      FROM salaries s
+      LEFT JOIN users u ON u.id = COALESCE(s.user_id, s.applicant_id)
+      WHERE s.month = $1 AND s.year = $2 AND (s.paid = false OR s.paid IS NULL) AND s.academic_year_id = $3
+        AND COALESCE(u.suspended, false) = false
     `,
-      [currentMonthName, academicYearStart]
+      [currentMonthName, academicYearStart, yearId]
     );
 
-    // Get total teachers count
-    const teachersCountResult = await pool.query(`
-      SELECT COUNT(*) as total_approved
-      FROM teachers
+    // Staff on the salary list: active accounts, excluding system users.
+    const staffCountResult = await pool.query(`
+      SELECT COUNT(*)::int AS total_approved
+      FROM users
+      WHERE COALESCE(suspended, false) = false
+        AND COALESCE(is_system, false) = false
     `);
 
     res.json({
       totalPaid: parseFloat(paidResult.rows[0].total_paid),
       totalPending: parseFloat(pendingResult.rows[0].total_pending),
-      totalApproved: parseInt(teachersCountResult.rows[0].total_approved),
+      totalApproved: parseInt(staffCountResult.rows[0].total_approved, 10) || 0,
     });
   } catch (error) {
     console.error("Error fetching salary statistics:", error);
@@ -404,12 +419,19 @@ router.post("/update", authenticateToken, async (req, res) => {
       year,
     });
 
-    const userCheck = await pool.query(`SELECT id FROM users WHERE id = $1`, [
-      userId,
-    ]);
+    const userCheck = await pool.query(
+      `SELECT id, COALESCE(suspended, false) AS suspended FROM users WHERE id = $1`,
+      [userId]
+    );
 
     if (userCheck.rows.length === 0) {
       return res.status(404).json({ error: "User not found" });
+    }
+
+    if (userCheck.rows[0].suspended) {
+      return res
+        .status(400)
+        .json({ error: "This account is suspended and is not on the salary list." });
     }
 
     const existingSalary = await pool.query(
@@ -464,11 +486,11 @@ router.post("/update", authenticateToken, async (req, res) => {
     } else {
       result = await pool.query(
         `
-        INSERT INTO salaries (user_id, amount, month, year, paid)
-        VALUES ($1, $2, $3, $4, false)
+        INSERT INTO salaries (user_id, amount, month, year, paid, academic_year_id)
+        VALUES ($1, $2, $3, $4, false, $5)
         RETURNING *
       `,
-        [userId, amount, monthName, targetYear]
+        [userId, amount, monthName, targetYear, await getStampYearId()]
       );
       await logChanges(
         "salaries",
@@ -534,6 +556,16 @@ router.put("/mark-paid/:salaryId", authenticateToken, async (req, res) => {
         error:
           "This salary record is not linked to an employee. Set the salary amount again from the Salary page, then pay.",
       });
+    }
+
+    const accountCheck = await pool.query(
+      `SELECT COALESCE(suspended, false) AS suspended FROM users WHERE id = $1`,
+      [effectiveUserId]
+    );
+    if (accountCheck.rows[0]?.suspended) {
+      return res
+        .status(400)
+        .json({ error: "This account is suspended and is not on the salary list." });
     }
 
     if (!salaryRecord.user_id) {
@@ -802,7 +834,9 @@ router.get("/user/:userId", async (req, res) => {
 // Get all paid salary records for pay slips
 router.get("/paid-salaries", async (req, res) => {
   try {
-    const result = await pool.query(`
+    const yearId = yearParam(await resolveListYearId(req));
+    const result = await pool.query(
+      `
       SELECT 
         s.id,
         ${payslipAmountSql("s")} AS amount,
@@ -819,9 +853,12 @@ router.get("/paid-salaries", async (req, res) => {
       LEFT JOIN users u ON u.id = COALESCE(s.user_id, s.applicant_id)
       LEFT JOIN teachers t ON t.user_id = u.id
       LEFT JOIN cnps_preferences cp ON cp.user_id = COALESCE(s.user_id, s.applicant_id)
-      WHERE s.paid = true
+      WHERE s.paid = true AND s.academic_year_id = $1
+        AND COALESCE(u.suspended, false) = false
       ORDER BY s.paid_at DESC, COALESCE(NULLIF(TRIM(s.employee_name), ''), u.name, u.username, '') ASC
-    `);
+    `,
+      [yearId]
+    );
 
     res.json(result.rows);
   } catch (error) {

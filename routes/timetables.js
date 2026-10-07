@@ -3,6 +3,11 @@ const { Pool } = require("pg");
 require("dotenv").config();
 
 const { logChanges, ChangeTypes } = require("../src/utils/logChanges.util");
+const {
+  resolveListYearId,
+  getStampYearId,
+  yearParam,
+} = require("../src/utils/yearScopedQuery.util");
 
 const router = express.Router();
 const isDesktop = process.env.NODE_ENV === "desktop";
@@ -207,9 +212,10 @@ router.post("/assignments/bulk", authenticateToken, async (req, res) => {
 router.get("/assignments", authenticateToken, async (req, res) => {
   try {
     const { classId, subjectId } = req.query;
+    const yearId = yearParam(await resolveListYearId(req));
     let query = "SELECT * FROM teacher_assignments";
-    const params = [];
-    const conds = [];
+    const params = [yearId];
+    const conds = [`academic_year_id = $1`];
     if (classId) {
       params.push(Number(classId));
       conds.push(`class_id = $${params.length}`);
@@ -218,7 +224,7 @@ router.get("/assignments", authenticateToken, async (req, res) => {
       params.push(Number(subjectId));
       conds.push(`subject_id = $${params.length}`);
     }
-    if (conds.length > 0) query += " WHERE " + conds.join(" AND ");
+    query += " WHERE " + conds.join(" AND ");
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
@@ -257,19 +263,20 @@ router.post("/class/:classId", authenticateToken, async (req, res) => {
 
     console.log("Final JSON data to save:", jsonData);
 
+    const yearId = yearParam(await getStampYearId());
     const exists = await pool.query(
-      "SELECT id FROM timetables WHERE class_id = $1",
-      [classId]
+      "SELECT id FROM timetables WHERE class_id = $1 AND academic_year_id = $2",
+      [classId, yearId]
     );
     if (exists.rows.length > 0) {
       const beforeResult = await pool.query(
-        "SELECT data FROM timetables WHERE class_id = $1",
-        [classId]
+        "SELECT data FROM timetables WHERE class_id = $1 AND academic_year_id = $2",
+        [classId, yearId]
       );
       const beforeState = beforeResult.rows[0];
       await pool.query(
-        "UPDATE timetables SET data = $1, updated_at = CURRENT_TIMESTAMP WHERE class_id = $2",
-        [jsonData, classId]
+        "UPDATE timetables SET data = $1, updated_at = CURRENT_TIMESTAMP WHERE class_id = $2 AND academic_year_id = $3",
+        [jsonData, classId, yearId]
       );
       const fieldsChanged = {
         before: { data: beforeState.data },
@@ -285,8 +292,8 @@ router.post("/class/:classId", authenticateToken, async (req, res) => {
       return res.json({ class_id: classId, updated: true });
     } else {
       const ins = await pool.query(
-        "INSERT INTO timetables (class_id, data) VALUES ($1, $2) RETURNING id",
-        [classId, jsonData]
+        "INSERT INTO timetables (class_id, data, academic_year_id) VALUES ($1, $2, $3) RETURNING id",
+        [classId, jsonData, yearId]
       );
       await logChanges(
         "timetables",
@@ -312,8 +319,8 @@ router.get("/class/:classId", authenticateToken, async (req, res) => {
     if (Number.isNaN(classId))
       return res.status(400).json({ error: "Invalid classId" });
     const result = await pool.query(
-      "SELECT data FROM timetables WHERE class_id = $1",
-      [classId]
+      "SELECT data FROM timetables WHERE class_id = $1 AND academic_year_id = $2",
+      [classId, yearParam(await resolveListYearId(req))]
     );
     if (result.rows.length === 0) return res.json(null);
     res.json(result.rows[0].data);
@@ -326,7 +333,10 @@ router.get("/class/:classId", authenticateToken, async (req, res) => {
 // Get all timetables
 router.get("/", authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query("SELECT class_id, data FROM timetables");
+    const result = await pool.query(
+      "SELECT class_id, data FROM timetables WHERE academic_year_id = $1",
+      [yearParam(await resolveListYearId(req))]
+    );
     console.log("Retrieved all timetables:", result.rows);
     res.json(result.rows);
   } catch (err) {
@@ -382,9 +392,13 @@ router.delete("/assignments", authenticateToken, async (req, res) => {
 // Delete all timetables
 router.delete("/delete-all", authenticateToken, async (req, res) => {
   try {
-    const beforeResult = await pool.query("SELECT * FROM timetables");
+    const yearId = yearParam(await getStampYearId());
+    const beforeResult = await pool.query(
+      "SELECT * FROM timetables WHERE academic_year_id = $1",
+      [yearId]
+    );
     const deletedData = beforeResult.rows;
-    await pool.query("DELETE FROM timetables");
+    await pool.query("DELETE FROM timetables WHERE academic_year_id = $1", [yearId]);
     for (const record of deletedData) {
       await logChanges("timetables", record.id, ChangeTypes.delete, req.user, {
         deletedData: record,

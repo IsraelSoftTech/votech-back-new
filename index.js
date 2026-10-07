@@ -326,6 +326,15 @@ async function runMigrations() {
   }
 
   try {
+    const {
+      run: runYearScopeOperationalDataStep1,
+    } = require("./src/db/migrations/yearScopeOperationalData.step1");
+    await runYearScopeOperationalDataStep1(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (year-scope operational data):", err.message);
+  }
+
+  try {
     await pool.query(`
       ALTER TABLE students ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'
     `);

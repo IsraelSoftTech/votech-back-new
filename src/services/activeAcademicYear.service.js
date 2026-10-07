@@ -38,9 +38,12 @@ function clearActiveYearCache() {
  */
 async function getActiveYear({ bypassCache = false } = {}) {
   const now = Date.now();
+  // A cached "no year" must not stick: Admin3 can activate a year while
+  // this process still remembers the empty lookup. A real row stays cached.
   if (
     !bypassCache &&
     activeYearCache &&
+    activeYearCache.row &&
     activeYearCache.expiresAt > now
   ) {
     return activeYearCache.row;

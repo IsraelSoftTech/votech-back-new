@@ -207,9 +207,10 @@ router.get("/:id/photo/thumb", authenticateToken, async (req, res) => {
       getStudentPhotoThumb,
     } = require("../src/services/studentPhotoThumb.service");
     const refresh = req.query.refresh === "1" || req.query.refresh === "true";
-    const size = req.query.size === "card" ? "card" : "list";
+    const size = req.query.size === "print" || req.query.size === "card" ? req.query.size : "list";
     const allowGenerate =
       size === "card" ||
+      size === "print" ||
       req.query.generate === "1" ||
       req.query.generate === "true";
     const buffer = await getStudentPhotoThumb(req.params.id, {

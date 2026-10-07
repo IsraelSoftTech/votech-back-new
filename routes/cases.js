@@ -7,6 +7,11 @@ const router = express.Router();
 require("dotenv").config();
 
 const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+const {
+  resolveListYearId,
+  getStampYearId,
+  yearParam,
+} = require("../src/utils/yearScopedQuery.util");
 
 const isDesktop = process.env.NODE_ENV === "desktop";
 const db = isDesktop
@@ -69,6 +74,7 @@ const generateCaseNumber = async () => {
 // Get all cases
 router.get("/", authenticateToken, async (req, res) => {
   try {
+    const yearId = yearParam(await resolveListYearId(req));
     const query = `
       SELECT 
         c.*,
@@ -82,9 +88,10 @@ router.get("/", authenticateToken, async (req, res) => {
       LEFT JOIN classes cl ON c.class_id = cl.id
       LEFT JOIN users u ON c.assigned_to = u.id
       LEFT JOIN users creator ON c.created_by = creator.id
+      WHERE c.academic_year_id = $1
       ORDER BY c.created_at DESC
     `;
-    const result = await pool.query(query);
+    const result = await pool.query(query, [yearId]);
     res.json(result.rows);
   } catch (error) {
     console.error("Error fetching cases:", error);
@@ -151,11 +158,12 @@ router.post("/", authenticateToken, async (req, res) => {
 
       const caseNumber = await generateCaseNumber();
 
+      const yearId = await getStampYearId();
       const query = `
         INSERT INTO cases (
           case_number, student_id, class_id, issue_type, issue_description, 
-          priority, assigned_to, created_by, started_date, notes
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          priority, assigned_to, created_by, started_date, notes, academic_year_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING *
       `;
 
@@ -170,6 +178,7 @@ router.post("/", authenticateToken, async (req, res) => {
         req.user.id, // created_by
         new Date().toISOString().split("T")[0], // started_date
         notes || null,
+        yearId,
       ];
 
       const result = await pool.query(query, values);

@@ -22,6 +22,11 @@ const {
   getIpAddress,
   getUserAgent,
 } = require("./utils");
+const {
+  resolveListYearId,
+  getStampYearId,
+  yearParam,
+} = require("../src/utils/yearScopedQuery.util");
 
 const router = express.Router();
 
@@ -476,7 +481,9 @@ router.use(authenticateToken);
 router.get("/", async (req, res) => {
   try {
     const params = [];
-    let where = `WHERE 1 = 1 ${visibilityClause(req, params)}`;
+    const yearId = yearParam(await resolveListYearId(req));
+    params.push(yearId);
+    let where = `WHERE g.academic_year_id = $1 ${visibilityClause(req, params)}`;
 
     if (req.query.category) {
       params.push(String(req.query.category).trim());
@@ -519,7 +526,9 @@ router.get("/", async (req, res) => {
 router.get("/meta/categories", async (req, res) => {
   try {
     const params = [];
-    const where = `WHERE g.category IS NOT NULL ${visibilityClause(req, params)}`;
+    const yearId = yearParam(await resolveListYearId(req));
+    params.push(yearId);
+    const where = `WHERE g.category IS NOT NULL AND g.academic_year_id = $1 ${visibilityClause(req, params)}`;
 
     const result = await pool.query(
       `SELECT DISTINCT g.category FROM user_guides g ${where} ORDER BY g.category`,
@@ -618,8 +627,8 @@ router.post("/", requireGuideAdmin, handleGuideUpload, async (req, res) => {
     const inserted = await client.query(
       `INSERT INTO user_guides
          (title, description, content_type, body, file_url, external_url,
-          file_name, file_size, mime_type, category, sort_order, is_published, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+          file_name, file_size, mime_type, category, sort_order, is_published, created_by, academic_year_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING id, title`,
       [
         title,
@@ -635,6 +644,7 @@ router.post("/", requireGuideAdmin, handleGuideUpload, async (req, res) => {
         sortOrder,
         isPublished,
         req.user.id,
+        await getStampYearId(),
       ]
     );
 

@@ -1,6 +1,7 @@
 "use strict";
 
 const { pool } = require("../../routes/utils");
+const { toCalendarDateString } = require("../utils/calendarDate.util");
 
 const DEFAULTS = {
   school_name: "VOTECH S7 ACADEMY",
@@ -10,6 +11,8 @@ const DEFAULTS = {
   card_title: "STUDENT ID CARD",
   qr_caption: "Scan for attendance",
   stamp_url: null,
+  date_issued: null,
+  expiry_date: null,
 };
 
 async function ensureSettingsTable() {
@@ -30,7 +33,9 @@ async function ensureSettingsTable() {
 
   await pool.query(`
     ALTER TABLE id_card_settings
-      ADD COLUMN IF NOT EXISTS stamp_url TEXT
+      ADD COLUMN IF NOT EXISTS stamp_url TEXT,
+      ADD COLUMN IF NOT EXISTS date_issued DATE,
+      ADD COLUMN IF NOT EXISTS expiry_date DATE
   `);
 
   await pool.query(`
@@ -40,11 +45,17 @@ async function ensureSettingsTable() {
   `);
 }
 
+function toIsoDate(value) {
+  return toCalendarDateString(value);
+}
+
 function mapSettings(row) {
   return {
     ...DEFAULTS,
     ...(row || {}),
     stamp_url: row?.stamp_url || null,
+    date_issued: toIsoDate(row?.date_issued),
+    expiry_date: toIsoDate(row?.expiry_date),
   };
 }
 
@@ -83,6 +94,13 @@ async function updateIdCardSettings(payload, userId = null) {
     sets.push(`stamp_url = $${idx}::text`);
     vals.push(payload.stamp_url ? String(payload.stamp_url).trim() : null);
   }
+
+  ["date_issued", "expiry_date"].forEach((key) => {
+    if (!Object.prototype.hasOwnProperty.call(payload, key)) return;
+    idx += 1;
+    sets.push(`${key} = $${idx}::date`);
+    vals.push(toCalendarDateString(payload[key]) || null);
+  });
 
   if (!sets.length) {
     return getIdCardSettings();

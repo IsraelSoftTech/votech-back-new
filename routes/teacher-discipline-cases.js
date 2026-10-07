@@ -3,6 +3,11 @@ require("dotenv").config();
 const { pool, authenticateToken } = require("./utils");
 
 const { logChanges, ChangeTypes } = require("../src/utils/logChanges.util");
+const {
+  resolveListYearId,
+  getStampYearId,
+  yearParam,
+} = require("../src/utils/yearScopedQuery.util");
 
 const router = express.Router();
 
@@ -68,7 +73,9 @@ router.get("/", authenticateToken, async (req, res) => {
   try {
     if (!canRead(req.user.role))
       return res.status(403).json({ error: "Unauthorized" });
-    const result = await pool.query(`
+    const yearId = yearParam(await resolveListYearId(req));
+    const result = await pool.query(
+      `
       SELECT 
         tdc.id,
         tdc.teacher_id,
@@ -86,8 +93,11 @@ router.get("/", authenticateToken, async (req, res) => {
         u.name as teacher_name
       FROM teacher_discipline_cases tdc
       LEFT JOIN users u ON u.id = tdc.teacher_id
+      WHERE tdc.academic_year_id = $1
       ORDER BY tdc.recorded_at DESC, tdc.id DESC
-    `);
+    `,
+      [yearId]
+    );
     res.json(result.rows);
   } catch (e) {
     console.error("List teacher cases failed:", e);
@@ -148,10 +158,10 @@ router.post("/", authenticateToken, async (req, res) => {
       ? parseInt(classId ?? class_id, 10)
       : null;
     const result = await pool.query(
-      `INSERT INTO teacher_discipline_cases (teacher_id, class_id, case_description, status, recorded_by)
-       VALUES ($1,$2,$3,'not resolved',$4)
+      `INSERT INTO teacher_discipline_cases (teacher_id, class_id, case_description, status, recorded_by, academic_year_id)
+       VALUES ($1,$2,$3,'not resolved',$4,$5)
        RETURNING id, teacher_id, class_id, case_description, status, recorded_by, recorded_at, resolved_at, resolution_notes`,
-      [teacherIdNum, classIdNum, trimmedDescription, recordedBy]
+      [teacherIdNum, classIdNum, trimmedDescription, recordedBy, await getStampYearId()]
     );
     const row = result.rows[0];
     // Attach teacher label for immediate UI display

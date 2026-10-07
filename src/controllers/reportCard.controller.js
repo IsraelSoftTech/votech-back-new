@@ -41,6 +41,31 @@ const round = (n, d = 1) => {
   return Math.round((Number(n) + Number.EPSILON) * factor) / factor;
 };
 
+const BIRTH_MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+function formatBirthDate(value) {
+  if (!value) return "";
+  const raw = String(value).slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!match) return String(value);
+  const month = BIRTH_MONTHS[Number(match[2]) - 1];
+  if (!month) return String(value);
+  return `${Number(match[3])} ${month} ${match[1]}`;
+}
+
 // FIXED: Shared builder with corrected calculations
 function buildReportCardsFromMarks(marks, classMaster, termKey = "term3", principal, schoolSettings) {
   const sequences = { ...sequencesFormat };
@@ -75,7 +100,7 @@ function buildReportCardsFromMarks(marks, classMaster, termKey = "term3", princi
           id: m.student.id,
           name: m.student.full_name,
           registrationNumber: m.student.student_id,
-          dateOfBirth: m.student.date_of_birth,
+          dateOfBirth: formatBirthDate(m.student.date_of_birth),
           class: m.student.Class?.name,
           option: m.student.Class?.department?.name,
           academicYear: m.academic_year?.name,

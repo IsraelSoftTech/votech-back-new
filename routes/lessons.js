@@ -2,7 +2,12 @@ const express = require("express");
 const { Pool } = require("pg");
 require("dotenv").config();
 
-const { ChangeTypes, logChanges } = require("../src/utils/logChanges.util");
+const { logChanges, ChangeTypes } = require("../src/utils/logChanges.util");
+const {
+  resolveListYearId,
+  getStampYearId,
+  yearParam,
+} = require("../src/utils/yearScopedQuery.util");
 
 const router = express.Router();
 const isDesktop = process.env.NODE_ENV === "desktop";
@@ -74,7 +79,7 @@ const denyAdmin3Write = (req, res, next) => {
   next();
 };
 
-const buildLessonListQuery = (req) => {
+const buildLessonListQuery = async (req) => {
   const {
     class: classFilter,
     department,
@@ -89,6 +94,10 @@ const buildLessonListQuery = (req) => {
   const isAdmin3User = isAdmin3(req.user);
   const params = [];
   const conditions = [];
+
+  const yearId = yearParam(await resolveListYearId(req));
+  params.push(yearId);
+  conditions.push(`l.academic_year_id = $${params.length}`);
 
   if (isAdmin3User) {
     conditions.push(`l.status = 'approved'`);
@@ -246,8 +255,8 @@ router.post("/", authenticateToken, denyAdmin3Write, async (req, res) => {
 
     const result = await pool.query(
       `INSERT INTO lessons 
-       (user_id, title, subject, class_name, class_id, department_id, week, period_type, objectives, content, activities, assessment, resources) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
+       (user_id, title, subject, class_name, class_id, department_id, week, period_type, objectives, content, activities, assessment, resources, academic_year_id) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) 
        RETURNING *`,
       [
         req.user.id,
@@ -263,6 +272,7 @@ router.post("/", authenticateToken, denyAdmin3Write, async (req, res) => {
         activities,
         assessment,
         resources,
+        await getStampYearId(),
       ]
     );
 
@@ -291,12 +301,12 @@ router.get("/my", authenticateToken, async (req, res) => {
 
     const [result, countResult] = await Promise.all([
       pool.query(
-        "SELECT * FROM lessons WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
-        [req.user.id, limitNum, offset]
+        "SELECT * FROM lessons WHERE user_id = $1 AND academic_year_id = $4 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+        [req.user.id, limitNum, offset, yearParam(await resolveListYearId(req))]
       ),
       pool.query(
-        "SELECT COUNT(*)::int AS total FROM lessons WHERE user_id = $1",
-        [req.user.id]
+        "SELECT COUNT(*)::int AS total FROM lessons WHERE user_id = $1 AND academic_year_id = $2",
+        [req.user.id, yearParam(await resolveListYearId(req))]
       ),
     ]);
 
@@ -329,7 +339,7 @@ router.get("/all", authenticateToken, async (req, res) => {
     }
 
     const { sql, countSql, params, pageNum, limitNum } =
-      buildLessonListQuery(req);
+      await buildLessonListQuery(req);
     const countParams = params.slice(0, params.length - 2);
 
     const [result, countResult] = await Promise.all([
