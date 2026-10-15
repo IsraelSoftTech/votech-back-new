@@ -687,14 +687,20 @@ const CLASS_LIST_C = {
   light: "#666666",
   white: "#FFFFFF",
   rowLine: "#cbd5e0",
+  archive: "#9a3412",
+  archiveFill: "#fff7ed",
 };
 
-function buildClassListDoc({ className, departmentName, academicYearName, students, isOrientation }) {
+// `archive` is only passed by archivedClassListPdf below: { activeYearName,
+// statusByStudentId }. It adds the "Status Now" column, the archived-year
+// banner and a footer disclaimer on every page. Without it the document is
+// exactly what the normal class list has always produced.
+function buildClassListDoc({ className, departmentName, academicYearName, students, isOrientation, archive = null }) {
   const logoBase64 = loadLogoBase64();
 
   const baseHeaders = ["S/N", "Student ID", "Full Name", "Sex", "Date of Birth", "Father's Contact"];
   const choiceHeaders = isOrientation ? [1, 2, 3, 4, 5, 6].map((n) => `Choice ${n}`) : [];
-  const headers = [...baseHeaders, ...choiceHeaders];
+  const headers = [...baseHeaders, ...choiceHeaders, ...(archive ? ["Status Now"] : [])];
 
   const headerRow = headers.map((h) => ({
     text: h,
@@ -719,17 +725,46 @@ function buildClassListDoc({ className, departmentName, academicYearName, studen
       );
       for (let r = 1; r <= 6; r++) row.push(byRank.get(r) || "");
     }
+    if (archive) row.push(archive.statusByStudentId.get(s.id) || "N/A");
     return row.map((v) => ({ text: String(v), fontSize: 7.5, color: CLASS_LIST_C.dark }));
   });
 
-  const widths = isOrientation
+  let widths = isOrientation
     ? [22, 68, 110, 26, 58, 66, 56, 56, 56, 56, 56, 56]
     : [28, 90, 170, 40, 80, 100];
+  // One extra column must still fit inside the page margins (each cell
+  // also carries 8pt of padding), so the archived layout trims the others.
+  if (archive) {
+    widths = isOrientation
+      ? [22, 68, 106, 26, 58, 66, 46, 46, 46, 46, 46, 46, 60]
+      : [24, 78, 122, 26, 60, 75, 90];
+  }
+
+  const archiveNotice = archive
+    ? `This class list is NOT for the current academic year (${archive.activeYearName || "active year"}). ` +
+      `It shows ${className} as it was in ${academicYearName}, rebuilt from the school's records.`
+    : null;
 
   return {
     pageSize: "A4",
     pageOrientation: isOrientation ? "landscape" : "portrait",
-    pageMargins: [24, 20, 24, 20],
+    pageMargins: archive ? [24, 20, 24, 34] : [24, 20, 24, 20],
+    ...(archive
+      ? {
+          footer: (currentPage, pageCount) => ({
+            margin: [24, 6, 24, 0],
+            columns: [
+              {
+                text: `ARCHIVED. ${archiveNotice}`,
+                fontSize: 6.5,
+                color: CLASS_LIST_C.archive,
+                width: "*",
+              },
+              { text: `Page ${currentPage} of ${pageCount}`, fontSize: 6.5, color: CLASS_LIST_C.light, alignment: "right", width: 60 },
+            ],
+          }),
+        }
+      : {}),
     defaultStyle: { font: "Roboto", fontSize: 8 },
 
     ...(logoBase64 ? { images: { reportLogo: logoBase64 } } : {}),
@@ -766,10 +801,35 @@ function buildClassListDoc({ className, departmentName, academicYearName, studen
         fontSize: 8,
         color: CLASS_LIST_C.light,
         alignment: "center",
-        margin: [0, 2, 0, 10],
+        margin: [0, 2, 0, archive ? 6 : 10],
       },
+      archive
+        ? {
+            table: {
+              widths: ["*"],
+              body: [[{
+                stack: [
+                  { text: `ARCHIVED CLASS LIST: ${academicYearName}`, bold: true, fontSize: 9, color: CLASS_LIST_C.archive },
+                  { text: archiveNotice, fontSize: 7.5, color: CLASS_LIST_C.dark, margin: [0, 2, 0, 0] },
+                ],
+                fillColor: CLASS_LIST_C.archiveFill,
+              }]],
+            },
+            layout: {
+              hLineWidth: () => 0.8,
+              vLineWidth: () => 0.8,
+              hLineColor: () => CLASS_LIST_C.archive,
+              vLineColor: () => CLASS_LIST_C.archive,
+              paddingLeft: () => 6,
+              paddingRight: () => 6,
+              paddingTop: () => 4,
+              paddingBottom: () => 4,
+            },
+            margin: [0, 0, 0, 10],
+          }
+        : null,
       {
-        table: { headerRows: 1, widths, body: [headerRow, ...bodyRows] },
+        table: { headerRows: 1, widths, body: [headerRow, ...bodyRows], ...(archive ? { dontBreakRows: true } : {}) },
         layout: {
           hLineWidth: () => 0.5,
           vLineWidth: () => 0.5,
@@ -870,6 +930,207 @@ const classListPdf = catchAsync(async (req, res, next) => {
   }
 });
 
+// ─── Archived-year Class List PDF (Admin3 only) ─────────────────────
+//
+// A student row only says where the student is NOW (promotion overwrites
+// class_id/academic_year_id), so a past year's roster is rebuilt from the
+// records that stamped a class + year when they were written:
+//   1. marks                    (class_id, academic_year_id)
+//   2. student_promotions       (from_class_id, from_academic_year_id)
+//   3. student_status_changes   (class_id, academic_year_id), not reverted
+//   4. the student row itself, while it still points at that year
+// A student is on the list if any of these puts them in the class that
+// year, whatever their status is today (graduated and left included).
+// Someone who touched two classes in one year (moved early, or a few
+// marks entered under the wrong class) is placed in ONE final class:
+// latest promotion/exit record, else their own row, else the class of
+// their most recent mark.
+
+const ARCHIVE_STATUS_LABELS = {
+  promoted: "Promoted",
+  promoted_on_condition: "Promoted on Condition",
+  failed: "Failed",
+};
+
+async function buildArchivedRoster(classId, yearId) {
+  const touched = await Promise.all([
+    models.Mark.findAll({ where: { academic_year_id: yearId, class_id: classId }, attributes: ["student_id"], group: ["student_id"], raw: true }),
+    models.StudentPromotion.findAll({ where: { from_academic_year_id: yearId, from_class_id: classId }, attributes: ["student_id"], raw: true }),
+    models.StudentStatusChange.findAll({ where: { academic_year_id: yearId, class_id: classId, reverted_at: null }, attributes: ["student_id"], raw: true }),
+    models.Student.findAll({ where: { academic_year_id: yearId, class_id: classId }, attributes: ["id"], raw: true }),
+  ]);
+  const candidateIds = [
+    ...new Set([
+      ...touched[0].map((r) => r.student_id),
+      ...touched[1].map((r) => r.student_id),
+      ...touched[2].map((r) => r.student_id),
+      ...touched[3].map((r) => r.id),
+    ]),
+  ];
+  if (!candidateIds.length) return { studentIds: [], statusByStudentId: new Map() };
+
+  // Every footprint these students left anywhere in that year, so the
+  // final-class rule can see the other class too.
+  const [marks, promotions, exits, rows] = await Promise.all([
+    models.Mark.findAll({
+      where: { academic_year_id: yearId, student_id: { [Op.in]: candidateIds } },
+      attributes: [
+        "student_id",
+        "class_id",
+        [sequelize.fn("MAX", sequelize.fn("COALESCE", sequelize.col("uploaded_at"), sequelize.col("createdAt"))), "last_at"],
+      ],
+      group: ["student_id", "class_id"],
+      raw: true,
+    }),
+    models.StudentPromotion.findAll({
+      where: { from_academic_year_id: yearId, student_id: { [Op.in]: candidateIds } },
+      attributes: ["student_id", "from_class_id", "to_class_id", "decision", "created_at"],
+      raw: true,
+    }),
+    models.StudentStatusChange.findAll({
+      where: { academic_year_id: yearId, student_id: { [Op.in]: candidateIds }, reverted_at: null },
+      attributes: ["student_id", "class_id", "performed_at"],
+      raw: true,
+    }),
+    models.Student.findAll({
+      where: { id: { [Op.in]: candidateIds } },
+      attributes: ["id", "class_id", "academic_year_id", "status"],
+      raw: true,
+    }),
+  ]);
+
+  const time = (v) => (v ? new Date(v).getTime() : 0);
+  const latestPromotion = new Map();
+  for (const p of promotions) {
+    const cur = latestPromotion.get(p.student_id);
+    if (!cur || time(p.created_at) >= time(cur.created_at)) latestPromotion.set(p.student_id, p);
+  }
+  const latestEvent = new Map(); // promotion or exit, whichever came last
+  for (const p of promotions) {
+    const cur = latestEvent.get(p.student_id);
+    if (!cur || time(p.created_at) >= cur.at) latestEvent.set(p.student_id, { at: time(p.created_at), class_id: p.from_class_id });
+  }
+  for (const e of exits) {
+    if (!e.class_id) continue;
+    const cur = latestEvent.get(e.student_id);
+    if (!cur || time(e.performed_at) >= cur.at) latestEvent.set(e.student_id, { at: time(e.performed_at), class_id: e.class_id });
+  }
+  const latestMark = new Map();
+  for (const m of marks) {
+    const cur = latestMark.get(m.student_id);
+    if (!cur || time(m.last_at) >= time(cur.last_at)) latestMark.set(m.student_id, m);
+  }
+  const rowById = new Map(rows.map((r) => [r.id, r]));
+
+  const studentIds = [];
+  const statusByStudentId = new Map();
+  for (const id of candidateIds) {
+    const row = rowById.get(id);
+    if (!row) continue; // soft-deleted student
+    let finalClass = latestEvent.get(id)?.class_id;
+    if (finalClass == null && Number(row.academic_year_id) === Number(yearId)) finalClass = row.class_id;
+    if (finalClass == null) finalClass = latestMark.get(id)?.class_id;
+    if (Number(finalClass) !== Number(classId)) continue;
+
+    studentIds.push(id);
+    let label = "N/A";
+    const promo = latestPromotion.get(id);
+    if (row.status === "graduated") label = "Graduated";
+    else if (row.status === "withdrawn") label = "Left";
+    else if (promo) {
+      label = Number(promo.to_class_id) === Number(promo.from_class_id)
+        ? "Repeating"
+        : ARCHIVE_STATUS_LABELS[promo.decision] || "N/A";
+    }
+    statusByStudentId.set(id, label);
+  }
+  return { studentIds, statusByStudentId };
+}
+
+const archivedClassListPdf = catchAsync(async (req, res, next) => {
+  const { classId } = req.params;
+  const { disposition = "attachment" } = req.query;
+  const yearId = Number(req.query.academic_year_id);
+  if (!Number.isInteger(yearId) || yearId <= 0) {
+    return next(new AppError("Choose a past academic year.", StatusCodes.BAD_REQUEST));
+  }
+
+  const academicYear = await models.AcademicYear.findByPk(yearId);
+  if (!academicYear) {
+    return next(new AppError("Academic year not found.", StatusCodes.NOT_FOUND));
+  }
+  // The current year has its own list (GET /class/:classId/list-pdf);
+  // refusing it here keeps an "archived" banner off a live roster.
+  if (academicYear.status === "active") {
+    return next(
+      new AppError(
+        `${academicYear.name} is the current academic year. Use the normal class list for it.`,
+        StatusCodes.BAD_REQUEST
+      )
+    );
+  }
+
+  const studentClass = await models.Class.findByPk(classId, {
+    include: [{ association: models.Class.associations.department }],
+  });
+  if (!studentClass) {
+    return next(new AppError("Class not found.", StatusCodes.NOT_FOUND));
+  }
+
+  const { studentIds, statusByStudentId } = await buildArchivedRoster(studentClass.id, yearId);
+  if (!studentIds.length) {
+    return next(
+      new AppError(`No record of any student in ${studentClass.name} for ${academicYear.name}.`, StatusCodes.NOT_FOUND)
+    );
+  }
+
+  const students = await models.Student.findAll({
+    where: { id: { [Op.in]: studentIds } },
+    order: [["full_name", "ASC"]],
+    include: studentClass.is_orientation
+      ? [
+          {
+            association: models.Student.associations.department_choices,
+            include: [
+              { association: models.StudentDepartmentChoice.associations.department },
+            ],
+          },
+        ]
+      : [],
+  });
+
+  const activeYear = await getActiveYear();
+  const docDefinition = buildClassListDoc({
+    className: studentClass.name,
+    departmentName: studentClass.department?.name || "",
+    academicYearName: academicYear.name,
+    students: students.map((s) => s.get({ plain: true })),
+    isOrientation: studentClass.is_orientation,
+    archive: { activeYearName: activeYear?.name || "", statusByStudentId },
+  });
+
+  const safeDisposition = disposition === "inline" ? "inline" : "attachment";
+  const filename = `Class_List_${sanitize(studentClass.name)}_${sanitize(academicYear.name)}_ARCHIVED.pdf`;
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `${safeDisposition}; filename="${filename}"`);
+
+  try {
+    const doc = printer.createPdfKitDocument(docDefinition);
+    doc.on("error", (err) => {
+      if (!res.headersSent) next(err);
+    });
+    doc.pipe(res);
+    doc.end();
+  } catch (err) {
+    return next(
+      new AppError(
+        "Class list PDF generation failed: " + (err.message || ""),
+        StatusCodes.INTERNAL_SERVER_ERROR
+      )
+    );
+  }
+});
+
 module.exports = {
   readOneStudent,
   readAllStudents,
@@ -879,6 +1140,8 @@ module.exports = {
   listOrientationStudents,
   bulkSetDepartmentChoice,
   classListPdf,
+  archivedClassListPdf,
+  buildArchivedRoster,
   // Reused by marksOverview.controller.js's matrix endpoint so its class
   // roster resolves with the exact same department/class filtering rules
   // the marks-entry page's own /students fetch already relies on.
