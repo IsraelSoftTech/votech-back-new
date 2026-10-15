@@ -302,6 +302,13 @@ async function runMigrations() {
   }
 
   try {
+    const { run: runSalaryPayslipStep5 } = require("./src/db/migrations/salaryPayslip.step5");
+    await runSalaryPayslipStep5(pool);
+  } catch (err) {
+    console.warn("⚠️ Migration (salary payslip step 5):", err.message);
+  }
+
+  try {
     const { run: runStudentFeeDiscountStep1 } = require("./src/db/migrations/studentFeeDiscount.step1");
     await runStudentFeeDiscountStep1(pool);
   } catch (err) {

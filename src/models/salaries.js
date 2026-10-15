@@ -60,11 +60,6 @@ module.exports = function (sequelize, DataTypes) {
           fields: [{ name: "id" }],
         },
         {
-          name: "salaries_user_id_month_key",
-          unique: true,
-          fields: [{ name: "user_id" }, { name: "month" }],
-        },
-        {
           name: "salaries_user_id_month_year_key",
           unique: true,
           fields: [{ name: "user_id" }, { name: "month" }, { name: "year" }],

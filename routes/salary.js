@@ -458,14 +458,15 @@ router.post("/update", authenticateToken, async (req, res) => {
         `
         UPDATE salaries
         SET amount = $1, updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = $2 AND month = $3 AND year = $4
-          AND paid = false
+        WHERE id = $2
+          AND paid IS NOT TRUE
+          AND payslip_locked IS NOT TRUE
         RETURNING *
       `,
-        [amount, userId, monthName, targetYear]
+        [amount, old.id]
       );
 
-      if (!result.rows.length && old.paid === true) {
+      if (!result.rows.length) {
         return res.status(403).json({
           error: `Salary for ${monthName} ${targetYear} is locked and cannot be changed.`,
         });
@@ -509,6 +510,12 @@ router.post("/update", authenticateToken, async (req, res) => {
       return res.status(error.status).json({ error: error.message });
     }
     console.error("Error updating salary:", error);
+    if (error.code === "23505") {
+      return res.status(409).json({
+        error:
+          "This employee already has a salary for that month and year. Refresh the page and try again.",
+      });
+    }
     res.status(500).json({ error: "Failed to update salary" });
   }
 });
