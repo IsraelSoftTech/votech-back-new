@@ -4,13 +4,14 @@ const crypto = require("crypto");
 const { pool } = require("../../routes/utils");
 const {
   attachListThumbsToRows,
-  readCardThumbDataUriSync,
+  hydrateStudentPhotoThumbs,
+  readBestThumbDataUriSync,
 } = require("./studentPhotoThumb.service");
 
 function attachCardThumbToRow(row) {
   if (!row?.photo_url?.trim()) return row;
 
-  const thumb_src = readCardThumbDataUriSync(row.student_db_id);
+  const thumb_src = readBestThumbDataUriSync(row.student_db_id, row.photo_url, "card");
   if (thumb_src) {
     return { ...row, has_photo: true, thumb_src };
   }
@@ -254,6 +255,7 @@ async function listStudentIdCardsPaginated({
       s.student_id,
       s.full_name,
       s.registration_date,
+      s.photo_url,
       (s.photo_url IS NOT NULL AND TRIM(s.photo_url) <> '') AS has_photo,
       c.name AS class_name,
       sp.name AS specialty_name,
@@ -276,6 +278,7 @@ async function listStudentIdCardsPaginated({
 
   const filteredTotal = listResult.rows[0]?.total_count ?? 0;
   const bareRows = listResult.rows.map(({ total_count, ...row }) => row);
+  await hydrateStudentPhotoThumbs(bareRows, { size: "card" });
   const rowsWithThumbs = attachListThumbsToRows(bareRows);
 
   return {
@@ -326,6 +329,7 @@ async function getStudentIdCardsByIds(ids = []) {
   `,
     [numericIds]
   );
+  await hydrateStudentPhotoThumbs(rows, { size: "card" });
   return rows.map((row) => attachCardThumbToRow(row));
 }
 
@@ -369,6 +373,7 @@ async function getStudentIdCardByStudentDbId(studentDbId) {
   );
   const row = rows[0] || null;
   if (!row) return null;
+  await hydrateStudentPhotoThumbs([row], { size: "card" });
   return attachCardThumbToRow(row);
 }
 

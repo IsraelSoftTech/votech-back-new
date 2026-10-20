@@ -118,6 +118,18 @@ function getAcademicYearStart(now = new Date()) {
   return currentMonth >= 8 ? currentYear : currentYear - 1;
 }
 
+function resolveRequestedPeriod(query = {}) {
+  const monthNum = parseInt(query.month, 10);
+  const yearNum = parseInt(query.year, 10);
+  const month =
+    monthNum >= 1 && monthNum <= 12 ? monthNum : new Date().getMonth() + 1;
+  const year =
+    Number.isInteger(yearNum) && yearNum > 1990 && yearNum < 3000
+      ? yearNum
+      : getAcademicYearStart();
+  return { month, monthName: getMonthName(month), year };
+}
+
 function resolveMonthAndYear({ month, monthNumber, year }) {
   let monthName;
   if (monthNumber != null && monthNumber !== "") {
@@ -241,23 +253,7 @@ const PAID_SALARY_EMPLOYEE_SQL = `
 // Get all teachers with salary information
 router.get("/approved-applications", async (req, res) => {
   try {
-    const currentMonth = new Date().getMonth() + 1; // 1-12
-    const currentMonthName = getMonthName(currentMonth);
-
-    // Calculate academic year start (changes on August 1st)
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonthNum = now.getMonth() + 1; // 1-12
-    const currentDay = now.getDate();
-
-    // Academic year changes on August 1st
-    // If we're in August (1st or later) or September onwards, use current year as start
-    let academicYearStart;
-    if (currentMonthNum >= 8) {
-      academicYearStart = currentYear;
-    } else {
-      academicYearStart = currentYear - 1;
-    }
+    const { monthName, year } = resolveRequestedPeriod(req.query);
 
     const result = await pool.query(
       `
@@ -268,7 +264,7 @@ router.get("/approved-applications", async (req, res) => {
         COALESCE(t.classes, '') as classes,
         COALESCE(t.subjects, '') as subjects,
         'approved' as status,
-        COALESCE(s.amount, 0) as salary_amount,
+        COALESCE(s.amount, 0)::float8 as salary_amount,
         s.id as salary_id,
         CASE WHEN s.paid = true THEN 'paid' ELSE 'pending' END as salary_status,
         s.month as salary_month,
@@ -281,19 +277,19 @@ router.get("/approved-applications", async (req, res) => {
             ', ' ORDER BY s2.year DESC, s2.month DESC
           )
           FROM salaries s2 
-          WHERE s2.user_id = u.id 
+          WHERE COALESCE(s2.user_id, s2.applicant_id) = u.id 
           AND s2.paid = true
         ) as paid_months,
         (
           SELECT COUNT(*)
           FROM salaries s3
-          WHERE s3.user_id = u.id 
+          WHERE COALESCE(s3.user_id, s3.applicant_id) = u.id 
           AND s3.amount > 0
         ) as total_salary_records,
         (
           SELECT COUNT(*)
           FROM salaries s4
-          WHERE s4.user_id = u.id 
+          WHERE COALESCE(s4.user_id, s4.applicant_id) = u.id 
           AND s4.paid = true
         ) as paid_salary_records,
         (
@@ -305,24 +301,30 @@ router.get("/approved-applications", async (req, res) => {
               'amount', s5.amount,
               'paid', s5.paid,
               'paid_at', s5.paid_at,
-              'user_id', s5.user_id
-            ) ORDER BY s5.month
+              'user_id', COALESCE(s5.user_id, s5.applicant_id)
+            ) ORDER BY s5.year, s5.month
           )
           FROM salaries s5
-          WHERE s5.user_id = u.id 
-          AND s5.year = $2
+          WHERE COALESCE(s5.user_id, s5.applicant_id) = u.id 
+          AND s5.year IN ($2, $2 + 1)
         ) as all_salary_records
       FROM users u
-      LEFT JOIN salaries s ON u.id = s.user_id 
-        AND s.month = $1
-        AND s.year = $2
+      LEFT JOIN LATERAL (
+        SELECT s0.*
+        FROM salaries s0
+        WHERE COALESCE(s0.user_id, s0.applicant_id) = u.id
+          AND s0.month = $1
+          AND s0.year = $2
+        ORDER BY s0.updated_at DESC NULLS LAST, s0.id DESC
+        LIMIT 1
+      ) s ON true
       LEFT JOIN teachers t ON t.user_id = u.id
       LEFT JOIN cnps_preferences cp ON cp.user_id = u.id
       WHERE COALESCE(u.suspended, false) = false
         AND COALESCE(u.is_system, false) = false
       ORDER BY applicant_name
     `,
-      [currentMonthName, academicYearStart]
+      [monthName, year]
     );
 
     res.json(result.rows);
@@ -335,23 +337,7 @@ router.get("/approved-applications", async (req, res) => {
 // Get salary statistics for current month
 router.get("/statistics", async (req, res) => {
   try {
-    const currentMonth = new Date().getMonth() + 1; // 1-12
-    const currentMonthName = getMonthName(currentMonth);
-
-    // Calculate academic year start (changes on August 1st)
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonthNum = now.getMonth() + 1; // 1-12
-    const currentDay = now.getDate();
-
-    // Academic year changes on August 1st
-    // If we're in August (1st or later) or September onwards, use current year as start
-    let academicYearStart;
-    if (currentMonthNum >= 8) {
-      academicYearStart = currentYear;
-    } else {
-      academicYearStart = currentYear - 1;
-    }
+    const { monthName, year } = resolveRequestedPeriod(req.query);
 
     const yearId = yearParam(await resolveListYearId(req));
 
@@ -364,7 +350,7 @@ router.get("/statistics", async (req, res) => {
       WHERE s.month = $1 AND s.year = $2 AND s.paid = true AND s.academic_year_id = $3
         AND COALESCE(u.suspended, false) = false
     `,
-      [currentMonthName, academicYearStart, yearId]
+      [monthName, year, yearId]
     );
 
     // Get total salary left (pending) for this month
@@ -376,7 +362,7 @@ router.get("/statistics", async (req, res) => {
       WHERE s.month = $1 AND s.year = $2 AND (s.paid = false OR s.paid IS NULL) AND s.academic_year_id = $3
         AND COALESCE(u.suspended, false) = false
     `,
-      [currentMonthName, academicYearStart, yearId]
+      [monthName, year, yearId]
     );
 
     // Staff on the salary list: active accounts, excluding system users.
@@ -437,7 +423,8 @@ router.post("/update", authenticateToken, async (req, res) => {
     const existingSalary = await pool.query(
       `
       SELECT * FROM salaries
-      WHERE user_id = $1 AND month = $2 AND year = $3
+      WHERE COALESCE(user_id, applicant_id) = $1 AND month = $2 AND year = $3
+      ORDER BY updated_at DESC NULLS LAST, id DESC
     `,
       [userId, monthName, targetYear]
     );
@@ -457,13 +444,13 @@ router.post("/update", authenticateToken, async (req, res) => {
       result = await pool.query(
         `
         UPDATE salaries
-        SET amount = $1, updated_at = CURRENT_TIMESTAMP
+        SET amount = $1, user_id = COALESCE(user_id, $3), updated_at = CURRENT_TIMESTAMP
         WHERE id = $2
           AND paid IS NOT TRUE
           AND payslip_locked IS NOT TRUE
         RETURNING *
       `,
-        [amount, old.id]
+        [amount, old.id, userId]
       );
 
       if (!result.rows.length) {
@@ -487,8 +474,8 @@ router.post("/update", authenticateToken, async (req, res) => {
     } else {
       result = await pool.query(
         `
-        INSERT INTO salaries (user_id, amount, month, year, paid, academic_year_id)
-        VALUES ($1, $2, $3, $4, false, $5)
+        INSERT INTO salaries (user_id, amount, month, year, paid, academic_year_id, updated_at)
+        VALUES ($1, $2, $3, $4, false, $5, CURRENT_TIMESTAMP)
         RETURNING *
       `,
         [userId, amount, monthName, targetYear, await getStampYearId()]

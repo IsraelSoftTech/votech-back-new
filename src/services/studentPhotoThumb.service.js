@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { Jimp } = require("jimp");
@@ -49,6 +50,42 @@ function sizeConfig(size) {
 function thumbCachePath(studentDbId, size = "list") {
   const s = normalizeSize(size);
   return path.join(THUMB_DIR, `${studentDbId}-${s}.jpg`);
+}
+
+/** Short stable id for the current photo file. A new upload gets a new id. */
+function photoVersion(photoUrl) {
+  const value = String(photoUrl || "").trim();
+  if (!value) return null;
+  return crypto.createHash("sha1").update(value).digest("hex").slice(0, 12);
+}
+
+function versionedThumbPath(studentDbId, size, version) {
+  return path.join(
+    THUMB_DIR,
+    `${Number(studentDbId)}-${normalizeSize(size)}-${version}.jpg`
+  );
+}
+
+function clearStudentPhotoThumbs(studentDbId) {
+  ensureThumbDir();
+  const id = Number(studentDbId);
+  if (!id) return;
+  const prefix = `${id}-`;
+  for (const name of fs.readdirSync(THUMB_DIR)) {
+    if (name === `${id}.jpg` || name.startsWith(prefix)) {
+      fs.unlinkSync(path.join(THUMB_DIR, name));
+    }
+  }
+  clearGenerationCooldown(id);
+}
+
+function readVersionedThumbBufferSync(studentDbId, size, photoUrl) {
+  const id = Number(studentDbId);
+  const version = photoVersion(photoUrl);
+  if (!id || !version) return null;
+  const file = versionedThumbPath(id, size, version);
+  if (!fs.existsSync(file)) return null;
+  return fs.readFileSync(file);
 }
 
 function legacyThumbCachePath(studentDbId) {
@@ -118,30 +155,33 @@ async function readCachedThumb(studentDbId, size) {
   return null;
 }
 
-async function generateThumbFromPhotoUrl(studentDbId, size) {
+async function lookupPhotoUrl(studentDbId) {
   const id = Number(studentDbId);
+  if (!id) return null;
   const { rows } = await pool.query(
     `SELECT photo_url FROM students WHERE id = $1 AND "deletedAt" IS NULL`,
     [id]
   );
-  if (!rows.length || !rows[0].photo_url?.trim()) return null;
+  return rows[0]?.photo_url?.trim() || null;
+}
 
-  const sourceUrl = resolvePhotoUrl(rows[0].photo_url);
+async function generateThumbFromPhotoUrl(studentDbId, size, photoUrl, version) {
+  const id = Number(studentDbId);
+  const source = String(photoUrl || "").trim();
+  const ver = version || photoVersion(source);
+  if (!id || !source || !ver) return null;
+
+  const sourceUrl = resolvePhotoUrl(source);
   if (!sourceUrl) return null;
 
   const sourceBuffer = await fetchImageBuffer(sourceUrl);
-  const thumbBuffer = await resizeBuffer(sourceBuffer, size);
-  fs.writeFileSync(thumbCachePath(id, size), thumbBuffer);
+  const normalizedSize = normalizeSize(size);
+  const thumbBuffer = await resizeBuffer(sourceBuffer, normalizedSize);
+  fs.writeFileSync(versionedThumbPath(id, normalizedSize, ver), thumbBuffer);
 
-  if (normalizeSize(size) === "card") {
+  if (normalizedSize === "card") {
     const listBuffer = await resizeBuffer(thumbBuffer, "list");
-    fs.writeFileSync(thumbCachePath(id, "list"), listBuffer);
-    await pool
-      .query(`UPDATE students SET photo_thumb_url = $1 WHERE id = $2`, [
-        `students/photos/thumbs/${id}.jpg`,
-        id,
-      ])
-      .catch(() => {});
+    fs.writeFileSync(versionedThumbPath(id, "list", ver), listBuffer);
   }
 
   return thumbBuffer;
@@ -156,21 +196,27 @@ async function getStudentPhotoThumbImpl(
   if (!id) return null;
 
   const normalizedSize = normalizeSize(size);
-  const cacheFile = thumbCachePath(id, normalizedSize);
+  const photoUrl = await lookupPhotoUrl(id);
+  if (!photoUrl) return null;
 
-  if (!refresh) {
-    const cached = await readCachedThumb(id, normalizedSize);
-    if (cached) return cached;
+  const version = photoVersion(photoUrl);
+  const cacheFile = versionedThumbPath(id, normalizedSize, version);
 
-    // Never block list-view HTTP requests on remote FTP downloads.
-    if (normalizedSize === "list" && !allowGenerate) {
-      return null;
-    }
+  if (refresh) {
+    clearStudentPhotoThumbs(id);
   } else if (fs.existsSync(cacheFile)) {
-    fs.unlinkSync(cacheFile);
+    return fs.readFileSync(cacheFile);
+  } else if (normalizedSize === "list") {
+    const cardFile = versionedThumbPath(id, "card", version);
+    if (fs.existsSync(cardFile)) {
+      const thumbBuffer = await resizeBuffer(fs.readFileSync(cardFile), "list");
+      fs.writeFileSync(cacheFile, thumbBuffer);
+      return thumbBuffer;
+    }
+    if (!allowGenerate) return null;
   }
 
-  return generateThumbFromPhotoUrl(id, normalizedSize);
+  return generateThumbFromPhotoUrl(id, normalizedSize, photoUrl, version);
 }
 
 async function getStudentPhotoThumb(studentDbId, options = {}) {
@@ -190,22 +236,40 @@ async function getStudentPhotoThumb(studentDbId, options = {}) {
   }
 }
 
-async function generateThumbFromUploadBuffer(studentDbId, uploadBuffer) {
+async function generateThumbFromUploadBuffer(studentDbId, uploadBuffer, photoUrl) {
   ensureThumbDir();
   const id = Number(studentDbId);
   if (!id || !uploadBuffer?.length) return null;
 
+  const source = String(photoUrl || "").trim() || (await lookupPhotoUrl(id));
+  const version = photoVersion(source);
+  if (!version) return null;
+
+  // Drop every cached size first so a failed rebuild cannot keep the old face.
+  clearStudentPhotoThumbs(id);
+
   try {
     const cardBuffer = await resizeBuffer(uploadBuffer, "card");
-    fs.writeFileSync(thumbCachePath(id, "card"), cardBuffer);
     const listBuffer = await resizeBuffer(cardBuffer, "list");
-    fs.writeFileSync(thumbCachePath(id, "list"), listBuffer);
-    fs.writeFileSync(legacyThumbCachePath(id), cardBuffer);
+    const printBuffer = await resizeBuffer(uploadBuffer, "print");
+    fs.writeFileSync(versionedThumbPath(id, "card", version), cardBuffer);
+    fs.writeFileSync(versionedThumbPath(id, "list", version), listBuffer);
+    fs.writeFileSync(versionedThumbPath(id, "print", version), printBuffer);
     return cardBuffer;
   } catch (err) {
     console.warn(`Upload thumb failed for student ${id}:`, err.message);
     return null;
   }
+}
+
+async function rebuildStudentThumbsFromFile(studentDbId, file, photoUrl) {
+  if (!file || !String(photoUrl || "").trim()) return null;
+  let bytes = file.buffer;
+  if (!bytes?.length && file.path) {
+    bytes = await fs.promises.readFile(file.path);
+  }
+  if (!bytes?.length) return null;
+  return generateThumbFromUploadBuffer(studentDbId, bytes, photoUrl);
 }
 
 /** Read cached list thumb from disk only — no network, no Jimp (for list API). */
@@ -267,11 +331,36 @@ function readCardThumbDataUriSync(studentDbId) {
   return `data:image/jpeg;base64,${buffer.toString("base64")}`;
 }
 
+function thumbDataUri(buffer) {
+  if (!buffer?.length) return null;
+  return `data:image/jpeg;base64,${buffer.toString("base64")}`;
+}
+
+function readBestThumbDataUriSync(studentDbId, photoUrl, prefer = "list") {
+  const source = String(photoUrl || "").trim();
+  if (source) {
+    const primary = readVersionedThumbBufferSync(studentDbId, prefer, source);
+    if (primary) return thumbDataUri(primary);
+    if (prefer === "list") {
+      const card = readVersionedThumbBufferSync(studentDbId, "card", source);
+      if (card) return thumbDataUri(card);
+    }
+    return null;
+  }
+  return prefer === "card"
+    ? readCardThumbDataUriSync(studentDbId)
+    : readListThumbDataUriSync(studentDbId);
+}
+
 function attachListThumbsToRows(rows = []) {
   return rows.map((row) => {
-    if (!row.has_photo) return row;
-    const thumb_src = readListThumbDataUriSync(row.student_db_id);
-    return thumb_src ? { ...row, thumb_src } : row;
+    const photoUrl = row.photo_url?.trim?.() ? row.photo_url : null;
+    if (!row.has_photo && !photoUrl) return row;
+    const thumb_src = readBestThumbDataUriSync(row.student_db_id, photoUrl, "list");
+    if (!thumb_src) {
+      return photoUrl || row.has_photo ? { ...row, has_photo: true } : row;
+    }
+    return { ...row, has_photo: true, thumb_src };
   });
 }
 
@@ -280,37 +369,55 @@ const pendingGeneration = new Set();
 const failedGenerationUntil = new Map();
 const GENERATION_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
-function shouldSkipGeneration(studentDbId) {
+function clearGenerationCooldown(studentDbId) {
+  const id = Number(studentDbId);
+  if (!id) return;
+  const prefix = `${id}:`;
+  for (const key of failedGenerationUntil.keys()) {
+    if (key === id || String(key).startsWith(prefix)) {
+      failedGenerationUntil.delete(key);
+    }
+  }
+}
+
+function shouldSkipGeneration(studentDbId, photoUrl) {
   const id = Number(studentDbId);
   if (!id) return true;
-  if (readListThumbBufferSync(id)) return true;
+  if (photoUrl && readVersionedThumbBufferSync(id, "list", photoUrl)) return true;
 
-  const until = failedGenerationUntil.get(id);
+  const until = failedGenerationUntil.get(`${id}:${photoVersion(photoUrl) || ""}`);
   if (until && until > Date.now()) return true;
-  if (until && until <= Date.now()) failedGenerationUntil.delete(id);
+  if (until && until <= Date.now()) {
+    failedGenerationUntil.delete(`${id}:${photoVersion(photoUrl) || ""}`);
+  }
 
   return false;
 }
 
-function markGenerationFailed(studentDbId) {
+function markGenerationFailed(studentDbId, photoUrl) {
   const id = Number(studentDbId);
   if (!id) return;
-  failedGenerationUntil.set(id, Date.now() + GENERATION_COOLDOWN_MS);
+  failedGenerationUntil.set(
+    `${id}:${photoVersion(photoUrl) || ""}`,
+    Date.now() + GENERATION_COOLDOWN_MS
+  );
 }
 
 function queueThumbGeneration(ids = []) {
   const unique = [...new Set(ids.map((id) => Number(id)).filter(Boolean))];
   for (const id of unique) {
-    if (pendingGeneration.has(id) || shouldSkipGeneration(id)) continue;
+    if (pendingGeneration.has(id)) continue;
 
     pendingGeneration.add(id);
     setImmediate(async () => {
       try {
+        const photoUrl = await lookupPhotoUrl(id);
+        if (!photoUrl || shouldSkipGeneration(id, photoUrl)) return;
         const result = await getStudentPhotoThumb(id, {
-          size: "list",
+          size: "card",
           allowGenerate: true,
         });
-        if (!result) markGenerationFailed(id);
+        if (!result) markGenerationFailed(id, photoUrl);
       } catch {
         markGenerationFailed(id);
       } finally {
@@ -320,11 +427,57 @@ function queueThumbGeneration(ids = []) {
   }
 }
 
+/**
+ * Build current-photo thumbnails for the given student rows.
+ * Skips anyone whose cached file already matches photo_url.
+ */
+async function hydrateStudentPhotoThumbs(rows = [], { size = "card" } = {}) {
+  const queue = [];
+  for (const row of rows) {
+    const photoUrl = row?.photo_url?.trim?.() ? row.photo_url.trim() : "";
+    const id = Number(row?.student_db_id || row?.id);
+    if (!photoUrl || !id) continue;
+    if (
+      readVersionedThumbBufferSync(id, "list", photoUrl) ||
+      readVersionedThumbBufferSync(id, "card", photoUrl) ||
+      shouldSkipGeneration(id, photoUrl)
+    ) {
+      continue;
+    }
+    queue.push(id);
+  }
+
+  const pending = [...new Set(queue)];
+  if (!pending.length) return;
+
+  const workerCount = Math.min(4, pending.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (pending.length) {
+        const id = pending.shift();
+        try {
+          const result = await getStudentPhotoThumb(id, {
+            size,
+            allowGenerate: true,
+          });
+          if (!result) {
+            const photoUrl = await lookupPhotoUrl(id);
+            markGenerationFailed(id, photoUrl);
+          }
+        } catch (err) {
+          console.warn(`Student photo refresh failed for ${id}:`, err.message);
+          markGenerationFailed(id);
+        }
+      }
+    })
+  );
+}
+
 /** One-shot startup warmup — skips cached and recently failed IDs. */
 async function warmupMissingThumbs({ batchSize = 3, maxPerRun = 40 } = {}) {
   ensureThumbDir();
   const { rows } = await pool.query(`
-    SELECT id
+    SELECT id, photo_url
     FROM students
     WHERE "deletedAt" IS NULL
       AND photo_url IS NOT NULL
@@ -338,27 +491,27 @@ async function warmupMissingThumbs({ batchSize = 3, maxPerRun = 40 } = {}) {
 
   for (const row of rows) {
     if (built >= maxPerRun) break;
-    if (shouldSkipGeneration(row.id)) {
+    if (shouldSkipGeneration(row.id, row.photo_url)) {
       skipped += 1;
       continue;
     }
 
     try {
       const result = await getStudentPhotoThumb(row.id, {
-        size: "list",
+        size: "card",
         allowGenerate: true,
       });
       if (result) {
         built += 1;
       } else {
-        markGenerationFailed(row.id);
+        markGenerationFailed(row.id, row.photo_url);
         skipped += 1;
       }
       if (built > 0 && built % batchSize === 0) {
         await new Promise((resolve) => setTimeout(resolve, 80));
       }
     } catch {
-      markGenerationFailed(row.id);
+      markGenerationFailed(row.id, row.photo_url);
       skipped += 1;
     }
   }
@@ -378,10 +531,13 @@ module.exports = {
   CARD_HEIGHT,
   getStudentPhotoThumb,
   generateThumbFromUploadBuffer,
+  rebuildStudentThumbsFromFile,
+  hydrateStudentPhotoThumbs,
   warmupMissingThumbs,
   attachListThumbsToRows,
   queueThumbGeneration,
   readListThumbDataUriSync,
   readCardThumbDataUriSync,
+  readBestThumbDataUriSync,
   thumbCachePath,
 };

@@ -14,7 +14,7 @@ const {
   createIdCardForStudent,
 } = require("../src/services/studentIdCard.service");
 const {
-  generateThumbFromUploadBuffer,
+  rebuildStudentThumbsFromFile,
 } = require("../src/services/studentPhotoThumb.service");
 
 const router = express.Router();
@@ -180,10 +180,16 @@ router.post(
         console.error("Auto ID card creation failed:", cardErr);
       }
 
-      if (req.file?.buffer) {
-        generateThumbFromUploadBuffer(result.rows[0].id, req.file.buffer).catch(
-          (err) => console.warn("Student thumb on create:", err.message)
-        );
+      if (req.file && insert.photo_url) {
+        try {
+          await rebuildStudentThumbsFromFile(
+            result.rows[0].id,
+            req.file,
+            insert.photo_url
+          );
+        } catch (thumbErr) {
+          console.warn("Student thumb on create:", thumbErr.message);
+        }
       }
 
       res.status(201).json({
@@ -222,7 +228,7 @@ router.get("/:id/photo/thumb", authenticateToken, async (req, res) => {
       return res.status(404).json({ error: "Photo not found" });
     }
     res.setHeader("Content-Type", "image/jpeg");
-    res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+    res.setHeader("Cache-Control", "private, no-cache");
     res.send(buffer);
   } catch (e) {
     console.error("Student photo thumb error:", e);
@@ -270,9 +276,6 @@ router.put(
         update.photo_url = await ftpService.uploadBuffer(
           req.file.buffer,
           remotePath
-        );
-        generateThumbFromUploadBuffer(id, req.file.buffer).catch((err) =>
-          console.warn("Student thumb on update:", err.message)
         );
       }
       // Only update columns that exist
@@ -375,6 +378,13 @@ router.put(
         req.user,
         fieldsChanged
       );
+      if (req.file && update.photo_url) {
+        try {
+          await rebuildStudentThumbsFromFile(id, req.file, update.photo_url);
+        } catch (thumbErr) {
+          console.warn("Student thumb on update:", thumbErr.message);
+        }
+      }
       res.json({
         message: "Student updated successfully",
         student: result.rows[0],

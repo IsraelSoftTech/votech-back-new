@@ -15,6 +15,9 @@ const { getActiveYear } = require("../services/activeAcademicYear.service");
 const { ChangeTypes, logChanges } = require("../utils/logChanges.util");
 const { parsePagination, buildPaginationMeta } = require("../utils/pagination.util");
 const { uploadSingleFileToFTP } = require("../services/fileStorage.service");
+const {
+  rebuildStudentThumbsFromFile,
+} = require("../services/studentPhotoThumb.service");
 const { printer, loadLogoBase64, sanitize } = require("./reportCardPdfGenerator");
 const { isClassPromotedForYear } = require("./promotion.controller");
 
@@ -418,6 +421,12 @@ const createStudent = catchAsync(async (req, res, next) => {
 
     await t.commit();
 
+    if (req.file && data.photo_url) {
+      await rebuildStudentThumbsFromFile(student.id, req.file, data.photo_url).catch((err) =>
+        console.warn("Student thumb on create:", err.message)
+      );
+    }
+
     await logChanges(tableName, student.id, ChangeTypes.create, req.user).catch(() => {});
 
     const withChoices = await models.Student.findByPk(student.id, {
@@ -513,6 +522,12 @@ const updateStudent = catchAsync(async (req, res, next) => {
     }
 
     await t.commit();
+
+    if (req.file && data.photo_url) {
+      await rebuildStudentThumbsFromFile(student.id, req.file, data.photo_url).catch((err) =>
+        console.warn("Student thumb on update:", err.message)
+      );
+    }
 
     const fieldsChanged = {};
     for (const key of Object.keys(data)) {
