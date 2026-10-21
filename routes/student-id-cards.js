@@ -15,6 +15,7 @@ const {
   listStudentIdCardsPaginated,
   getStudentIdCardByStudentDbId,
   getStudentIdCardsByIds,
+  listGeneratedCardIds,
   backfillMissingCards,
 } = require("../src/services/studentIdCard.service");
 
@@ -245,6 +246,21 @@ router.get("/", async (req, res) => {
     res.json(rows);
   } catch (e) {
     console.error("List student ID cards error:", e);
+    res.status(500).json({ error: "Failed to fetch student ID cards" });
+  }
+});
+
+router.get("/ids", async (req, res) => {
+  try {
+    const yearFilter = await resolveYearFilter(req);
+    const ids = await listGeneratedCardIds({
+      yearFilter,
+      className: req.query.class_name || req.query.class || "",
+      search: req.query.search || "",
+    });
+    res.json({ ids });
+  } catch (e) {
+    console.error("List student ID card ids error:", e);
     res.status(500).json({ error: "Failed to fetch student ID cards" });
   }
 });

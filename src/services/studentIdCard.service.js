@@ -329,8 +329,17 @@ async function getStudentIdCardsByIds(ids = []) {
   `,
     [numericIds]
   );
-  await hydrateStudentPhotoThumbs(rows, { size: "card" });
-  return rows.map((row) => attachCardThumbToRow(row));
+  await hydrateStudentPhotoThumbs(rows, { size: "print" });
+  return rows.map((row) => {
+    const withCard = attachCardThumbToRow(row);
+    const printSrc = readBestThumbDataUriSync(
+      row.student_db_id,
+      row.photo_url,
+      "print"
+    );
+    if (!printSrc) return withCard;
+    return { ...withCard, has_photo: true, print_src: printSrc };
+  });
 }
 
 async function getStudentIdCardByStudentDbId(studentDbId) {
@@ -377,6 +386,45 @@ async function getStudentIdCardByStudentDbId(studentDbId) {
   return attachCardThumbToRow(row);
 }
 
+async function listGeneratedCardIds({
+  yearFilter,
+  className = "",
+  search = "",
+} = {}) {
+  const params = [];
+  const yearClause = buildYearClause(yearFilter, params);
+  let filterClause = `WHERE s."deletedAt" IS NULL AND sic.id IS NOT NULL${yearClause}`;
+
+  if (className && className !== "all") {
+    params.push(className);
+    filterClause += ` AND c.name = $${params.length}`;
+  }
+
+  const q = String(search || "").trim().toLowerCase();
+  if (q) {
+    params.push(`%${q}%`);
+    const idx = params.length;
+    filterClause += ` AND (
+      LOWER(s.full_name) LIKE $${idx}
+      OR LOWER(s.student_id) LIKE $${idx}
+      OR LOWER(COALESCE(sic.card_number, '')) LIKE $${idx}
+    )`;
+  }
+
+  const { rows } = await pool.query(
+    `
+    SELECT s.id AS student_db_id
+    FROM students s
+    INNER JOIN student_id_cards sic ON sic.student_id = s.id
+    LEFT JOIN classes c ON s.class_id = c.id
+    ${filterClause}
+    ORDER BY s.full_name ASC
+  `,
+    params
+  );
+  return rows.map((row) => row.student_db_id);
+}
+
 module.exports = {
   buildCardNumber,
   createIdCardForStudent,
@@ -385,6 +433,7 @@ module.exports = {
   listStudentIdCardsPaginated,
   getStudentIdCardStats,
   getStudentIdCardsByIds,
+  listGeneratedCardIds,
   getStudentIdCardByStudentDbId,
   invalidateIdCardListMetaCache,
 };

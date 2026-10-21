@@ -93,18 +93,27 @@ function legacyThumbCachePath(studentDbId) {
 }
 
 async function fetchImageBuffer(sourceUrl) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 6000);
-  try {
-    const response = await fetch(sourceUrl, { signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`Failed to fetch image (${response.status})`);
+  let lastError = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(sourceUrl, { signal: controller.signal });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image (${response.status})`);
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    } catch (err) {
+      lastError = err;
+      if (attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+    } finally {
+      clearTimeout(timer);
     }
-    const arrayBuffer = await response.arrayBuffer();
-    return Buffer.from(arrayBuffer);
-  } finally {
-    clearTimeout(timer);
   }
+  throw lastError;
 }
 
 function resolvePhotoUrl(photoUrl) {
@@ -165,26 +174,46 @@ async function lookupPhotoUrl(studentDbId) {
   return rows[0]?.photo_url?.trim() || null;
 }
 
-async function generateThumbFromPhotoUrl(studentDbId, size, photoUrl, version) {
+const photoBuilds = new Map();
+
+/**
+ * One remote download fills list, card, and print files.
+ * Parallel requests for the same photo share that single download.
+ */
+async function buildAllThumbsFromSource(studentDbId, photoUrl, version) {
   const id = Number(studentDbId);
   const source = String(photoUrl || "").trim();
   const ver = version || photoVersion(source);
   if (!id || !source || !ver) return null;
 
-  const sourceUrl = resolvePhotoUrl(source);
-  if (!sourceUrl) return null;
+  const key = `${id}:${ver}`;
+  if (photoBuilds.has(key)) return photoBuilds.get(key);
 
-  const sourceBuffer = await fetchImageBuffer(sourceUrl);
-  const normalizedSize = normalizeSize(size);
-  const thumbBuffer = await resizeBuffer(sourceBuffer, normalizedSize);
-  fs.writeFileSync(versionedThumbPath(id, normalizedSize, ver), thumbBuffer);
-
-  if (normalizedSize === "card") {
-    const listBuffer = await resizeBuffer(thumbBuffer, "list");
+  const promise = (async () => {
+    const sourceUrl = resolvePhotoUrl(source);
+    if (!sourceUrl) return null;
+    const sourceBuffer = await fetchImageBuffer(sourceUrl);
+    const printBuffer = await resizeBuffer(sourceBuffer, "print");
+    const cardBuffer = await resizeBuffer(sourceBuffer, "card");
+    const listBuffer = await resizeBuffer(cardBuffer, "list");
+    fs.writeFileSync(versionedThumbPath(id, "print", ver), printBuffer);
+    fs.writeFileSync(versionedThumbPath(id, "card", ver), cardBuffer);
     fs.writeFileSync(versionedThumbPath(id, "list", ver), listBuffer);
-  }
+    return { print: printBuffer, card: cardBuffer, list: listBuffer };
+  })();
 
-  return thumbBuffer;
+  photoBuilds.set(key, promise);
+  try {
+    return await promise;
+  } finally {
+    photoBuilds.delete(key);
+  }
+}
+
+async function generateThumbFromPhotoUrl(studentDbId, size, photoUrl, version) {
+  const built = await buildAllThumbsFromSource(studentDbId, photoUrl, version);
+  if (!built) return null;
+  return built[normalizeSize(size)] || null;
 }
 
 async function getStudentPhotoThumbImpl(
@@ -432,41 +461,38 @@ function queueThumbGeneration(ids = []) {
  * Skips anyone whose cached file already matches photo_url.
  */
 async function hydrateStudentPhotoThumbs(rows = [], { size = "card" } = {}) {
+  const target = normalizeSize(size);
   const queue = [];
   for (const row of rows) {
     const photoUrl = row?.photo_url?.trim?.() ? row.photo_url.trim() : "";
     const id = Number(row?.student_db_id || row?.id);
     if (!photoUrl || !id) continue;
-    if (
-      readVersionedThumbBufferSync(id, "list", photoUrl) ||
-      readVersionedThumbBufferSync(id, "card", photoUrl) ||
-      shouldSkipGeneration(id, photoUrl)
-    ) {
-      continue;
-    }
+    if (readVersionedThumbBufferSync(id, target, photoUrl)) continue;
+    // A small list/card file is not a substitute for the print photo.
+    if (target !== "print" && shouldSkipGeneration(id, photoUrl)) continue;
     queue.push(id);
   }
 
   const pending = [...new Set(queue)];
   if (!pending.length) return;
 
-  const workerCount = Math.min(4, pending.length);
+  const workerCount = Math.min(target === "print" ? 3 : 4, pending.length);
   await Promise.all(
     Array.from({ length: workerCount }, async () => {
       while (pending.length) {
         const id = pending.shift();
         try {
           const result = await getStudentPhotoThumb(id, {
-            size,
+            size: target,
             allowGenerate: true,
           });
-          if (!result) {
+          if (!result && target !== "print") {
             const photoUrl = await lookupPhotoUrl(id);
             markGenerationFailed(id, photoUrl);
           }
         } catch (err) {
           console.warn(`Student photo refresh failed for ${id}:`, err.message);
-          markGenerationFailed(id);
+          if (target !== "print") markGenerationFailed(id);
         }
       }
     })
